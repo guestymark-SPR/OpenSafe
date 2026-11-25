@@ -1,0 +1,9 @@
+{
+  "name": "OpenKeep – add item",
+  "short_name": "OpenKeep",
+  "start_url": "/m",
+  "display": "standalone",
+  "background_color": "#f6f5f2",
+  "theme_color": "#1d4d4f",
+  "icons": [{ "src": "/m/icon.png", "sizes": "512x512", "type": "image/png" }]
+}

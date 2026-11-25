@@ -1,0 +1,55 @@
+{
+  "name": "openkeep",
+  "productName": "OpenKeep",
+  "version": "1.0.0",
+  "description": "Free home inventory and asset manager for Windows, with a phone link for adding items from your Android phone.",
+  "main": "src/main.js",
+  "author": "guestymark-SPR",
+  "license": "MIT",
+  "homepage": "https://github.com/guestymark-SPR/OpenKeep",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/store.test.js",
+    "dist:win": "electron-builder --win nsis portable --x64",
+    "pack:win-zip": "electron-builder --win zip --x64"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "electron": "^45.5.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.guestymark.openkeep",
+    "productName": "OpenKeep",
+    "copyright": "MIT licence",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.png",
+      "artifactName": "OpenKeep-${version}-${arch}-${name}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "OpenKeep",
+      "artifactName": "OpenKeep-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "OpenKeep-Portable-${version}.${ext}"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/guestymark-SPR/OpenKeep.git"
+  }
+}
