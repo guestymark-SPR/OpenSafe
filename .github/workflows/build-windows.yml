@@ -1,7 +1,7 @@
 name: Build Windows app
 
 # Push to main  -> builds the installer and keeps it under Actions > Artifacts (no release).
-# Push a tag v* -> builds and publishes a GitHub release. Installed copies of OpenKeep
+# Push a tag v* -> builds and publishes a GitHub release. Installed copies of OpenSafe
 #                  find it and update themselves.
 
 on:
@@ -52,7 +52,7 @@ jobs:
       - name: Upload build
         uses: actions/upload-artifact@v4
         with:
-          name: OpenKeep-Windows
+          name: OpenSafe-Windows
           path: |
             dist/*.exe
             dist/latest.yml

@@ -8,7 +8,7 @@ const { Store } = require('../src/store');
 const { PhoneServer } = require('../src/phoneServer');
 
 function tmpStore() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'openkeep-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opensafe-'));
   const s = new Store(dir); s.load(); return s;
 }
 const iso = (d) => d.toISOString().slice(0, 10);
@@ -106,17 +106,17 @@ test('phone API: auth, create item, upload photo', async () => {
     assert.strictEqual(page.status, 200);
     assert.ok(page.headers.get('content-security-policy'));
     assert.strictEqual((await fetch(base + '/api/meta')).status, 401);
-    assert.strictEqual((await fetch(base + '/api/meta', { headers: { 'x-openkeep-token': 'wrong' } })).status, 401);
-    const meta = await (await fetch(base + '/api/meta', { headers: { 'x-openkeep-token': tok } })).json();
+    assert.strictEqual((await fetch(base + '/api/meta', { headers: { 'x-opensafe-token': 'wrong' } })).status, 401);
+    const meta = await (await fetch(base + '/api/meta', { headers: { 'x-opensafe-token': tok } })).json();
     assert.ok(meta.categories.length > 3);
-    const cr = await fetch(base + '/api/assets', { method: 'POST', headers: { 'x-openkeep-token': tok, 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Phone item', purchasePrice: '12.5', id: 'hijack' }) });
+    const cr = await fetch(base + '/api/assets', { method: 'POST', headers: { 'x-opensafe-token': tok, 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Phone item', purchasePrice: '12.5', id: 'hijack' }) });
     assert.strictEqual(cr.status, 201);
     const { id } = await cr.json();
     assert.notStrictEqual(id, 'hijack');
     assert.strictEqual(s.getAsset(id).source, 'phone');
-    const up = await fetch(`${base}/api/assets/${id}/photo?name=cam.jpg`, { method: 'POST', headers: { 'x-openkeep-token': tok, 'content-type': 'image/jpeg' }, body: Buffer.from('jpeg') });
+    const up = await fetch(`${base}/api/assets/${id}/photo?name=cam.jpg`, { method: 'POST', headers: { 'x-opensafe-token': tok, 'content-type': 'image/jpeg' }, body: Buffer.from('jpeg') });
     assert.strictEqual(up.status, 201);
-    const bad = await fetch(`${base}/api/assets/${id}/photo?name=x.exe`, { method: 'POST', headers: { 'x-openkeep-token': tok }, body: Buffer.from('x') });
+    const bad = await fetch(`${base}/api/assets/${id}/photo?name=x.exe`, { method: 'POST', headers: { 'x-opensafe-token': tok }, body: Buffer.from('x') });
     assert.strictEqual(bad.status, 400);
     assert.strictEqual(s.getAsset(id).photos.length, 1);
     assert.strictEqual(changed, 2);

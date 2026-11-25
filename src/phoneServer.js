@@ -147,8 +147,8 @@ class PhoneServer {
 
     if (!p.startsWith('/api/')) return send(res, 404, { error: 'Not found' });
 
-    if (!tokenOk(req.headers['x-openkeep-token'], this.store.data.settings.phoneToken)) {
-      return send(res, 401, { error: 'This phone is not paired. Scan the QR code in OpenKeep on your PC.' });
+    if (!tokenOk(req.headers['x-opensafe-token'], this.store.data.settings.phoneToken)) {
+      return send(res, 401, { error: 'This phone is not paired. Scan the QR code in OpenSafe on your PC.' });
     }
     this.lastSeen = new Date();
 

@@ -10,13 +10,13 @@ const { PhoneServer } = require('./phoneServer');
 const { buildReportHtml } = require('./report');
 const updater = require('./updater');
 
-app.setName('OpenKeep');
+app.setName('OpenSafe');
 // UK date and number formats everywhere (date pickers, spellcheck)
 app.commandLine.appendSwitch('lang', 'en-GB');
-if (process.platform === 'win32') app.setAppUserModelId('com.guestymark.openkeep');
+if (process.platform === 'win32') app.setAppUserModelId('com.guestymark.opensafe');
 
-// Optional override for testing: OPENKEEP_DATA_DIR
-const DATA_DIR = process.env.OPENKEEP_DATA_DIR || path.join(app.getPath('userData'), 'data');
+// Optional override for testing: OPENSAFE_DATA_DIR
+const DATA_DIR = process.env.OPENSAFE_DATA_DIR || path.join(app.getPath('userData'), 'data');
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'keep', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
@@ -79,7 +79,7 @@ function createWindow() {
   win = new BrowserWindow({
     width: 1320, height: 860, minWidth: 980, minHeight: 640,
     backgroundColor: '#f6f5f2',
-    title: 'OpenKeep',
+    title: 'OpenSafe',
     icon: path.join(__dirname, 'renderer', 'icon.png'),
     show: false,
     webPreferences: {
@@ -103,7 +103,7 @@ function remindOnStartup() {
   if (!due.length) return;
   const overdue = due.filter(r => r.daysLeft < 0).length;
   const n = new Notification({
-    title: 'OpenKeep reminders',
+    title: 'OpenSafe reminders',
     body: overdue
       ? `${overdue} overdue and ${due.length - overdue} due this week. Open Reminders to see them.`
       : `${due.length} warranty or service date${due.length > 1 ? 's' : ''} due this week.`
@@ -173,7 +173,7 @@ function registerIpc() {
     const r = await dialog.showMessageBox(win, {
       type: 'warning', buttons: ['Delete', 'Cancel'], defaultId: 1, cancelId: 1,
       title: 'Delete item', message: `Delete "${a.name}"?`,
-      detail: `This removes the item and its ${a.photos.length} photo(s) and ${a.documents.length} document(s) from OpenKeep. Your daily backups in the data folder still hold the record.`
+      detail: `This removes the item and its ${a.photos.length} photo(s) and ${a.documents.length} document(s) from OpenSafe. Your daily backups in the data folder still hold the record.`
     });
     if (r.response !== 0) return false;
     return store.deleteAsset(id);
@@ -211,7 +211,7 @@ function registerIpc() {
   h('export:csv', async () => {
     const r = await dialog.showSaveDialog(win, {
       title: 'Export items to CSV',
-      defaultPath: path.join(app.getPath('documents'), `OpenKeep-items-${new Date().toISOString().slice(0, 10)}.csv`),
+      defaultPath: path.join(app.getPath('documents'), `OpenSafe-items-${new Date().toISOString().slice(0, 10)}.csv`),
       filters: [{ name: 'CSV', extensions: ['csv'] }]
     });
     if (r.canceled || !r.filePath) return null;
@@ -223,12 +223,12 @@ function registerIpc() {
   h('export:report', async (opts) => {
     const r = await dialog.showSaveDialog(win, {
       title: 'Save insurance report',
-      defaultPath: path.join(app.getPath('documents'), `OpenKeep-insurance-report-${new Date().toISOString().slice(0, 10)}.pdf`),
+      defaultPath: path.join(app.getPath('documents'), `OpenSafe-insurance-report-${new Date().toISOString().slice(0, 10)}.pdf`),
       filters: [{ name: 'PDF', extensions: ['pdf'] }]
     });
     if (r.canceled || !r.filePath) return null;
     const html = buildReportHtml(store, opts || {});
-    const tmp = path.join(os.tmpdir(), `openkeep-report-${Date.now()}.html`);
+    const tmp = path.join(os.tmpdir(), `opensafe-report-${Date.now()}.html`);
     fs.writeFileSync(tmp, html, 'utf8');
     const pw = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, javascript: false } });
     try {
@@ -251,11 +251,11 @@ function registerIpc() {
     return dest;
   });
   h('backup:restore', async () => {
-    const r = await dialog.showOpenDialog(win, { title: 'Choose an OpenKeep-backup folder', properties: ['openDirectory'] });
+    const r = await dialog.showOpenDialog(win, { title: 'Choose an OpenSafe-backup folder', properties: ['openDirectory'] });
     if (r.canceled || !r.filePaths[0]) return null;
     const c = await dialog.showMessageBox(win, {
       type: 'warning', buttons: ['Restore', 'Cancel'], defaultId: 1, cancelId: 1,
-      title: 'Restore backup', message: 'Replace everything in OpenKeep with this backup?',
+      title: 'Restore backup', message: 'Replace everything in OpenSafe with this backup?',
       detail: 'A safety copy of your current data is saved to the backups folder first.'
     });
     if (c.response !== 0) return null;

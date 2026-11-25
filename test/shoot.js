@@ -11,7 +11,7 @@ const OUT = process.argv[process.argv.length - 1].startsWith('/') ? process.argv
 const PHOTOS = '/tmp/okshots/photos';
 fs.mkdirSync(OUT, { recursive: true });
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'okdata-'));
-process.env.OPENKEEP_DATA_DIR = dir;
+process.env.OPENSAFE_DATA_DIR = dir;
 
 const d = (n) => { const x = new Date(); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); };
 const s = new Store(dir); s.load();
@@ -62,7 +62,7 @@ app.on('browser-window-created', (_e, win) => {
       await js(`document.querySelector('[data-action=close]').click(); document.querySelector('[data-nav=reminders]').click()`); await shot('7-reminders');
       await js(`document.querySelector('[data-nav=reports]').click()`); await shot('8-reports');
       await js(`document.querySelector('[data-nav=settings]').click()`); await shot('9-settings');
-      win.webContents.send('update:status', { state: 'ready', version: '1.0.1', canUpdate: true, message: 'Version 1.0.1 is ready. Restart OpenKeep to use it, or it will install the next time you close OpenKeep.' });
+      win.webContents.send('update:status', { state: 'ready', version: '1.0.1', canUpdate: true, message: 'Version 1.0.1 is ready. Restart OpenSafe to use it, or it will install the next time you close OpenSafe.' });
       await js(`document.querySelector('[data-nav=settings]').click()`); await shot('9b-settings-update-ready');
       await js(`document.querySelector('[data-action=updLater]').click()`);
       await js(`document.querySelector('[data-nav=phone]').click()`); await wait(1000); await shot('10-phone');

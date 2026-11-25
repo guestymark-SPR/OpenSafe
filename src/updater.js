@@ -1,6 +1,6 @@
 'use strict';
-// Automatic updates from GitHub Releases (guestymark-SPR/OpenKeep).
-// Works in the installed version only (OpenKeep-Setup-x.y.z.exe). The portable exe
+// Automatic updates from GitHub Releases (guestymark-SPR/OpenSafe).
+// Works in the installed version only (OpenSafe-Setup-x.y.z.exe). The portable exe
 // and the zip can't replace themselves, so they just say so in Settings.
 
 const { app } = require('electron');
@@ -20,8 +20,8 @@ function set(patch) {
 
 function whyNotSupported() {
   if (!app.isPackaged) return 'Updates are switched off while running from source code.';
-  if (process.env.PORTABLE_EXECUTABLE_DIR) return 'This is the portable version, which can\'t update itself. Install OpenKeep with OpenKeep-Setup.exe to get automatic updates.';
-  if (!fs.existsSync(path.join(process.resourcesPath, 'app-update.yml'))) return 'This copy was unzipped rather than installed, so it can\'t update itself. Install OpenKeep with OpenKeep-Setup.exe to get automatic updates.';
+  if (process.env.PORTABLE_EXECUTABLE_DIR) return 'This is the portable version, which can\'t update itself. Install OpenSafe with OpenSafe-Setup.exe to get automatic updates.';
+  if (!fs.existsSync(path.join(process.resourcesPath, 'app-update.yml'))) return 'This copy was unzipped rather than installed, so it can\'t update itself. Install OpenSafe with OpenSafe-Setup.exe to get automatic updates.';
   return null;
 }
 
@@ -32,7 +32,7 @@ function init(onStatus) {
 
   ({ autoUpdater } = require('electron-updater'));
   autoUpdater.autoDownload = true;          // download quietly in the background
-  autoUpdater.autoInstallOnAppQuit = true;  // install next time you close OpenKeep
+  autoUpdater.autoInstallOnAppQuit = true;  // install next time you close OpenSafe
   autoUpdater.allowPrerelease = false;
   status.canUpdate = true;
 
@@ -42,7 +42,7 @@ function init(onStatus) {
   autoUpdater.on('download-progress', (p) => set({ state: 'downloading', percent: Math.round(p.percent || 0), message: `Downloading version ${status.version}… ${Math.round(p.percent || 0)}%` }));
   autoUpdater.on('update-downloaded', (info) => set({
     state: 'ready', version: info.version,
-    message: `Version ${info.version} is ready. Restart OpenKeep to use it, or it will install the next time you close OpenKeep.`
+    message: `Version ${info.version} is ready. Restart OpenSafe to use it, or it will install the next time you close OpenSafe.`
   }));
   autoUpdater.on('error', (e) => set({
     state: 'error',
@@ -62,7 +62,7 @@ function checkNow() {
 
 function installNow() {
   if (!autoUpdater || status.state !== 'ready') return false;
-  // isSilent=true: no installer wizard; isForceRunAfter=true: reopen OpenKeep afterwards
+  // isSilent=true: no installer wizard; isForceRunAfter=true: reopen OpenSafe afterwards
   setImmediate(() => autoUpdater.quitAndInstall(true, true));
   return true;
 }

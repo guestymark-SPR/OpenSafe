@@ -1,7 +1,7 @@
 'use strict';
 (function () {
   const $ = (id) => document.getElementById(id);
-  const TOKEN_KEY = 'openkeep-token';
+  const TOKEN_KEY = 'opensafe-token';
 
   // Pairing: the QR code carries the token after "#t=". Save it and remove it from the address bar.
   const m = location.hash.match(/t=([A-Za-z0-9_-]{20,})/);
@@ -32,9 +32,9 @@
   async function api(path, opts = {}) {
     let res;
     try {
-      res = await fetch(path, Object.assign({}, opts, { headers: Object.assign({ 'x-openkeep-token': token }, opts.headers || {}) }));
+      res = await fetch(path, Object.assign({}, opts, { headers: Object.assign({ 'x-opensafe-token': token }, opts.headers || {}) }));
     } catch (_) {
-      throw new Error("Can't reach your PC. Check OpenKeep is open on the PC and this phone is on the same Wi-Fi.");
+      throw new Error("Can't reach your PC. Check OpenSafe is open on the PC and this phone is on the same Wi-Fi.");
     }
     let body = null;
     try { body = await res.json(); } catch (_) {}

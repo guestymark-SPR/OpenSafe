@@ -1,19 +1,19 @@
 {
-  "name": "openkeep",
-  "productName": "OpenKeep",
+  "name": "opensafe",
+  "productName": "OpenSafe",
   "version": "1.0.0",
   "description": "Free home inventory and asset manager for Windows, with a phone link for adding items from your Android phone.",
   "main": "src/main.js",
   "author": "guestymark-SPR",
   "license": "MIT",
-  "homepage": "https://github.com/guestymark-SPR/OpenKeep",
+  "homepage": "https://github.com/guestymark-SPR/OpenSafe",
   "scripts": {
     "start": "electron .",
     "test": "node --test test/store.test.js",
     "dist:win": "electron-builder --win nsis portable --x64",
     "pack:win-zip": "electron-builder --win zip --x64",
-    "release:patch": "npm version patch -m \"OpenKeep %s\" && git push --follow-tags",
-    "release:minor": "npm version minor -m \"OpenKeep %s\" && git push --follow-tags"
+    "release:patch": "npm version patch -m \"OpenSafe %s\" && git push --follow-tags",
+    "release:minor": "npm version minor -m \"OpenSafe %s\" && git push --follow-tags"
   },
   "dependencies": {
     "electron-updater": "^6.8.11",
@@ -24,8 +24,8 @@
     "electron-builder": "^26.0.12"
   },
   "build": {
-    "appId": "com.guestymark.openkeep",
-    "productName": "OpenKeep",
+    "appId": "com.guestymark.opensafe",
+    "productName": "OpenSafe",
     "copyright": "MIT licence",
     "directories": {
       "output": "dist",
@@ -37,30 +37,30 @@
     ],
     "win": {
       "icon": "build/icon.png",
-      "artifactName": "OpenKeep-${version}-${arch}-${name}.${ext}"
+      "artifactName": "OpenSafe-${version}-${arch}-${name}.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "OpenKeep",
-      "artifactName": "OpenKeep-Setup-${version}.${ext}"
+      "shortcutName": "OpenSafe",
+      "artifactName": "OpenSafe-Setup-${version}.${ext}"
     },
     "portable": {
-      "artifactName": "OpenKeep-Portable-${version}.${ext}"
+      "artifactName": "OpenSafe-Portable-${version}.${ext}"
     },
     "publish": [
       {
         "provider": "github",
         "owner": "guestymark-SPR",
-        "repo": "OpenKeep",
+        "repo": "OpenSafe",
         "releaseType": "release"
       }
     ]
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/guestymark-SPR/OpenKeep.git"
+    "url": "https://github.com/guestymark-SPR/OpenSafe.git"
   }
 }

@@ -1,5 +1,5 @@
 'use strict';
-// OpenKeep data store: one JSON file plus an attachments folder.
+// OpenSafe data store: one JSON file plus an attachments folder.
 // Plain Node (no Electron imports) so it can be unit-tested.
 
 const fs = require('fs');
@@ -80,7 +80,7 @@ function emptyData() {
 class Store {
   constructor(dir) {
     this.dir = dir;
-    this.file = path.join(dir, 'openkeep-data.json');
+    this.file = path.join(dir, 'opensafe-data.json');
     this.attachDir = path.join(dir, 'attachments');
     this.backupDir = path.join(dir, 'backups');
     this.data = null;
@@ -139,9 +139,9 @@ class Store {
 
   _dailyBackup(json) {
     const day = new Date().toISOString().slice(0, 10);
-    const target = path.join(this.backupDir, `openkeep-${day}.json`);
+    const target = path.join(this.backupDir, `opensafe-${day}.json`);
     fs.writeFileSync(target, json, 'utf8');
-    const files = fs.readdirSync(this.backupDir).filter(f => /^openkeep-\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort();
+    const files = fs.readdirSync(this.backupDir).filter(f => /^opensafe-\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort();
     while (files.length > 30) fs.unlinkSync(path.join(this.backupDir, files.shift()));
   }
 
@@ -411,18 +411,18 @@ class Store {
   // ---------- full backup / restore (folder copy) ----------
   backupTo(destParent) {
     const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16);
-    const dest = path.join(destParent, `OpenKeep-backup-${stamp}`);
+    const dest = path.join(destParent, `OpenSafe-backup-${stamp}`);
     fs.mkdirSync(dest, { recursive: true });
-    fs.copyFileSync(this.file, path.join(dest, 'openkeep-data.json'));
+    fs.copyFileSync(this.file, path.join(dest, 'opensafe-data.json'));
     fs.cpSync(this.attachDir, path.join(dest, 'attachments'), { recursive: true });
     return dest;
   }
 
   restoreFrom(srcDir) {
-    const dataFile = path.join(srcDir, 'openkeep-data.json');
-    if (!fs.existsSync(dataFile)) throw new Error('That folder is not an OpenKeep backup (no openkeep-data.json).');
+    const dataFile = path.join(srcDir, 'opensafe-data.json');
+    if (!fs.existsSync(dataFile)) throw new Error('That folder is not an OpenSafe backup (no opensafe-data.json).');
     const parsed = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
-    if (!parsed || !Array.isArray(parsed.assets)) throw new Error('Backup file is not valid OpenKeep data.');
+    if (!parsed || !Array.isArray(parsed.assets)) throw new Error('Backup file is not valid OpenSafe data.');
     // safety copy of what we have now
     this.backupTo(this.backupDir);
     const keepSettings = this.data.settings;

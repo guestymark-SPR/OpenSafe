@@ -1,4 +1,4 @@
-# OpenKeep
+# OpenSafe
 
 Free home inventory and asset manager for Windows. Record what you own: photos, receipts, serial numbers, warranties, insurance and service history. Add items from your Android phone over Wi-Fi.
 
@@ -21,27 +21,27 @@ Everything stays on your PC. There's no account, no cloud and no subscription.
 
 ![Phone link](docs/phone-link.png) ![Phone page](docs/phone-page.png)
 
-1. In OpenKeep, open **Phone** and switch the link on. The first time, Windows Firewall asks whether OpenKeep can use the network. Tick **Private networks** and choose **Allow**.
+1. In OpenSafe, open **Phone** and switch the link on. The first time, Windows Firewall asks whether OpenSafe can use the network. Tick **Private networks** and choose **Allow**.
 2. Put your phone on the same Wi-Fi as the PC.
 3. Scan the QR code with the phone's camera and open the link. The phone is now paired.
 4. In Chrome, open the ⋮ menu and choose **Add to Home screen** to get an icon.
 5. Take photos, fill in the details and tap **Save to PC**. The item appears on the PC straight away.
 
-How it works: OpenKeep runs a small web server on your home network (port 47820, or the next free port up to 47829). It is off until you switch it on. Every request needs the secret pairing code from the QR code. **New pairing code** unpairs every phone. Phone photos are shrunk to 2000 px before they're sent.
+How it works: OpenSafe runs a small web server on your home network (port 47820, or the next free port up to 47829). It is off until you switch it on. Every request needs the secret pairing code from the QR code. **New pairing code** unpairs every phone. Phone photos are shrunk to 2000 px before they're sent.
 
-Limits: the PC must be on, with OpenKeep open, and on the same network as the phone. If your router gives the PC a new IP address, scan the QR code again. To avoid this, reserve an IP address for the PC in your router settings. The connection is plain HTTP on your local network, so only use the link on a network you trust, such as your home Wi-Fi, not public Wi-Fi.
+Limits: the PC must be on, with OpenSafe open, and on the same network as the phone. If your router gives the PC a new IP address, scan the QR code again. To avoid this, reserve an IP address for the PC in your router settings. The connection is plain HTTP on your local network, so only use the link on a network you trust, such as your home Wi-Fi, not public Wi-Fi.
 
 ## Install
 
-Download `OpenKeep-Setup-x.y.z.exe` from [Releases](../../releases), or from the latest run under **Actions → Build Windows app → Artifacts**. The app isn't code-signed, so Windows SmartScreen may warn you: choose **More info → Run anyway**.
+Download `OpenSafe-Setup-x.y.z.exe` from [Releases](../../releases), or from the latest run under **Actions → Build Windows app → Artifacts**. The app isn't code-signed, so Windows SmartScreen may warn you: choose **More info → Run anyway**.
 
 ### Automatic updates
 
-The installed version checks GitHub for a new release when it starts and every 4 hours. It downloads updates quietly in the background, then shows a **Restart now** bar. If you choose **Later**, the update installs the next time you close OpenKeep. Your items, photos and settings are kept. Check for updates yourself under **Settings → Updates**.
+The installed version checks GitHub for a new release when it starts and every 4 hours. It downloads updates quietly in the background, then shows a **Restart now** bar. If you choose **Later**, the update installs the next time you close OpenSafe. Your items, photos and settings are kept. Check for updates yourself under **Settings → Updates**.
 
-The portable exe and the zip can't update themselves, so use `OpenKeep-Setup` to get updates.
+The portable exe and the zip can't update themselves, so use `OpenSafe-Setup` to get updates.
 
-Your data is saved in `%APPDATA%\OpenKeep\data`. **Settings → Open data folder** opens it.
+Your data is saved in `%APPDATA%\OpenSafe\data`. **Settings → Open data folder** opens it.
 
 ## Build it yourself
 

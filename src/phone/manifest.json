@@ -1,6 +1,6 @@
 {
-  "name": "OpenKeep – add item",
-  "short_name": "OpenKeep",
+  "name": "OpenSafe – add item",
+  "short_name": "OpenSafe",
   "start_url": "/m",
   "display": "standalone",
   "background_color": "#f6f5f2",

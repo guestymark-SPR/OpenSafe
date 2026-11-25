@@ -1,5 +1,5 @@
 'use strict';
-/* OpenKeep renderer – plain JS, no framework. All data comes from window.keep (preload). */
+/* OpenSafe renderer – plain JS, no framework. All data comes from window.keep (preload). */
 (function () {
   const keep = window.keep;
   const $ = (s, el = document) => el.querySelector(s);
@@ -77,7 +77,7 @@
     const s = state.snap.summary;
     const assets = state.snap.data.assets;
     if (!assets.length) {
-      return `<div class="head"><h1>Welcome to OpenKeep</h1></div>
+      return `<div class="head"><h1>Welcome to OpenSafe</h1></div>
       <div class="card" style="max-width:640px">
         <h2>Start your inventory</h2>
         <p class="muted">Record what you own, with photos, receipts, serial numbers, warranties and service history. It all stays on this PC.</p>
@@ -259,13 +259,13 @@
       </div>
       <div class="card"><h2>How it works</h2>
         <ol class="steps">
-          <li>Switch the phone link on. The first time, Windows may ask whether OpenKeep can use the network: tick <b>Private networks</b> and choose <b>Allow</b>.</li>
+          <li>Switch the phone link on. The first time, Windows may ask whether OpenSafe can use the network: tick <b>Private networks</b> and choose <b>Allow</b>.</li>
           <li>Make sure your phone is on the <b>same Wi-Fi</b> as this PC.</li>
           <li>Point your phone's camera at the QR code and open the link. The phone is now paired.</li>
-          <li>In Chrome on the phone, use the ⋮ menu and choose <b>Add to Home screen</b> to get an OpenKeep icon.</li>
+          <li>In Chrome on the phone, use the ⋮ menu and choose <b>Add to Home screen</b> to get an OpenSafe icon.</li>
           <li>Take photos, fill in the details and tap <b>Save to PC</b>. The item appears here straight away.</li>
         </ol>
-        <p class="note">This PC must be on, with OpenKeep open, while you add items. If your router gives the PC a new address, scan the QR code again. Only phones that have scanned the code can add items. Use <b>New pairing code</b> to unpair every phone.</p>
+        <p class="note">This PC must be on, with OpenSafe open, while you add items. If your router gives the PC a new address, scan the QR code again. Only phones that have scanned the code can add items. Use <b>New pairing code</b> to unpair every phone.</p>
       </div>
     </div>`;
   }
@@ -276,7 +276,7 @@
     if (state.view !== 'phone') return;
     $('#phoneOn').checked = s.enabled;
     const body = $('#phoneBody');
-    if (!s.enabled) { body.innerHTML = '<p>The link is off. Nothing on your network can reach OpenKeep.</p>'; return; }
+    if (!s.enabled) { body.innerHTML = '<p>The link is off. Nothing on your network can reach OpenSafe.</p>'; return; }
     if (!s.running) { body.innerHTML = '<p style="color:var(--bad)">The link could not start. Another program may be using the port. Switch it off and on to try again.</p>'; return; }
     if (!s.urls.length) { body.innerHTML = '<p style="color:var(--bad)">This PC doesn\'t seem to be connected to a home network (no local network address found). Connect to Wi-Fi or Ethernet, then switch the link off and on.</p>'; return; }
     const main = s.urls.filter(u => !u.virtual);
@@ -284,7 +284,7 @@
     body.innerHTML = `<p>Scan with your phone's camera:</p>
       <div class="qrs">${shown.map(u => `<div class="qr"><img src="${u.qr}" alt="QR code to pair your phone"><div><b>${esc(u.name)}</b></div><div class="u">${esc(u.url.replace(/#.*/, ''))}</div></div>`).join('')}</div>
       ${shown.length > 1 ? '<p class="muted">More than one network was found. Use the code for the network your phone is on (usually Wi-Fi).</p>' : ''}
-      <p class="muted">Running on port ${s.port}. ${s.lastSeen ? 'Phone last connected ' + new Date(s.lastSeen).toLocaleString('en-GB') + '.' : 'No phone has connected since OpenKeep started.'}</p>
+      <p class="muted">Running on port ${s.port}. ${s.lastSeen ? 'Phone last connected ' + new Date(s.lastSeen).toLocaleString('en-GB') + '.' : 'No phone has connected since OpenSafe started.'}</p>
       <button class="btn" data-action="phoneReset">New pairing code</button>`;
   }
 
@@ -308,10 +308,10 @@
     <div class="grid g2">
       <div class="card"><h2>Reminders</h2>
         <label class="f" style="max-width:260px">Remind me this many days ahead<input type="number" id="remDays" min="1" max="365" value="${d.settings.reminderDays}"></label>
-        <p class="muted">OpenKeep also shows a Windows notification when you open it if anything is due within 7 days.</p>
+        <p class="muted">OpenSafe also shows a Windows notification when you open it if anything is due within 7 days.</p>
         <button class="btn" data-action="saveRem">Save</button></div>
       <div class="card"><h2>Backup</h2>
-        <p class="muted">OpenKeep keeps a copy of your list each day for 30 days in its data folder. For a full backup with photos and documents, save one to a USB stick or OneDrive folder.</p>
+        <p class="muted">OpenSafe keeps a copy of your list each day for 30 days in its data folder. For a full backup with photos and documents, save one to a USB stick or OneDrive folder.</p>
         <p><button class="btn primary" data-action="backup">Back up to a folder…</button> <button class="btn" data-action="restore">Restore from backup…</button></p>
         <p class="muted" style="margin-bottom:6px">Data folder: <span class="mono">${esc(state.snap.dataDir)}</span></p>
         <button class="btn small" data-action="openData">Open data folder</button></div>
@@ -319,14 +319,14 @@
         <p>You're running version <b>${esc(state.snap.version)}</b>.</p>
         <p class="muted" id="updMsg">${esc(updText())}</p>
         <p>${state.upd && state.upd.canUpdate ? '<button class="btn" data-action="updCheck">Check now</button> ' : ''}${state.upd && state.upd.state === 'ready' ? '<button class="btn primary" data-action="updInstall">Restart and update</button>' : ''}</p>
-        <p class="faint">OpenKeep checks for new versions when it starts and every 4 hours, and downloads them quietly. Your items, photos and settings are kept when it updates.</p></div>
+        <p class="faint">OpenSafe checks for new versions when it starts and every 4 hours, and downloads them quietly. Your items, photos and settings are kept when it updates.</p></div>
       <div class="card"><h2>Categories</h2><p class="muted">One per line. Existing items keep their category.</p>
         <textarea id="catsTa" rows="12">${esc(d.categories.join('\n'))}</textarea></div>
       <div class="card"><h2>Locations</h2><p class="muted">One per line.</p>
         <textarea id="locsTa" rows="12">${esc(d.locations.join('\n'))}</textarea>
         <p><button class="btn primary" data-action="saveLists">Save categories and locations</button></p></div>
     </div>
-    <p class="faint" style="margin-top:18px">OpenKeep ${esc(state.snap.version)}</p>`;
+    <p class="faint" style="margin-top:18px">OpenSafe ${esc(state.snap.version)}</p>`;
   }
 
   function updText() {
@@ -339,7 +339,7 @@
     const u = state.upd, bar = $('#updBar');
     const show = u && u.state === 'ready' && !state.updHidden;
     bar.classList.toggle('hidden', !show);
-    if (show) bar.innerHTML = `<span style="flex:1">⬆ OpenKeep ${esc(u.version)} is ready to install.</span><button class="btn small" data-action="updInstall">Restart now</button><button class="btn small ghost" data-action="updLater">Later</button>`;
+    if (show) bar.innerHTML = `<span style="flex:1">⬆ OpenSafe ${esc(u.version)} is ready to install.</span><button class="btn small" data-action="updInstall">Restart now</button><button class="btn small ghost" data-action="updLater">Later</button>`;
     const m = $('#updMsg'); if (m) m.textContent = updText();
   }
 
@@ -463,7 +463,7 @@
         case 'dup': { const c = await run(() => keep.duplicateAsset(a.id), 'Copy made – photos and documents are not copied'); await refresh(); go('item', { itemId: c.id, tab: 'overview' }); break; }
         case 'del': { const ok = await run(() => keep.deleteAsset(a.id)); if (ok) { toast('Deleted'); await refresh(); go('items'); } break; }
         case 'pick': { const r = await run(() => keep.pickFiles(a.id, act.dataset.kind, $('#docType') ? $('#docType').value : 'Other')); reportAdd(r); await refresh(); break; }
-        case 'rmAtt': if (confirm('Delete this file from OpenKeep?')) { await run(() => keep.removeAttachment(a.id, act.dataset.att), 'Deleted'); await refresh(); } break;
+        case 'rmAtt': if (confirm('Delete this file from OpenSafe?')) { await run(() => keep.removeAttachment(a.id, act.dataset.att), 'Deleted'); await refresh(); } break;
         case 'cover': await run(() => keep.setCover(a.id, act.dataset.att)); await refresh(); break;
         case 'openDoc': await run(() => keep.openAttachment(a.id, act.dataset.file)); break;
         case 'newService': serviceForm(a); break;
@@ -482,7 +482,7 @@
         case 'openData': keep.openDataFolder(); break;
         case 'updCheck': state.upd = await keep.checkForUpdates(); renderUpdate(); break;
         case 'updInstall': if ($('#modal').classList.contains('hidden') || confirm('Close your open form and restart now?')) await keep.installUpdate(); break;
-        case 'updLater': state.updHidden = true; renderUpdate(); toast('It will install when you close OpenKeep'); break;
+        case 'updLater': state.updHidden = true; renderUpdate(); toast('It will install when you close OpenSafe'); break;
       }
       return;
     }

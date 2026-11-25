@@ -49,7 +49,7 @@ function buildReportHtml(store, opts) {
   }
   if (!assets.length) body = '<p>No items to report.</p>';
 
-  return `<!doctype html><html><head><meta charset="utf-8"><title>OpenKeep inventory report</title>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>OpenSafe inventory report</title>
 <style>
   *{box-sizing:border-box} body{font:10pt/1.4 "Segoe UI",Arial,sans-serif;color:#1d1d1b;margin:0}
   h1{font-size:18pt;margin:0 0 2pt} .meta{color:#666;margin-bottom:12pt}
@@ -64,10 +64,10 @@ function buildReportHtml(store, opts) {
   .foot{margin-top:18pt;color:#888;font-size:8pt}
 </style></head><body>
 <h1>Household inventory report</h1>
-<div class="meta">Generated ${esc(generated)} by OpenKeep · ${assets.length} item${assets.length === 1 ? '' : 's'}${includeInactive ? ' (including sold, disposed and lost items)' : ''}</div>
+<div class="meta">Generated ${esc(generated)} by OpenSafe · ${assets.length} item${assets.length === 1 ? '' : 's'}${includeInactive ? ' (including sold, disposed and lost items)' : ''}</div>
 <div class="totals"><div>Total value now<b>${gbp(total)}</b></div><div>Insured value recorded<b>${gbp(insured)}</b></div><div>Items with receipts<b>${assets.filter(a => a.documents.some(d => d.type === 'Receipt')).length} of ${assets.length}</b></div></div>
 ${body}
-<div class="foot">"Value now" uses the current value you entered, or the purchase price where none was entered (in the totals only). Figures are as recorded in OpenKeep and are not a professional valuation.</div>
+<div class="foot">"Value now" uses the current value you entered, or the purchase price where none was entered (in the totals only). Figures are as recorded in OpenSafe and are not a professional valuation.</div>
 </body></html>`;
 }
 
