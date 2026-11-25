@@ -8,6 +8,7 @@ const QRCode = require('qrcode');
 const { Store, STATUSES, CONDITIONS, DOC_TYPES } = require('./store');
 const { PhoneServer } = require('./phoneServer');
 const { buildReportHtml } = require('./report');
+const updater = require('./updater');
 
 app.setName('OpenKeep');
 // UK date and number formats everywhere (date pickers, spellcheck)
@@ -71,6 +72,7 @@ async function init() {
   }
 
   setTimeout(remindOnStartup, 4000);
+  updater.init((st) => { if (win && !win.isDestroyed()) win.webContents.send('update:status', st); });
 }
 
 function createWindow() {
@@ -119,7 +121,7 @@ function snapshot() {
     reminders: store.reminders(),
     lists: { statuses: STATUSES, conditions: CONDITIONS, docTypes: DOC_TYPES },
     dataDir: DATA_DIR,
-    version: app.getVersion()
+    version: require('../package.json').version
   };
 }
 
@@ -261,6 +263,10 @@ function registerIpc() {
     return r.filePaths[0];
   });
   h('data:openFolder', () => shell.openPath(DATA_DIR));
+
+  h('update:status', () => updater.getStatus());
+  h('update:check', () => updater.checkNow());
+  h('update:install', () => updater.installNow());
 
   h('phone:status', () => phoneStatus());
   h('phone:enable', async (on) => {

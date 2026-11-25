@@ -11,9 +11,12 @@
     "start": "electron .",
     "test": "node --test test/store.test.js",
     "dist:win": "electron-builder --win nsis portable --x64",
-    "pack:win-zip": "electron-builder --win zip --x64"
+    "pack:win-zip": "electron-builder --win zip --x64",
+    "release:patch": "npm version patch -m \"OpenKeep %s\" && git push --follow-tags",
+    "release:minor": "npm version minor -m \"OpenKeep %s\" && git push --follow-tags"
   },
   "dependencies": {
+    "electron-updater": "^6.8.11",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {
@@ -46,7 +49,15 @@
     },
     "portable": {
       "artifactName": "OpenKeep-Portable-${version}.${ext}"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "guestymark-SPR",
+        "repo": "OpenKeep",
+        "releaseType": "release"
+      }
+    ]
   },
   "repository": {
     "type": "git",

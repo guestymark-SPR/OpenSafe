@@ -35,6 +35,12 @@ Limits: the PC must be on, with OpenKeep open, and on the same network as the ph
 
 Download `OpenKeep-Setup-x.y.z.exe` from [Releases](../../releases), or from the latest run under **Actions → Build Windows app → Artifacts**. The app isn't code-signed, so Windows SmartScreen may warn you: choose **More info → Run anyway**.
 
+### Automatic updates
+
+The installed version checks GitHub for a new release when it starts and every 4 hours. It downloads updates quietly in the background, then shows a **Restart now** bar. If you choose **Later**, the update installs the next time you close OpenKeep. Your items, photos and settings are kept. Check for updates yourself under **Settings → Updates**.
+
+The portable exe and the zip can't update themselves, so use `OpenKeep-Setup` to get updates.
+
 Your data is saved in `%APPDATA%\OpenKeep\data`. **Settings → Open data folder** opens it.
 
 ## Build it yourself
@@ -46,7 +52,16 @@ npm test           # data and phone-link tests
 npm run dist:win   # installer + portable exe (run on Windows)
 ```
 
-A push to `main` builds the Windows installer through GitHub Actions. A tag such as `v1.0.0` also attaches the installer to a GitHub release.
+A push to `main` builds the Windows installer through GitHub Actions (under Artifacts) without releasing it.
+
+To release an update to every installed copy:
+
+```bash
+npm run release:patch   # 1.0.0 -> 1.0.1 (fixes)
+npm run release:minor   # 1.0.1 -> 1.1.0 (new features)
+```
+
+Each command bumps the version, makes a `v…` tag and pushes it. GitHub Actions then builds the installer and publishes the release with `latest.yml`, which installed apps use to find the update. The repo must be public for the app to see releases.
 
 ## Project layout
 

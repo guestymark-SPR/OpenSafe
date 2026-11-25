@@ -16,6 +16,8 @@
 
   const state = {
     snap: null,
+    upd: null,
+    updHidden: false,
     view: 'dashboard',
     itemId: null,
     tab: 'overview',
@@ -313,6 +315,11 @@
         <p><button class="btn primary" data-action="backup">Back up to a folder…</button> <button class="btn" data-action="restore">Restore from backup…</button></p>
         <p class="muted" style="margin-bottom:6px">Data folder: <span class="mono">${esc(state.snap.dataDir)}</span></p>
         <button class="btn small" data-action="openData">Open data folder</button></div>
+      <div class="card"><h2>Updates</h2>
+        <p>You're running version <b>${esc(state.snap.version)}</b>.</p>
+        <p class="muted" id="updMsg">${esc(updText())}</p>
+        <p>${state.upd && state.upd.canUpdate ? '<button class="btn" data-action="updCheck">Check now</button> ' : ''}${state.upd && state.upd.state === 'ready' ? '<button class="btn primary" data-action="updInstall">Restart and update</button>' : ''}</p>
+        <p class="faint">OpenKeep checks for new versions when it starts and every 4 hours, and downloads them quietly. Your items, photos and settings are kept when it updates.</p></div>
       <div class="card"><h2>Categories</h2><p class="muted">One per line. Existing items keep their category.</p>
         <textarea id="catsTa" rows="12">${esc(d.categories.join('\n'))}</textarea></div>
       <div class="card"><h2>Locations</h2><p class="muted">One per line.</p>
@@ -320,6 +327,20 @@
         <p><button class="btn primary" data-action="saveLists">Save categories and locations</button></p></div>
     </div>
     <p class="faint" style="margin-top:18px">OpenKeep ${esc(state.snap.version)}</p>`;
+  }
+
+  function updText() {
+    const u = state.upd;
+    if (!u) return 'Checking update status…';
+    if (u.state === 'idle') return 'Will check for updates shortly.';
+    return u.message;
+  }
+  function renderUpdate() {
+    const u = state.upd, bar = $('#updBar');
+    const show = u && u.state === 'ready' && !state.updHidden;
+    bar.classList.toggle('hidden', !show);
+    if (show) bar.innerHTML = `<span style="flex:1">⬆ OpenKeep ${esc(u.version)} is ready to install.</span><button class="btn small" data-action="updInstall">Restart now</button><button class="btn small ghost" data-action="updLater">Later</button>`;
+    const m = $('#updMsg'); if (m) m.textContent = updText();
   }
 
   // ---------- modals ----------
@@ -459,6 +480,9 @@
         case 'backup': { const p = await run(() => keep.backup()); if (p) toast('Backup saved'); break; }
         case 'restore': { const p = await run(() => keep.restore()); if (p) { toast('Backup restored'); await refresh(); } break; }
         case 'openData': keep.openDataFolder(); break;
+        case 'updCheck': state.upd = await keep.checkForUpdates(); renderUpdate(); break;
+        case 'updInstall': if ($('#modal').classList.contains('hidden') || confirm('Close your open form and restart now?')) await keep.installUpdate(); break;
+        case 'updLater': state.updHidden = true; renderUpdate(); toast('It will install when you close OpenKeep'); break;
       }
       return;
     }
@@ -502,6 +526,8 @@
     if (after > before) toast(`📱 New item from your phone: ${state.snap.data.assets[after - 1].name}`, 4000);
   });
   keep.onNav((w) => go(w));
+  keep.onUpdate((u) => { const was = state.upd && state.upd.state; state.upd = u; renderUpdate(); if (state.view === 'settings' && was !== u.state) render(); });
+  keep.updateStatus().then((u) => { state.upd = u; renderUpdate(); });
 
   refresh();
 })();

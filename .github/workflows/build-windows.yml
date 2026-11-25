@@ -1,5 +1,9 @@
 name: Build Windows app
 
+# Push to main  -> builds the installer and keeps it under Actions > Artifacts (no release).
+# Push a tag v* -> builds and publishes a GitHub release. Installed copies of OpenKeep
+#                  find it and update themselves.
+
 on:
   push:
     branches: [main]
@@ -26,8 +30,24 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Build installer and portable exe
+      - name: Check tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          v=$(node -p "require('./package.json').version")
+          if [ "v$v" != "${GITHUB_REF_NAME}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match package.json version v$v"; exit 1
+          fi
+
+      - name: Build (no release)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         run: npx electron-builder --win nsis portable --x64 --publish never
+
+      - name: Build and publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win nsis portable --x64 --publish always
 
       - name: Upload build
         uses: actions/upload-artifact@v4
@@ -35,10 +55,5 @@ jobs:
           name: OpenKeep-Windows
           path: |
             dist/*.exe
+            dist/latest.yml
           if-no-files-found: error
-
-      - name: Attach to GitHub release (tags only)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*.exe

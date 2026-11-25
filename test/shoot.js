@@ -62,6 +62,9 @@ app.on('browser-window-created', (_e, win) => {
       await js(`document.querySelector('[data-action=close]').click(); document.querySelector('[data-nav=reminders]').click()`); await shot('7-reminders');
       await js(`document.querySelector('[data-nav=reports]').click()`); await shot('8-reports');
       await js(`document.querySelector('[data-nav=settings]').click()`); await shot('9-settings');
+      win.webContents.send('update:status', { state: 'ready', version: '1.0.1', canUpdate: true, message: 'Version 1.0.1 is ready. Restart OpenKeep to use it, or it will install the next time you close OpenKeep.' });
+      await js(`document.querySelector('[data-nav=settings]').click()`); await shot('9b-settings-update-ready');
+      await js(`document.querySelector('[data-action=updLater]').click()`);
       await js(`document.querySelector('[data-nav=phone]').click()`); await wait(1000); await shot('10-phone');
 
       // Drive the phone page like a phone would

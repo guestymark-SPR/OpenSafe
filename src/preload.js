@@ -30,6 +30,10 @@ contextBridge.exposeInMainWorld('keep', {
   phoneStatus: () => call('phone:status'),
   phoneEnable: (on) => call('phone:enable', on),
   phoneReset: () => call('phone:reset'),
+  updateStatus: () => call('update:status'),
+  checkForUpdates: () => call('update:check'),
+  installUpdate: () => call('update:install'),
+  onUpdate: (fn) => ipcRenderer.on('update:status', (_e, st) => fn(st)),
   onChanged: (fn) => ipcRenderer.on('data:changed', () => fn()),
   onNav: (fn) => ipcRenderer.on('nav', (_e, where) => fn(where))
 });
