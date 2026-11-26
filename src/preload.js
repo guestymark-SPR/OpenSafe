@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('keep', {
   saveAsset: (a) => call('asset:save', a),
   deleteAsset: (id) => call('asset:delete', id),
   duplicateAsset: (id) => call('asset:duplicate', id),
+  bulkUpdate: (ids, changes) => call('asset:bulk', ids, changes),
   pickFiles: (assetId, kind, docType) => call('attach:pick', assetId, kind, docType),
   addFiles: (assetId, kind, docType, files) =>
     call('attach:addPaths', assetId, kind, docType, Array.from(files).map(f => webUtils.getPathForFile(f)).filter(Boolean)),

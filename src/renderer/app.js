@@ -176,6 +176,36 @@
     };
   }
 
+  function bulkForm(ids) {
+    const d = state.snap.data, L = state.snap.lists;
+    const pols = d.policies || [];
+    openModal(`<form class="dialog narrow" id="bulkForm" autocomplete="off"><div class="dh"><h2>Change ${ids.length} item${ids.length === 1 ? '' : 's'}</h2></div>
+      <div class="db"><p class="s3 muted" style="margin:0">Fill in only what you want to change. Anything left blank stays as it is on each item.</p>
+        <label class="f">Location<input name="location" list="bkLocs" maxlength="200" placeholder="Keep as it is"></label>
+        <label class="f">Category<input name="category" list="bkCats" maxlength="200" placeholder="Keep as it is"></label>
+        <label class="f">Status<select name="status" id="bkStatus">${opt('', 'Keep as it is', '')}${L.statuses.map(x => opt(x, x, '')).join('')}</select></label>
+        <label class="f">Insurance policy<select name="policyId">${opt('__keep', 'Keep as it is', '__keep')}${opt('', 'Not linked to a policy', '__keep')}${pols.map(p => opt(p.id, `${p.insurer}${p.type ? ' · ' + p.type : ''}${p.policyNumber ? ' · ' + p.policyNumber : ''}`, '__keep')).join('')}</select></label>
+        <div id="bkLend" class="s3 subgrid hidden"><h3>Lent out</h3>
+          <label class="f">Lent to *<input name="lentTo" maxlength="200"></label><label class="f">Phone or email<input name="lentContact" maxlength="200"></label>
+          <label class="f">Lent on<input name="lentDate" type="date" value="${new Date().toISOString().slice(0, 10)}"></label><label class="f">Due back (reminder)<input name="dueBack" type="date"></label></div>
+        <div id="bkSold" class="s3 subgrid hidden"><h3>Sold</h3>
+          <label class="f">Sold on<input name="soldDate" type="date"></label><label class="f">Sold to<input name="soldTo" maxlength="200"></label></div>
+        <datalist id="bkLocs">${d.locations.map(c => `<option value="${esc(c)}">`).join('')}</datalist>
+        <datalist id="bkCats">${d.categories.map(c => `<option value="${esc(c)}">`).join('')}</datalist>
+        <div class="err" id="bkErr"></div></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Change ${ids.length} item${ids.length === 1 ? '' : 's'}</button></div></form>`);
+    $('#bkStatus').onchange = (e) => { $('#bkLend').classList.toggle('hidden', e.target.value !== 'Lent out'); $('#bkSold').classList.toggle('hidden', e.target.value !== 'Sold'); };
+    $('#bulkForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const raw = Object.fromEntries(new FormData(e.target).entries());
+      if (raw.policyId === '__keep') delete raw.policyId;
+      if (!raw.location.trim() && !raw.category.trim() && !raw.status && raw.policyId === undefined) { $('#bkErr').textContent = 'Choose at least one thing to change.'; return; }
+      busy(e.target, true, 'Saving…');
+      try { const n = await keep.bulkUpdate(ids, raw); closeModal(); state.sel.clear(); toast(`✓ ${n} item${n === 1 ? '' : 's'} changed`); await refresh(); }
+      catch (ex) { $('#bkErr').textContent = ex.message; busy(e.target, false); }
+    };
+  }
+
   function labelsForm(ids) {
     openModal(`<form class="dialog narrow" id="labForm"><div class="dh"><h2>QR labels</h2></div>
       <div class="db"><p class="s3 muted" style="margin:0">A4 sheet of 21 labels (63.5 × 38.1 mm, the same as Avery L7160 and similar sheets) for <b>${ids.length} item${ids.length === 1 ? '' : 's'}</b>. Scanning a label with your phone opens that item in OpenSafe Capture.</p>
@@ -440,7 +470,9 @@
       if (f.gap === 'insurer' && (a.insurer || a.policyId || !value(a))) return false;
       if (f.gap === 'photo' && a.photos.length) return false;
       if (q) {
-        const hay = [a.name, a.brand, a.model, a.serial, a.category, a.location, a.notes, a.supplier, a.tags.join(' ')].join(' ').toLowerCase();
+        const d = a.details || {};
+        const hay = [a.name, a.brand, a.model, a.serial, a.barcode, a.category, a.location, a.notes, a.supplier, a.tags.join(' '), a.lentTo, a.lentContact, a.soldTo, a.insurer, a.policyNumber,
+          d.reg, d.vin, d.engineNo, d.boatName, d.hin, d.sso, d.mmsi, d.callSign, d.mooring].filter(Boolean).join(' ').toLowerCase();
         if (!q.split(/\s+/).every(w => hay.includes(w))) return false;
       }
       return true;
@@ -463,7 +495,7 @@
     const total = list.reduce((t, a) => t + value(a), 0);
     const gapNames = { serial: 'no serial number', receipt: 'no receipt', insurer: 'no insurer', photo: 'no photo' };
     const toolbar = `<div class="toolbar">
-      <input type="search" id="q" placeholder="Search name, brand, serial, notes…" value="${esc(f.q)}">
+      <input type="search" id="q" placeholder="Search name, serial, barcode, reg, who has it, notes…" value="${esc(f.q)}">
       <select data-f="category">${opt('', 'All categories', f.category)}${d.categories.map(c => opt(c, c, f.category)).join('')}</select>
       <select data-f="location">${opt('', 'All locations', f.location)}${d.locations.map(c => opt(c, c, f.location)).join('')}</select>
       <select data-f="status">${opt('active', 'Active items', f.status)}${opt('all', 'All statuses', f.status)}${state.snap.lists.statuses.map(s => opt(s, s, f.status)).join('')}</select>
@@ -482,7 +514,7 @@
     const ids = list.map(a => a.id);
     for (const id of [...state.sel]) if (!state.snap.data.assets.some(a => a.id === id)) state.sel.delete(id);
     const allOn = ids.length && ids.every(id => state.sel.has(id));
-    const selBar = state.sel.size ? `<div class="selbar"><b>${state.sel.size} selected</b><button class="btn primary small" data-action="claimSel">Claim pack…</button><button class="btn small" data-action="labelsSel">QR labels…</button><button class="btn small" data-action="selClear">Clear selection</button></div>` : '';
+    const selBar = state.sel.size ? `<div class="selbar"><b>${state.sel.size} selected</b><button class="btn primary small" data-action="bulkSel">Change…</button><button class="btn small" data-action="claimSel">Claim pack…</button><button class="btn small" data-action="labelsSel">QR labels…</button><button class="btn small" data-action="selClear">Clear selection</button></div>` : '';
     return head + toolbar + selBar + `<table class="list"><thead><tr><th style="width:34px"><input type="checkbox" class="selall" title="Select all shown" ${allOn ? 'checked' : ''}></th><th style="width:60px"></th><th>Item</th><th>Category</th><th>Location</th><th>Serial no.</th><th>Bought</th><th class="r">Value now</th><th></th></tr></thead><tbody>
       ${list.map(a => `<tr data-open="${a.id}"><td><input type="checkbox" class="selbox" data-id="${a.id}" ${state.sel.has(a.id) ? 'checked' : ''} aria-label="Select ${esc(a.name)}"></td><td>${thumb(a)}</td>
         <td><div class="name">${esc(a.name)}</div><div class="meta">${esc([a.brand, a.model].filter(Boolean).join(' '))}</div></td>
@@ -555,7 +587,7 @@
       </tbody></table>` : '<div class="empty">No service history. Log MOTs, services, repairs, battery changes and inspections here. Set a "next due" date to get a reminder.</div>'}`;
     }
     return `<div class="head"><button class="btn" data-action="back">← Items</button><span class="spacer"></span>
-      ${itemVaultBtn(a)}<button class="btn" data-action="claimOne">Claim pack…</button><button class="btn" data-action="dup">Duplicate</button><button class="btn danger" data-action="del">Delete</button><button class="btn primary" data-action="edit">Edit</button></div>
+      ${itemVaultBtn(a)}<button class="btn" data-action="labelOne">QR label…</button><button class="btn" data-action="claimOne">Claim pack…</button><button class="btn" data-action="dup">Duplicate</button><button class="btn danger" data-action="del">Delete</button><button class="btn primary" data-action="edit">Edit</button></div>
     ${a.inVault ? '<div class="note" style="margin-bottom:14px">🔒 This item is in the vault. It\'s hidden, and left out of totals and reports, whenever the vault is locked.</div>' : ''}
     <div class="detail-head">
       ${cover(a) ? `<img class="cover" src="${img(a, cover(a))}" data-zoom="${img(a, cover(a))}" alt="">` : '<div class="cover" data-tab="photos">▣</div>'}
@@ -991,6 +1023,8 @@
         case 'theme': await keep.setTheme(act.dataset.theme); await refresh(); break;
         case 'claimSel': claimForm([...state.sel]); break;
         case 'labelsSel': labelsForm([...state.sel]); break;
+        case 'bulkSel': bulkForm([...state.sel]); break;
+        case 'labelOne': labelsForm([a.id]); break;
         case 'bcLookup': barcodeLookup(a); break;
         case 'phoneView': {
           const pass = $('#pvPass').value;

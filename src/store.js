@@ -255,6 +255,49 @@ class Store {
     return existing || asset;
   }
 
+  /**
+   * Change several items at once (from the selection bar). Only these fields can be set:
+   * location, category, status (with lending or sale details), policyId. Saves once.
+   */
+  bulkUpdate(ids, changes) {
+    if (!Array.isArray(ids) || !ids.length) throw new Error('Choose at least one item.');
+    const c = changes && typeof changes === 'object' ? changes : {};
+    const set = {};
+    if (typeof c.location === 'string' && c.location.trim()) set.location = cleanString(c.location, 200);
+    if (typeof c.category === 'string' && c.category.trim()) set.category = cleanString(c.category, 200);
+    if (typeof c.status === 'string' && c.status) {
+      if (!STATUSES.includes(c.status)) throw new Error('Unknown status.');
+      set.status = c.status;
+      if (c.status === 'Lent out') {
+        set.lentTo = cleanString(c.lentTo, 200);
+        if (!set.lentTo) throw new Error('Enter who the items are lent to.');
+        set.lentContact = cleanString(c.lentContact, 200);
+        set.lentDate = cleanDate(c.lentDate);
+        set.dueBack = cleanDate(c.dueBack);
+      } else if (c.status === 'Sold') {
+        set.soldDate = cleanDate(c.soldDate);
+        set.soldTo = cleanString(c.soldTo, 200);
+      }
+      if (c.status !== 'Lent out') Object.assign(set, { lentTo: '', lentContact: '', lentDate: '', dueBack: '' });
+    }
+    if (typeof c.policyId === 'string') {
+      if (c.policyId && !(this.data.policies || []).some(p => p.id === c.policyId)) throw new Error('That policy no longer exists.');
+      set.policyId = c.policyId;
+    }
+    if (!Object.keys(set).length) throw new Error('Choose what to change.');
+    let n = 0;
+    for (const id of ids.slice(0, 10000)) {
+      const a = this.getAsset(String(id));
+      if (!a) continue;
+      Object.assign(a, set);
+      a.updatedAt = nowIso();
+      this._learnLists(a);
+      n++;
+    }
+    this.save();
+    return n;
+  }
+
   _learnLists(a) {
     if (a.category && !this.data.categories.includes(a.category)) this.data.categories.push(a.category);
     if (a.location && !this.data.locations.includes(a.location)) this.data.locations.push(a.location);

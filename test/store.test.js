@@ -327,3 +327,27 @@ test('changes from scanning labels: applied once, PC edits win, history in notes
   // a newer file version is refused clearly
   assert.throws(() => s.importCapture({ format: 'opensafe-export', version: 3, items: [] }), /newer version/);
 });
+
+test('bulk change: location, category, status with details, policy; validation', () => {
+  const s = tmpStore();
+  const a = s.saveAsset({ name: 'Drill', location: 'Garage', status: 'Lent out', lentTo: 'Dave' });
+  const b = s.saveAsset({ name: 'Saw', location: 'Garage' });
+  const c = s.saveAsset({ name: 'Bench', location: 'Garden' });
+  assert.throws(() => s.bulkUpdate([a.id], {}), /Choose what to change/);
+  assert.throws(() => s.bulkUpdate([a.id], { status: 'Lent out' }), /who the items are lent to/);
+  assert.throws(() => s.bulkUpdate([a.id], { status: 'Melted' }), /Unknown status/);
+  assert.strictEqual(s.bulkUpdate([a.id, b.id, 'nope'], { location: 'Shed', category: 'Tools', status: 'Owned' }), 2);
+  assert.strictEqual(s.getAsset(a.id).location, 'Shed');
+  assert.strictEqual(s.getAsset(a.id).lentTo, '');          // no longer lent out
+  assert.strictEqual(s.getAsset(c.id).location, 'Garden');  // not selected, untouched
+  assert.ok(s.data.locations.includes('Shed'));
+  s.bulkUpdate([b.id, c.id], { status: 'Lent out', lentTo: 'Sam', lentContact: 'sam@example.com', dueBack: '2026-12-24' });
+  assert.strictEqual(s.getAsset(c.id).lentContact, 'sam@example.com');
+  assert.strictEqual(s.getAsset(c.id).location, 'Garden'); // blank location kept
+  const pol = s.savePolicy({ insurer: 'Aviva', type: 'Home contents', renewalDate: '2027-03-01' });
+  s.bulkUpdate([a.id, b.id], { policyId: pol.id });
+  assert.strictEqual(s.getAsset(b.id).policyId, pol.id);
+  s.bulkUpdate([a.id], { policyId: '' });
+  assert.strictEqual(s.getAsset(a.id).policyId, '');
+  assert.throws(() => s.bulkUpdate([a.id], { policyId: 'missing' }), /no longer exists/);
+});

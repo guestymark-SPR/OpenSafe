@@ -343,6 +343,7 @@ function registerIpc() {
     return store.deleteAsset(id);
   });
   h('asset:duplicate', (id) => store.duplicateAsset(id));
+  h('asset:bulk', (ids, changes) => store.bulkUpdate(Array.isArray(ids) ? ids.map(String) : [], changes));
 
   h('attach:pick', async (assetId, kind, docType) => {
     const filters = kind === 'photo'
