@@ -52,16 +52,16 @@ npm test           # data and phone-link tests
 npm run dist:win   # installer + portable exe (run on Windows)
 ```
 
-A push to `main` builds the Windows installer through GitHub Actions (under Artifacts) without releasing it.
+Every push to `main` builds the Windows installer through GitHub Actions. If the `version` in `package.json` hasn't been released yet, the build is also published as a GitHub release (tag `v<version>`), and installed copies update themselves.
 
-To release an update to every installed copy:
+To release an update:
 
 ```bash
 npm run release:patch   # 1.0.0 -> 1.0.1 (fixes)
 npm run release:minor   # 1.0.1 -> 1.1.0 (new features)
 ```
 
-Each command bumps the version, makes a `v…` tag and pushes it. GitHub Actions then builds the installer and publishes the release with `latest.yml`, which installed apps use to find the update. The repo must be public for the app to see releases.
+Or just change `version` in `package.json` and push. The repo must be public for the app to see releases.
 
 ## Project layout
 

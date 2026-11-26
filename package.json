@@ -12,8 +12,8 @@
     "test": "node --test test/store.test.js",
     "dist:win": "electron-builder --win nsis portable --x64",
     "pack:win-zip": "electron-builder --win zip --x64",
-    "release:patch": "npm version patch -m \"OpenSafe %s\" && git push --follow-tags",
-    "release:minor": "npm version minor -m \"OpenSafe %s\" && git push --follow-tags"
+    "release:patch": "npm version patch --no-git-tag-version && git commit -am \"Release v$(node -p \\\"require('./package.json').version\\\")\" && git push",
+    "release:minor": "npm version minor --no-git-tag-version && git commit -am \"Release v$(node -p \\\"require('./package.json').version\\\")\" && git push"
   },
   "dependencies": {
     "electron-updater": "^6.8.11",
