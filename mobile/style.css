@@ -113,3 +113,20 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--accent2);border-
 .stocklist li.ticked{color:var(--muted)}
 .stocklist .box{font-size:18px;margin-right:6px}
 .chip.mode.on{background:var(--accent);border-color:var(--accent);color:#fff}
+
+/* Scan a room */
+.roombtn{width:100%;flex-direction:column;gap:2px;margin:-4px 0 12px}
+.roombtn span{font-weight:400;font-size:12.5px;color:var(--muted);text-align:center}
+.roomscanner{justify-content:flex-end}
+#roomBoxes{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.roomfound{position:absolute;left:12px;right:12px;top:calc(env(safe-area-inset-top) + 12px);color:#fff;font:600 15px system-ui,sans-serif;text-align:center;background:rgba(0,0,0,.55);border-radius:12px;padding:10px 12px}
+.roombar{position:relative;display:flex;gap:10px;width:100%;max-width:520px;padding:0 16px max(20px,env(safe-area-inset-bottom))}
+.roombar .btn{flex:1}
+.roomrows{display:flex;flex-direction:column;gap:8px;margin:8px 0 14px}
+.roomrow{display:flex;align-items:center;gap:10px;border:1px solid var(--line,#e2e8e6);border-radius:12px;padding:8px;margin:0}
+.roomrow input[type=checkbox]{width:22px;height:22px;flex:none;margin:0}
+.roomrow img{width:64px;height:64px;object-fit:cover;border-radius:8px;flex:none;background:#eee}
+.roomrow .t{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.roomrow .t input{margin:0;padding:8px 10px}
+.roomrow .m{font-size:12.5px;color:var(--muted)}
+.small{font-size:13px}

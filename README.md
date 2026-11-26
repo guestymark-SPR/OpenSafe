@@ -64,6 +64,7 @@ The search box at the top of the menu searches all your items from any page. On 
 - **Inventory on your phone:** a read-only, passphrase-encrypted copy of your PC inventory you can search on your phone.
 - **QR labels:** print A4 sheets of 21 labels (63.5 × 38.1 mm, Avery L7160 size). Scanning a label on the phone opens that item. Print one label from an item's page with **More → Print QR label…**.
 - **Scan a label to update an item:** in Capture, tap **Scan an item's QR label** to move it, lend it (with the person's phone or email and a due-back date), mark it returned, needing repair, in repair, repaired, sold, lost or got rid of, or add a note. The changes go to the PC in your next export.
+- **Scan a room:** in Capture, point the camera round a room and it recognises everyday things (TVs, laptops, sofas, fridges, bikes and more) and makes a draft item for each, with photos. Runs on the phone, offline after a one-time download.
 - **Barcodes:** scan a product barcode with the phone camera, or type it in. On the PC, **Look up** fills in the product name and brand from UPCitemdb (free, about 100 lookups a day and 6 a minute, needs the internet).
 
 ## Password protection and the vault
@@ -122,6 +123,17 @@ Tap **📋 Stock check**, choose a place (for example Garage), and scan every la
 - any labels that aren't in the inventory copy on the phone.
 
 It uses the inventory copy on the phone plus any changes waiting to export, so load a recent inventory file first.
+
+### Scan a room
+
+Tap **🔍 Scan a room**, say which room it is (for example *Home / Lounge*), and walk slowly round pointing the camera at your things. The phone recognises everyday items and boxes them on screen: TVs, laptops, keyboards, phones, sofas, chairs, tables, beds, fridges, ovens, microwaves, bikes, motorbikes, cars, suitcases and a few more. Tap **Finish** to see what it found, untick anything wrong, rename as you like, and save. Each one becomes a new item in that room with two photos (a close-up and the whole view), category filled in and the tag *room scan*, ready to export.
+
+What it can't do:
+- It knows 34 kinds of everyday thing. It won't recognise tools, jewellery, camping kit or most small things; add those yourself.
+- It names the kind of thing ("Laptop"), not the brand or model.
+- If there are several of the same thing, it counts the most it saw at once. Panning past three chairs one at a time may give one chair; check the list.
+
+How it works: it uses Google's free [MediaPipe](https://developers.google.com/edge/mediapipe/solutions/vision/object_detector) object detector (Apache-2.0, in `mobile/detector/`) with Google's EfficientDet-Lite0 model. The first scan needs the internet once to download about 19 MB: the engine from this app's site, and the model from Google, which is checked against its SHA-256 before use. After that it works offline. The camera picture is processed on the phone and never sent anywhere. MediaPipe also tries to send usage statistics to Google; Capture's security policy blocks that address, so nothing is sent.
 
 ### Your inventory on the phone
 

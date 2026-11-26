@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1d4d4f">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob: data:; style-src 'self'; script-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob: data:; style-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' https://storage.googleapis.com; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -36,7 +36,7 @@
   <section id="inv" class="hidden">
     <div id="invNone" class="card hidden">
       <h2>Your inventory from the PC</h2>
-      <p class="muted">In OpenSafe on your PC, go to <b>Import Files → See your inventory on your phone</b> and save the file with a passphrase. Send it to this phone, then load it here.</p>
+      <p class="muted">In OpenSafe on your PC, go to <b>Phone app → Send your inventory to the phone</b> and save the file with a passphrase. Send it to this phone, then load it here.</p>
       <label class="btn primary">📂 Load inventory file<input type="file" id="invFile" hidden></label>
     </div>
     <form id="invUnlock" class="card hidden" autocomplete="off">
@@ -63,6 +63,7 @@
     </div>
     <div class="scanrow"><button class="btn scanbtn" data-act="scanItem">📷 Scan an item's QR label<span>Move it, lend it, add photos, or say it needs repairing</span></button>
     <button class="btn stockbtn" data-act="stockCheck">📋 Stock check<span>Scan everything in a place</span></button></div>
+    <button class="btn roombtn" data-act="roomScan">🔍 Scan a room<span>Point the camera round a room: it recognises TVs, laptops, sofas, bikes and more, and makes draft items with photos</span></button>
     <div class="card exportcard">
       <div><b id="pendingCount">0 items</b> <span class="muted" id="pendingText">ready to export</span></div>
       <button class="btn primary" id="exportBtn" data-act="export">Export to PC</button>
@@ -135,6 +136,7 @@
 <div id="toast" class="toast hidden" role="status"></div>
 <div id="sheet" class="sheetwrap hidden"><div class="sheet" id="sheetBody"></div></div>
 <div id="scanner" class="scanner hidden"><video id="scanVideo" playsinline muted></video><div class="scanframe"></div><div class="scanmsg" id="scanMsg">Point the camera at the code</div><div class="scancount" id="scanCount"></div><button class="btn" data-act="scanClose" id="scanCloseBtn">Cancel</button></div>
+<div id="roomScanner" class="scanner roomscanner hidden"><video id="roomVideo" playsinline muted></video><canvas id="roomBoxes"></canvas><div class="roomfound" id="roomFound"></div><div class="roombar"><button class="btn" data-act="roomCancel">Cancel</button><button class="btn primary" data-act="roomDone">Finish</button></div></div>
 <datalist id="cats"></datalist>
 <datalist id="locs"></datalist>
 <script src="app.js"></script>

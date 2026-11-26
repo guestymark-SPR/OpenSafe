@@ -908,6 +908,202 @@
     $('scanner').classList.add('hidden');
   }
 
+  // ---------- scan a room: the camera recognises everyday things, on the phone ----------
+  // Uses MediaPipe's object detector (files in detector/, Apache-2.0) with Google's EfficientDet-Lite0
+  // model. The model is downloaded once from Google, checked against this SHA-256, and kept here.
+  // The camera picture is never sent anywhere. MediaPipe's own usage metrics are blocked by the CSP.
+  const MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/1/efficientdet_lite0.tflite';
+  const MODEL_SHA256 = '0720bf247bd76e6594ea28fa9c6f7c5242be774818997dbbeffc4da460c723bb';
+  const ENGINE_FILES = ['detector/vision_wasm_internal.wasm', 'detector/vision_wasm_internal.js', 'detector/vision_bundle.mjs'];
+  // The things worth recording, with a name and an OpenSafe category. People, pets, food, cups and so on are ignored.
+  const ROOM_THINGS = {
+    tv: ['TV', 'Electronics'], laptop: ['Laptop', 'Computers & Phones'], keyboard: ['Keyboard', 'Computers & Phones'], mouse: ['Computer mouse', 'Computers & Phones'],
+    'cell phone': ['Phone', 'Computers & Phones'], microwave: ['Microwave', 'Appliances'], oven: ['Oven', 'Appliances'], toaster: ['Toaster', 'Appliances'],
+    refrigerator: ['Fridge', 'Appliances'], 'hair drier': ['Hair dryer', 'Appliances'], couch: ['Sofa', 'Furniture'], chair: ['Chair', 'Furniture'], bed: ['Bed', 'Furniture'],
+    'dining table': ['Table', 'Furniture'], bench: ['Bench', 'Furniture'], clock: ['Clock', 'Other'], vase: ['Vase', 'Other'], bicycle: ['Bicycle', 'Sports & Hobbies'],
+    motorcycle: ['Motorbike', 'Vehicles'], car: ['Car', 'Vehicles'], truck: ['Van or truck', 'Vehicles'], boat: ['Boat', 'Marine'], backpack: ['Backpack', 'Camping & Outdoor'],
+    suitcase: ['Suitcase', 'Other'], handbag: ['Handbag', 'Clothing'], umbrella: ['Umbrella', 'Other'], skis: ['Skis', 'Sports & Hobbies'], snowboard: ['Snowboard', 'Sports & Hobbies'],
+    surfboard: ['Surfboard', 'Sports & Hobbies'], skateboard: ['Skateboard', 'Sports & Hobbies'], 'tennis racket': ['Tennis racket', 'Sports & Hobbies'], kite: ['Kite', 'Sports & Hobbies'],
+    'baseball bat': ['Baseball bat', 'Sports & Hobbies'], 'baseball glove': ['Baseball glove', 'Sports & Hobbies']
+  };
+  let detector = null, room = null, roomTimer = null, roomStream = null;
+  const mb = (n) => (n / 1048576).toFixed(1);
+
+  async function sha256Hex(buf) { return [...new Uint8Array(await crypto.subtle.digest('SHA-256', buf))].map(x => x.toString(16).padStart(2, '0')).join(''); }
+  async function fetchWithProgress(url, onBytes) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    if (!r.body || !r.body.getReader) { const b = await r.arrayBuffer(); onBytes(b.byteLength); return b; }
+    const rd = r.body.getReader(), parts = []; let n = 0;
+    for (;;) { const { done, value } = await rd.read(); if (done) break; parts.push(value); n += value.length; onBytes(value.length); }
+    const out = new Uint8Array(n); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; }
+    return out.buffer;
+  }
+  // First time only: the engine (from this app's site) and the model (from Google), about 19 MB.
+  async function downloadRecogniser(show) {
+    const total = 14665716 + 336624 + 155990 + 4602795; let got = 0;
+    const tick = (n) => { got += n; show(`Downloading the recognition files: ${mb(got)} of ${mb(total)} MB`); };
+    for (const f of ENGINE_FILES) await fetchWithProgress(f, tick); // the service worker keeps these
+    const model = await fetchWithProgress(MODEL_URL, tick);
+    if (await sha256Hex(model) !== MODEL_SHA256) throw new Error('The downloaded model file isn\'t the expected one, so it wasn\'t used. Try again later.');
+    await kvSet('detectorModel', model);
+    return model;
+  }
+  async function getDetector(show) {
+    if (detector) return detector;
+    let model = await kvGet('detectorModel');
+    if (!model) model = await downloadRecogniser(show);
+    show('Starting the recogniser…');
+    const { ObjectDetector } = await import('./detector/vision_bundle.mjs');
+    const files = { wasmLoaderPath: new URL('detector/vision_wasm_internal.js', location.href).href, wasmBinaryPath: new URL('detector/vision_wasm_internal.wasm', location.href).href };
+    // CPU: the int8 model isn't supported on MediaPipe's GPU path (Google lists no GPU timing for it).
+    detector = await ObjectDetector.createFromOptions(files, { baseOptions: { modelAssetBuffer: new Uint8Array(model.slice(0)), delegate: 'CPU' }, runningMode: 'VIDEO', scoreThreshold: 0.45, maxResults: 20 });
+    return detector;
+  }
+
+  function roomStart() {
+    learnedLists();
+    sheet(`<h2>🔍 Scan a room</h2>
+      <p>Walk slowly round the room pointing the camera at your things. The phone recognises everyday items (TVs, laptops, sofas, chairs, fridges, bikes, motorbikes and more) and makes a draft item for each, with a photo.</p>
+      <p class="muted small">It can't recognise tools, jewellery or most small things, and it doesn't know brands. Add those yourself. The camera picture stays on this phone.</p>
+      <form id="roomForm"><label>Which room or place?<input name="place" list="locs" maxlength="200" placeholder="e.g. Home / Lounge" required></label>
+      <div id="roomMsg" class="muted small"></div>
+      <button class="btn primary" type="submit">Start scanning</button></form>
+      <button class="btn" data-act="closeSheet">Cancel</button>`);
+    const f = $('roomForm');
+    f.elements.place.value = localStorage.getItem('roomPlace') || '';
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const place = f.elements.place.value.trim();
+      if (!place) return;
+      try { localStorage.setItem('roomPlace', place); } catch (_) {}
+      const btn = f.querySelector('button[type=submit]'); btn.disabled = true;
+      const show = (t) => { if ($('roomMsg')) $('roomMsg').textContent = t; };
+      try { await getDetector(show); }
+      catch (ex) {
+        btn.disabled = false;
+        show(navigator.onLine === false || /fetch|network|HTTP/i.test(String(ex && ex.message)) ? 'The first scan needs the internet once, to download the recognition files (about 19 MB). After that it works offline.' : String(ex && ex.message || ex));
+        return;
+      }
+      closeSheet();
+      roomScan(place).catch(ex => { roomStop(); toast(ex.message || String(ex), 5000); });
+    };
+  }
+
+  async function roomScan(place) {
+    room = { place, best: {}, lastShot: {}, errors: 0 };
+    roomStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+    const v = $('roomVideo'); v.srcObject = roomStream; await v.play();
+    $('roomFound').textContent = 'Point the camera at your things';
+    $('roomScanner').classList.remove('hidden');
+    const cv = $('roomBoxes'), g = cv.getContext('2d');
+    const small = document.createElement('canvas'), sg = small.getContext('2d', { willReadFrequently: true });
+    const loop = () => {
+      if (!roomStream) return;
+      try {
+        if (v.readyState >= 2 && v.videoWidth) {
+          // A small copy of the frame: quicker, and works on phones without WebGL. Boxes are scaled back up.
+          const k = Math.min(1, 640 / Math.max(v.videoWidth, v.videoHeight));
+          const sw = Math.round(v.videoWidth * k), sh = Math.round(v.videoHeight * k);
+          if (small.width !== sw || small.height !== sh) { small.width = sw; small.height = sh; }
+          sg.drawImage(v, 0, 0, sw, sh);
+          const res = detector.detectForVideo(sg.getImageData(0, 0, sw, sh), performance.now());
+          const up = (b) => ({ originX: b.originX / k, originY: b.originY / k, width: b.width / k, height: b.height / k });
+          const hits = (res.detections || []).map(d => ({ label: d.categories[0] && d.categories[0].categoryName, score: d.categories[0] ? d.categories[0].score : 0, box: up(d.boundingBox) })).filter(d => ROOM_THINGS[d.label]);
+          drawBoxes(cv, g, v, hits);
+          const byLabel = {};
+          for (const h of hits) (byLabel[h.label] = byLabel[h.label] || []).push(h);
+          for (const [label, list] of Object.entries(byLabel)) {
+            const best = room.best[label], sum = list.reduce((s, h) => s + h.score, 0);
+            const better = !best || list.length > best.count || (list.length === best.count && sum > best.sum + 0.05);
+            if (better && Date.now() - (room.lastShot[label] || 0) > 700) { room.lastShot[label] = Date.now(); room.best[label] = { count: list.length, sum, shots: grab(v, list) }; }
+          }
+          $('roomFound').textContent = foundText() || 'Point the camera at your things';
+          room.errors = 0;
+        }
+      } catch (ex) {
+        // Keep going over the odd bad frame, but stop if it never works (for example no WebGL in this browser).
+        if (++room.errors > 15) { roomStop(); room = null; sheet(`<h2>Scan a room can't run here</h2><p>This browser couldn't run the recogniser. It needs Chrome with graphics acceleration (WebGL) turned on. You can still add items with <b>+ Add item</b>.</p><p class="muted small">${esc(String(ex && ex.message || ex))}</p><button class="btn" data-act="closeSheet">OK</button>`); return; }
+      }
+      roomTimer = setTimeout(loop, 300);
+    };
+    loop();
+  }
+  // Boxes over the picture. The video fills the screen (object-fit: cover), so scale and offset to match.
+  function drawBoxes(cv, g, v, hits) {
+    const W = cv.clientWidth, H = cv.clientHeight, dpr = window.devicePixelRatio || 1;
+    if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+    g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    const s = Math.max(W / v.videoWidth, H / v.videoHeight), ox = (W - v.videoWidth * s) / 2, oy = (H - v.videoHeight * s) / 2;
+    g.lineWidth = 3; g.font = '600 15px system-ui, sans-serif';
+    for (const h of hits) {
+      const x = ox + h.box.originX * s, y = oy + h.box.originY * s, w = h.box.width * s, hh = h.box.height * s;
+      g.strokeStyle = '#3ddbb8'; g.strokeRect(x, y, w, hh);
+      const t = ROOM_THINGS[h.label][0], tw = g.measureText(t).width + 12;
+      g.fillStyle = '#3ddbb8'; g.fillRect(x, Math.max(0, y - 24), tw, 24); g.fillStyle = '#062a24'; g.fillText(t, x + 6, Math.max(17, y - 7));
+    }
+  }
+  // A copy of the frame and a close-up of each thing in it (the boxes are separate things, as they were seen together).
+  function grab(v, list) {
+    const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
+    c.getContext('2d').drawImage(v, 0, 0);
+    const shots = { frame: null, crops: list.map(() => null) };
+    c.toBlob(b => { shots.frame = b; }, 'image/jpeg', 0.85);
+    list.forEach((h, i) => {
+      const pad = 0.12, bx = h.box;
+      const x = Math.max(0, bx.originX - bx.width * pad), y = Math.max(0, bx.originY - bx.height * pad);
+      const w = Math.min(c.width - x, bx.width * (1 + 2 * pad)), hh = Math.min(c.height - y, bx.height * (1 + 2 * pad));
+      const k = Math.min(1, 1400 / Math.max(w, hh)), cc = document.createElement('canvas');
+      cc.width = Math.max(1, Math.round(w * k)); cc.height = Math.max(1, Math.round(hh * k));
+      cc.getContext('2d').drawImage(c, x, y, w, hh, 0, 0, cc.width, cc.height);
+      cc.toBlob(b => { shots.crops[i] = b; }, 'image/jpeg', 0.88);
+    });
+    return shots;
+  }
+  function foundText() {
+    const parts = Object.entries(room.best).map(([l, b]) => b.count > 1 ? `${b.count} × ${ROOM_THINGS[l][0]}` : ROOM_THINGS[l][0]);
+    return parts.length ? 'Found: ' + parts.join(', ') : '';
+  }
+  function roomStop() {
+    clearTimeout(roomTimer);
+    if (roomStream) roomStream.getTracks().forEach(t => t.stop());
+    roomStream = null;
+    $('roomScanner').classList.add('hidden');
+  }
+  async function roomFinish() {
+    roomStop();
+    await new Promise(r => setTimeout(r, 250)); // let the last photos finish encoding
+    const rows = [];
+    for (const [label, b] of Object.entries(room.best)) b.shots.crops.forEach((crop, i) => { if (crop) rows.push({ label, crop, frame: b.shots.frame, n: b.count > 1 ? i + 1 : 0 }); });
+    room.rows = rows;
+    if (!rows.length) { sheet(`<h2>Nothing recognised</h2><p>The phone didn't recognise anything it can record in <b>${esc(room.place)}</b>. It knows everyday things such as TVs, laptops, sofas, chairs, fridges and bikes. Try again in better light, or add items yourself.</p><button class="btn primary" data-act="roomAgain">Scan again</button><button class="btn" data-act="closeSheet">Close</button>`); return; }
+    sheet(`<h2>Found in ${esc(room.place)}</h2>
+      <p class="muted small">Untick anything that's wrong or already in OpenSafe, and rename as you like. Each one is saved as a new item with its photo, ready to export. If there are more of something than shown, add them yourself or scan again.</p>
+      <div class="roomrows">${rows.map((r, i) => `<label class="roomrow"><input type="checkbox" data-room-i="${i}" checked><img src="${blobUrl(r.crop)}" alt=""><span class="t"><input type="text" data-room-name="${i}" value="${esc(ROOM_THINGS[r.label][0])}" maxlength="200" aria-label="Name"><span class="m">${esc(ROOM_THINGS[r.label][1])}</span></span></label>`).join('')}</div>
+      <button class="btn primary" data-act="roomSave">Save ${rows.length} item${rows.length === 1 ? '' : 's'}</button>
+      <button class="btn" data-act="roomAgain">Scan again</button>
+      <button class="btn" data-act="closeSheet">Discard</button>`);
+    const upd = () => { const n = document.querySelectorAll('[data-room-i]:checked').length; const b = document.querySelector('[data-act=roomSave]'); b.textContent = `Save ${n} item${n === 1 ? '' : 's'}`; b.disabled = !n; };
+    document.querySelectorAll('[data-room-i]').forEach(c => { c.onchange = upd; });
+  }
+  async function roomSave() {
+    const now = new Date().toISOString(), day = todayLocal(), slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    let saved = 0;
+    for (const c of document.querySelectorAll('[data-room-i]:checked')) {
+      const i = Number(c.dataset.roomI), r = room.rows[i];
+      const name = (document.querySelector(`[data-room-name="${i}"]`).value || '').trim() || ROOM_THINGS[r.label][0];
+      const item = { id: uid(), createdAt: now, updatedAt: now, exportedAt: null, receipts: [], photos: [] };
+      for (const k of FIELDS) item[k] = '';
+      Object.assign(item, { name, category: ROOM_THINGS[r.label][1], location: room.place, tags: 'room scan' });
+      item.photos.push({ id: uid(), name: `${slug(name) || 'item'}.jpg`, type: 'image/jpeg', blob: r.crop, takenAt: day });
+      if (r.frame) item.photos.push({ id: uid(), name: `${slug(name) || 'item'}-in-room.jpg`, type: 'image/jpeg', blob: r.frame, takenAt: day });
+      await putItem(item); saved++;
+    }
+    closeSheet(); room = null;
+    toast(`✓ ${saved} item${saved === 1 ? '' : 's'} saved. Add brands, prices and serial numbers when you can.`, 4500);
+    showHome();
+  }
+
   // ---------- events ----------
   document.addEventListener('click', async (e) => {
     const tabBtn = e.target.closest('#tabs button');
@@ -960,6 +1156,11 @@
       case 'tripTick': { const t = inv.trips.find(x => x.id === a.dataset.id); const r = (await tripRows(t)).find(x => x.key === a.dataset.key); if (r) await setTick(t.id, r.key, tripMode, !r[tripMode]); showTrip(t.id); break; }
       case 'tripReset': if (confirm('Untick everything on this list on this phone?')) { const all = await tripTicks(); const t = inv.trips.find(x => x.id === a.dataset.id); all[t.id] = {}; for (const r of [...t.items, ...t.extras]) all[t.id][r.id] = { packed: false, back: false }; await kvSet('tripTicks', all); showTrip(t.id); } break;
       case 'stockCheck': startStockCheck(); break;
+      case 'roomScan': roomStart(); break;
+      case 'roomAgain': closeSheet(); roomScan(room ? room.place : '').catch(ex => { roomStop(); toast(ex.message || String(ex), 5000); }); break;
+      case 'roomDone': roomFinish(); break;
+      case 'roomCancel': roomStop(); room = null; break;
+      case 'roomSave': roomSave(); break;
       case 'stockMore': runStockScan(); break;
       case 'stockMove': stockMoveAll(); break;
       case 'stockDone': stock = null; closeSheet(); renderList(); break;
@@ -991,7 +1192,7 @@
       case 'about': {
         let est = '';
         try { const q = await navigator.storage.estimate(); est = `Using ${(q.usage / 1048576).toFixed(1)} MB on this device.`; } catch (_) {}
-        sheet(`<h2>About OpenSafe Capture</h2><p>Add items here, then export them to OpenSafe on your PC. Nothing leaves this device until you export it.</p><p class="muted">${esc(est)} ${items.length} item${items.length === 1 ? '' : 's'} stored.</p><button class="btn" data-act="closeSheet">OK</button>`);
+        sheet(`<h2>About OpenSafe Capture</h2><p>Add items here, then export them to OpenSafe on your PC. Nothing leaves this device until you export it.</p><p class="muted">Scan a room downloads its recognition files once (about 19 MB; the model comes from Google). The camera picture is never sent anywhere. Recognition uses MediaPipe by Google (Apache-2.0 licence).</p><p class="muted">${esc(est)} ${items.length} item${items.length === 1 ? '' : 's'} stored.</p><button class="btn" data-act="closeSheet">OK</button>`);
         break;
       }
     }
@@ -1010,7 +1211,7 @@
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 
   // Stop the camera when the app goes into the background
-  document.addEventListener('visibilitychange', () => { if (document.hidden && scan.cancel) scan.cancel(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden && scan.cancel) scan.cancel(); if (document.hidden && roomStream) roomFinish(); });
 
   autoOpen().finally(() => { showHome(); openFromHash(); });
 })();
