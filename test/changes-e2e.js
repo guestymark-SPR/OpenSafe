@@ -65,6 +65,7 @@ app.whenReady().then(async () => {
     await shot('c2-lend-form');
     await js(`document.getElementById('actForm').requestSubmit()`); await wait(600);
     // the ladder, from its label link: move it, then say it needs repairing (empty reason refused)
+    await js(`document.querySelector('[data-act=lockInv]').click()`); await wait(300);
     await openLink(ladder.id);
     R.ladderLockedTitle = (await sheetText()).split('\n')[0];      // inventory locked again after reload: asks for the passphrase
     await shot('c1b-quick-unlock');
@@ -82,7 +83,7 @@ app.whenReady().then(async () => {
     await js(`{ const f = document.getElementById('actForm'); f.note.value = 'Bent rung'; f.requestSubmit(); }`); await wait(600);
     // a note on the drill, then undo it
     await openLink(drill.id);
-    await js(`document.querySelector('#quickUnlock').pass.value = 'phone pass 1'; document.querySelector('#quickUnlock').requestSubmit()`); await wait(1800);
+    R.drillRemembered = (await sheetText()).split('\n')[0];   // no passphrase needed now
     await js(`document.querySelector('[data-kind=note]').click()`); await wait(300);
     await js(`{ const f = document.getElementById('actForm'); f.note.value = 'Delete me'; f.requestSubmit(); }`); await wait(600);
     await shot('c3-home-changes');

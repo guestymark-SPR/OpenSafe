@@ -75,7 +75,7 @@ When you import the file on the PC:
 
 On the PC, go to **Import Files → See your inventory on your phone**, choose a passphrase (at least 6 characters) and click **Save inventory for phone…**. Send the `.opensafe-view` file to the phone the same way as an export, then in Capture open **My inventory**, load the file and enter the passphrase.
 
-- **Encryption:** the file is encrypted with AES-256-GCM using a key from your passphrase (PBKDF2-SHA256, 310,000 rounds). It's only decrypted in memory, and locks again after 5 minutes in the background.
+- **Encryption:** the file is encrypted with AES-256-GCM using a key from your passphrase (PBKDF2-SHA256, 310,000 rounds). You enter the passphrase once per file: after that the phone keeps the unlock key in the app's storage (as a non-extractable Web Crypto key; the passphrase itself isn't stored), so it opens straight away. **⋮ → Lock inventory** removes the key so it asks again. Anyone who can unlock your phone and open Capture can see the inventory, so keep a screen lock on the phone.
 - **Read-only:** it's a copy with small photos and the main details. Make a new file whenever you want the phone up to date. Vault items are left out unless you tick **Include vault items** while the vault is open.
 - **Labels:** **Scan label** (or the phone's camera app) opens the item a QR label belongs to.
 

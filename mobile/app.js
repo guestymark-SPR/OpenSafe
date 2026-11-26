@@ -312,19 +312,43 @@
 
   // ---------- inventory from the PC (read-only, encrypted with a passphrase) ----------
   let tab = 'home';
-  let inv = null;          // decrypted inventory, kept only in memory
+  let inv = null;          // decrypted inventory, in memory while the app is open
+  // After the passphrase is entered once, the AES key for that file is kept in this app's
+  // storage as a non-extractable CryptoKey (the passphrase itself is never stored), so the
+  // inventory opens without asking again. Loading a new file or "Lock inventory" removes it.
   let pendingItem = null;  // item id from a scanned QR label link
 
-  async function decryptInventory(text, pass) {
+  const b64 = (s) => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+  function parseView(text) {
     const f = JSON.parse(text);
     if (f.format !== 'opensafe-view') throw new Error('This isn\'t an OpenSafe inventory file.');
-    const b = (s) => Uint8Array.from(atob(s), c => c.charCodeAt(0));
-    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass.normalize('NFKC')), 'PBKDF2', false, ['deriveKey']);
-    const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt: b(f.salt), iterations: f.kdf.iterations }, base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
-    let plain;
-    try { plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b(f.iv) }, key, b(f.data)); }
-    catch (_) { throw new Error('That passphrase isn\'t right.'); }
+    return f;
+  }
+  async function decryptWithKey(f, key) {
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(f.iv) }, key, b64(f.data));
     return JSON.parse(new TextDecoder().decode(plain));
+  }
+  async function decryptInventory(text, pass) {
+    const f = parseView(text);
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass.normalize('NFKC')), 'PBKDF2', false, ['deriveKey']);
+    const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt: b64(f.salt), iterations: f.kdf.iterations }, base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+    let view;
+    try { view = await decryptWithKey(f, key); }
+    catch (_) { throw new Error('That passphrase isn\'t right.'); }
+    try { await kvSet('inventoryKey', { key, salt: f.salt }); } catch (_) { /* can't remember it: it will ask again next time */ }
+    return view;
+  }
+  // Open the inventory with the remembered key, if there is one for the file on this phone.
+  async function autoOpen() {
+    if (inv) return true;
+    try {
+      const file = await kvGet('inventory'), saved = await kvGet('inventoryKey');
+      if (!file || !saved || !saved.key) return false;
+      const f = parseView(file.text);
+      if (saved.salt !== f.salt) { await kvSet('inventoryKey', undefined); return false; }
+      inv = await decryptWithKey(f, saved.key);
+      return true;
+    } catch (_) { return false; }
   }
 
   function setTab(t) {
@@ -337,16 +361,17 @@
     $('home').classList.add('hidden'); $('form').classList.add('hidden'); $('fab').classList.add('hidden');
     $('inv').classList.remove('hidden');
     $('title').textContent = 'My inventory';
+    await autoOpen();
     const file = await kvGet('inventory');
     $('invNone').classList.toggle('hidden', !!file);
     $('invUnlock').classList.toggle('hidden', !file || !!inv);
     $('invOpen').classList.toggle('hidden', !inv);
     $('subtitle').textContent = inv ? 'Read-only copy from your PC' : 'Copy of your PC inventory';
     if (file && !inv) {
-      $('invInfo').textContent = `Loaded ${file.loadedAt ? new Date(file.loadedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}. Enter the passphrase you chose on the PC.`;
+      $('invInfo').textContent = `Loaded ${file.loadedAt ? new Date(file.loadedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}. Enter the passphrase you chose on the PC. You'll only need it once for this file.`;
       setTimeout(() => $('invUnlock').pass.focus(), 50);
     }
-    if (inv) renderInv();
+    if (inv) renderInv(); else $('invList').replaceChildren();
   }
 
   function renderInv() {
@@ -388,6 +413,7 @@
     try { const j = JSON.parse(text); if (j.format !== 'opensafe-view') throw new Error(); }
     catch (_) { toast('That isn\'t an OpenSafe inventory file. Choose the .opensafe-view file from the PC.', 5000); return; }
     await kvSet('inventory', { text, loadedAt: new Date().toISOString() });
+    await kvSet('inventoryKey', undefined);
     inv = null;
     showInv();
   };
@@ -441,6 +467,7 @@
   }
   async function showActions(id, skipUnlock) {
     await loadUpdates();
+    await autoOpen();
     if (!inv && !skipUnlock && !items.some(x => x.id === id) && await kvGet('inventory')) {
       sheet(`<form id="quickUnlock" data-id="${id}" autocomplete="off"><h2>🔒 Which item is this?</h2>
         <p class="muted">Enter your inventory passphrase to see the item's name and details.</p>
@@ -625,9 +652,9 @@
       case 'itemAction': actionForm(a.dataset.kind, a.dataset.id); break;
       case 'itemDetails': showInvItem(a.dataset.id); break;
       case 'skipUnlock': showActions(a.dataset.id, true); break;
-      case 'lockInv': inv = null; toast('Inventory locked'); if (tab === 'inv') showInv(); break;
+      case 'lockInv': inv = null; await kvSet('inventoryKey', undefined); toast('Inventory locked. It will ask for the passphrase next time.', 4000); if (tab === 'inv') showInv(); break;
       case 'forgetInv':
-        if (confirm('Remove the inventory copy from this phone? Your items on the PC aren\'t affected.')) { await kvSet('inventory', undefined); inv = null; toast('Removed'); if (tab === 'inv') showInv(); }
+        if (confirm('Remove the inventory copy from this phone? Your items on the PC aren\'t affected.')) { await kvSet('inventory', undefined); await kvSet('inventoryKey', undefined); inv = null; toast('Removed'); if (tab === 'inv') showInv(); }
         break;
       case 'delete':
         if (confirm('Delete this item from this device?')) { await delItem(editing.id); toast('Deleted'); showHome(); }
@@ -670,13 +697,8 @@
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 
-  // Lock the inventory again when the app has been in the background for 5 minutes
-  let hiddenAt = 0;
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { hiddenAt = Date.now(); if (scan.cancel) scan.cancel(); }
-    else if (inv && Date.now() - hiddenAt > 5 * 60 * 1000) { inv = null; if (tab === 'inv') showInv(); }
-  });
+  // Stop the camera when the app goes into the background
+  document.addEventListener('visibilitychange', () => { if (document.hidden && scan.cancel) scan.cancel(); });
 
-  showHome();
-  openFromHash();
+  autoOpen().finally(() => { showHome(); openFromHash(); });
 })();

@@ -58,6 +58,7 @@ app.whenReady().then(async () => {
     R.detail = await js(`document.getElementById('sheetBody').innerText`);
     await js(`document.querySelector('[data-act=closeSheet]').click()`);
     // QR label link opened while the inventory is locked (fresh page load)
+    await js(`document.querySelector('[data-act=lockInv]').click()`); await wait(300);
     await win.loadURL('about:blank'); await win.loadURL(base + '#item=cccccccc-3333-4333-8333-333333333333'); await wait(900);
     R.linkSheetLocked = await js(`document.getElementById('sheetBody').innerText.split('\\n')[0]`);
     await js(`document.querySelector('#quickUnlock').pass.value = 'nope nope'; document.querySelector('#quickUnlock').requestSubmit()`); await wait(1800);
