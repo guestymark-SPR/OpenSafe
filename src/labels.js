@@ -4,7 +4,7 @@
 // OpenSafe Capture (once your inventory has been sent to the phone).
 
 const QRCode = require('qrcode');
-const { itemLink } = require('./phoneview');
+const { itemLink, placeLink } = require('./phoneview');
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -18,6 +18,26 @@ async function buildLabelsHtml(store, ids, { skip = 0 } = {}) {
     const sub = [a.location, a.serial ? 'S/N ' + a.serial : ''].filter(Boolean).join(' · ');
     cells.push(`<div class="lab"><img src="${qr}"><div class="t"><div class="n">${esc(a.name)}</div><div class="s">${esc(sub)}</div><div class="id">OpenSafe · ${esc(a.id.slice(0, 8))}</div></div></div>`);
   }
+  return sheetHtml(cells);
+}
+
+/** Labels for boxes, shelves and rooms. Scanning one on the phone shows what's in that place,
+ *  and lets you scan items to put them there. */
+async function buildPlaceLabelsHtml(places, { skip = 0, copies = 1 } = {}) {
+  const list = places.map(p => String(p || '').trim()).filter(Boolean);
+  if (!list.length) throw new Error('Choose at least one place.');
+  const n = Math.max(1, Math.min(4, copies | 0));
+  const cells = [];
+  for (let i = 0; i < Math.max(0, Math.min(20, skip | 0)); i++) cells.push('<div class="lab"></div>');
+  for (const p of list) {
+    const qr = await QRCode.toDataURL(placeLink(p), { margin: 0, width: 300, errorCorrectionLevel: 'M' });
+    const parts = p.split(' / ');
+    for (let i = 0; i < n; i++) cells.push(`<div class="lab"><img src="${qr}"><div class="t"><div class="n big">${esc(parts[parts.length - 1])}</div><div class="s">${parts.length > 1 ? esc(parts.slice(0, -1).join(' / ')) : ''}</div><div class="id">📦 OpenSafe place</div></div></div>`);
+  }
+  return sheetHtml(cells);
+}
+
+function sheetHtml(cells) {
   return `<!doctype html><html><head><meta charset="utf-8"><style>
   @page { size: A4; margin: 0 }
   * { box-sizing: border-box }
@@ -29,10 +49,11 @@ async function buildLabelsHtml(store, ids, { skip = 0 } = {}) {
   .t { min-width: 0 }
   .n { font-weight: 700; font-size: 10pt; line-height: 1.2; max-height: 3.6em; overflow: hidden; }
   .s { font-size: 7.5pt; color: #444; margin-top: 1mm; max-height: 2.4em; overflow: hidden; }
+  .n.big { font-size: 14pt }
   .id { font-size: 6.5pt; color: #888; margin-top: 1mm; font-family: Consolas, monospace }
   </style></head><body>${chunk(cells, 21).map(c => `<div class="sheet">${c.join('')}</div>`).join('')}</body></html>`;
 }
 
 function chunk(arr, n) { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; }
 
-module.exports = { buildLabelsHtml };
+module.exports = { buildLabelsHtml, buildPlaceLabelsHtml };

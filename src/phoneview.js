@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const ITERATIONS = 310000;
 const CAPTURE_URL = 'https://guestymark-spr.github.io/OpenSafe/';
 const itemLink = (id) => `${CAPTURE_URL}#item=${id}`;
+const placeLink = (place) => `${CAPTURE_URL}#place=${encodeURIComponent(place)}`;
 
 function encryptView(obj, passphrase) {
   if (typeof passphrase !== 'string' || passphrase.length < 6) throw new Error('Use a passphrase of at least 6 characters.');
@@ -51,4 +52,4 @@ function buildView(store, { includeVault = false, makeThumb }) {
   return { exportedAt: new Date().toISOString(), count: items.length, items };
 }
 
-module.exports = { encryptView, decryptView, buildView, itemLink, CAPTURE_URL, ITERATIONS };
+module.exports = { encryptView, decryptView, buildView, itemLink, placeLink, CAPTURE_URL, ITERATIONS };

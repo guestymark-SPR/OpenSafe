@@ -20,6 +20,10 @@
     if (!(years > 0)) return a.purchasePrice;
     return Math.round(a.purchasePrice * Math.pow(1 - r / 100, years) * 100) / 100;
   }
+  // Currencies the exchange-rate service (Frankfurter, European Central Bank reference rates) provides.
+  const FX_CURRENCIES = [['EUR', 'Euro'], ['USD', 'US dollar'], ['AUD', 'Australian dollar'], ['BRL', 'Brazilian real'], ['CAD', 'Canadian dollar'], ['CHF', 'Swiss franc'], ['CNY', 'Chinese yuan'], ['CZK', 'Czech koruna'], ['DKK', 'Danish krone'], ['HKD', 'Hong Kong dollar'], ['HUF', 'Hungarian forint'], ['IDR', 'Indonesian rupiah'], ['ILS', 'Israeli shekel'], ['INR', 'Indian rupee'], ['ISK', 'Icelandic króna'], ['JPY', 'Japanese yen'], ['KRW', 'South Korean won'], ['MXN', 'Mexican peso'], ['MYR', 'Malaysian ringgit'], ['NOK', 'Norwegian krone'], ['NZD', 'New Zealand dollar'], ['PHP', 'Philippine peso'], ['PLN', 'Polish złoty'], ['RON', 'Romanian leu'], ['SEK', 'Swedish krona'], ['SGD', 'Singapore dollar'], ['THB', 'Thai baht'], ['TRY', 'Turkish lira'], ['ZAR', 'South African rand']];
+  const fxMoney = (cur, n) => { try { return new Intl.NumberFormat('en-GB', { style: 'currency', currency: cur }).format(n); } catch (_) { return `${n} ${cur}`; } };
+  const fxText = (a) => `${fxMoney(a.foreignCurrency, a.foreignPrice)} at £${Number(a.fxRate).toLocaleString('en-GB', { maximumFractionDigits: 6 })} per ${a.foreignCurrency}${a.fxDate ? ', rate of ' + ukDate(a.fxDate) : ''}`;
   const value = (a) => { if (a.currentValue !== null && a.currentValue !== undefined) return a.currentValue; const e = estimate(a); return e !== null ? e : (a.purchasePrice ?? 0); };
   // Locations can have levels: "Home / Garage / Shelf 2". A place includes everything inside it.
   const inLoc = (loc, place) => !!loc && (loc === place || loc.startsWith(place + ' / '));
@@ -456,7 +460,7 @@
         </div>
       </div>
       <div class="grid" style="align-content:start">
-        ${locs.length ? `<div class="card"><h2>Where things are</h2><div class="loctree">${locs.map(([p, d]) => `<div class="rowi" data-action="filterLoc" data-loc="${esc(p)}" title="Show items in ${esc(p)}"><span style="flex:1">${esc(locLabel(p))}</span><span class="meta nowrap">${d.count} · ${money0(d.value)}</span></div>`).join('')}</div></div>` : ''}
+        ${locs.length ? `<div class="card"><h2>Where things are</h2><div class="loctree">${locs.map(([p, d]) => `<div class="rowi" data-action="filterLoc" data-loc="${esc(p)}" title="Show items in ${esc(p)}"><span style="flex:1">${esc(locLabel(p))}${((state.snap.data.places || {})[p] || { files: [] }).files.length ? ' <span title="Photos and videos of this place">🎥</span>' : ''}</span><span class="meta nowrap">${d.count} · ${money0(d.value)}</span></div>`).join('')}</div></div>` : ''}
         <div class="card"><h2>Coming up</h2>
           ${rem.length ? `<div class="rows">${rem.map(r => `<div class="rowi" ${r.policyId ? 'data-nav="policies"' : `data-open="${r.assetId}"`}>
               <span class="pill ${r.daysLeft < 0 ? 'bad' : 'warn'}">${esc(r.kind)}</span>
@@ -538,7 +542,7 @@
     for (const id of [...state.sel]) if (!state.snap.data.assets.some(a => a.id === id)) state.sel.delete(id);
     const allOn = ids.length && ids.every(id => state.sel.has(id));
     const selBar = state.sel.size ? `<div class="selbar"><b>${state.sel.size} selected</b><button class="btn primary small" data-action="bulkSel">Change…</button><button class="btn small" data-action="claimSel">Claim pack…</button><button class="btn small" data-action="labelsSel">QR labels…</button><button class="btn small" data-action="selClear">Clear selection</button></div>` : '';
-    return head + toolbar + selBar + `<table class="list"><thead><tr><th style="width:34px"><input type="checkbox" class="selall" title="Select all shown" ${allOn ? 'checked' : ''}></th><th style="width:60px"></th><th>Item</th><th>Category</th><th>Location</th><th>Serial no.</th><th>Bought</th><th class="r">Value now</th><th></th></tr></thead><tbody>
+    return head + toolbar + placeCard(f.location) + selBar + `<table class="list"><thead><tr><th style="width:34px"><input type="checkbox" class="selall" title="Select all shown" ${allOn ? 'checked' : ''}></th><th style="width:60px"></th><th>Item</th><th>Category</th><th>Location</th><th>Serial no.</th><th>Bought</th><th class="r">Value now</th><th></th></tr></thead><tbody>
       ${list.map(a => `<tr data-open="${a.id}"><td><input type="checkbox" class="selbox" data-id="${a.id}" ${state.sel.has(a.id) ? 'checked' : ''} aria-label="Select ${esc(a.name)}"></td><td>${thumb(a)}</td>
         <td><div class="name">${esc(a.name)}${partsOf(a.id).length ? ` <span class="pill">Set of ${partsOf(a.id).length + 1}</span>` : ''}</div><div class="meta">${esc([a.brand, a.model].filter(Boolean).join(' '))}${a.partOf && asset(a.partOf) ? `${a.brand || a.model ? ' · ' : ''}Part of ${esc(asset(a.partOf).name)}` : ''}</div></td>
         <td>${esc(a.category)}</td><td>${esc(a.location)}</td><td class="mono">${esc(a.serial) || '<span class="faint">—</span>'}</td>
@@ -657,7 +661,7 @@
         ${kv('Category', esc(a.category))}${kv('Location', esc(a.location))}${kv('Status', esc(a.status))}
         ${kv('Brand', esc(a.brand))}${kv('Model', esc(a.model))}${kv('Serial number', a.serial ? `<span class="mono">${esc(a.serial)}</span>` : '')}
         ${kv('Bought on', a.purchaseDate ? ukDate(a.purchaseDate) : '')}${kv('Bought from', esc(a.supplier))}${kv('Condition', esc(a.condition))}
-        ${kv('Price paid', a.purchasePrice !== null ? money(a.purchasePrice) : '')}${kv('Value now', a.currentValue !== null ? money(a.currentValue) : estimate(a) !== null ? `≈ ${money(estimate(a))} <span class="faint">estimated (${esc(a.category)}: ${state.snap.data.settings.depreciation[a.category]}% a year)</span>` : '')}${kv('Warranty until', a.warrantyExpiry ? ukDate(a.warrantyExpiry) + ' ' + warrantyPill(a) : '')}
+        ${kv('Price paid', a.purchasePrice !== null ? money(a.purchasePrice) + (a.foreignCurrency && a.foreignPrice !== null ? ` <span class="faint">(${esc(a.fxRate ? fxText(a) : fxMoney(a.foreignCurrency, a.foreignPrice))})</span>` : '') : a.foreignCurrency && a.foreignPrice !== null ? esc(fxMoney(a.foreignCurrency, a.foreignPrice)) : '')}${kv('Value now', a.currentValue !== null ? money(a.currentValue) : estimate(a) !== null ? `≈ ${money(estimate(a))} <span class="faint">estimated (${esc(a.category)}: ${state.snap.data.settings.depreciation[a.category]}% a year)</span>` : '')}${kv('Warranty until', a.warrantyExpiry ? ukDate(a.warrantyExpiry) + ' ' + warrantyPill(a) : '')}
         ${(() => { const pol = (state.snap.data.policies || []).find(p => p.id === a.policyId); return pol
           ? kv('Insured by', `<a href="#" data-nav="policies">${esc(pol.insurer)}</a>${pol.type ? ' · ' + esc(pol.type) : ''}`) + kv('Policy number', esc(pol.policyNumber)) + kv('Insured value', a.insuredValue !== null ? money(a.insuredValue) : '')
           : kv('Insurer', esc(a.insurer)) + kv('Policy number', esc(a.policyNumber)) + kv('Insured value', a.insuredValue !== null ? money(a.insuredValue) : ''); })()}
@@ -680,7 +684,7 @@
         <div class="acts">${i ? `<button data-action="cover" data-att="${p.id}">Make cover</button>` : ''}<button data-action="ocr" data-file="${esc(p.file)}" title="Read a photo of a receipt">Read receipt</button>${fileVaultBtn(a, p)}<button data-action="rmAtt" data-att="${p.id}">Delete</button></div></div>`).join('')}</div>`
         : '<div class="empty">No photos yet. Photos of the item, its serial plate and its box all help with insurance claims.</div>'}`;
     } else if (t === 'docs') {
-      body = `<div class="drop" id="drop">Drag receipts, manuals or warranty cards here as
+      body = `<div class="drop" id="drop">Drag receipts, manuals, warranty cards or videos here as
         <select id="docType" style="width:auto;min-width:120px;margin:0 6px">${state.snap.lists.docTypes.map(x => opt(x, x, 'Receipt')).join('')}</select>
         or <button class="btn small" data-action="pick" data-kind="document">Choose files…</button></div>
       ${a.documents.length ? `<table class="list"><thead><tr><th>Name</th><th>Type</th><th>Added</th><th></th></tr></thead><tbody>
@@ -707,6 +711,16 @@
       <div style="margin-top:6px">${a.grab ? '<span class="pill bad">🚨 Grab list</span>' : ''}${a.status !== 'Owned' ? `<span class="pill">${esc(a.status)}</span>` : ''}${warrantyPill(a)}${a.insurer ? '<span class="pill good">Insured</span>' : ''}</div></div>
     </div>
     <div class="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${t === k ? 'on' : ''}">${l}</button>`).join('')}</div>${body}`;
+  }
+
+  function placeCard(place) {
+    if (!place) return '';
+    const e = (state.snap.data.places || {})[place];
+    const files = e ? e.files : [];
+    return `<div class="card" style="margin-bottom:14px"><h2 style="display:flex;align-items:center">🎥 Photos and videos of ${esc(place)}<span class="spacer"></span><button class="btn small" data-action="placeAdd">Add photos or videos…</button></h2>
+      ${files.length ? `<div class="rows">${files.map(x => `<div class="rowi"><span style="font-size:20px">${x.kind === 'video' ? '🎥' : '🖼️'}</span><span style="flex:1"><b>${esc(x.name)}</b> <span class="meta">${ukDate(x.addedAt.slice(0, 10))}</span></span>
+        <button class="btn small" data-action="placeOpen" data-file="${esc(x.file)}" data-name="${esc(x.name)}">${x.kind === 'video' ? 'Play' : 'Open'}</button><button class="btn small danger" data-action="placeRm" data-fid="${x.id}">Delete</button></div>`).join('')}</div>`
+      : '<div class="muted">A slow video of each room, opening cupboards and drawers, is good evidence of what you own for an insurance claim. Videos up to 1 GB; they\'re stored like your other files (encrypted if password protection is on).</div>'}</div>`;
   }
 
   function viewBin() {
@@ -831,6 +845,11 @@
         <p><label class="switch" style="font-weight:500"><input type="checkbox" id="rInactive"> Include sold, disposed and lost items</label></p>
         <button class="btn primary" data-action="report">Save PDF…</button></div>
       ${state.snap.security.vault.exists ? `<div class="note" style="grid-column:1/-1">🔒 Vault items are only included while the vault is open. It's ${state.snap.security.vault.unlocked ? '<b>open</b> now, so they will be included' : '<b>locked</b> now, so they will be left out'}. Reports and spreadsheets are saved unencrypted, so keep them somewhere safe.</div>` : ''}
+      <div class="card"><h2>📦 Labels for boxes, shelves and rooms</h2>
+        <p class="muted">Stick one on a box, shelf or door. Scanning it in OpenSafe Capture shows what's there, lets you scan items to put them there, or starts a stock check. Same A4 sheets as item labels (Avery L7160).</p>
+        <div class="partlist" style="max-height:180px">${locPaths().map(p => `<label class="partrow"><input type="checkbox" class="plab" value="${esc(p)}"> <span>${esc(p)}</span></label>`).join('') || '<div class="muted">No locations yet.</div>'}</div>
+        <div style="display:flex;gap:10px;margin-top:8px"><label class="f" style="flex:1">Labels each<select id="plCopies">${[1, 2, 3, 4].map(n => opt(String(n), String(n), '1')).join('')}</select></label><label class="f" style="flex:1">Already used on the sheet<input id="plSkip" type="number" min="0" max="20" value="0"></label></div>
+        <p><button class="btn primary" data-action="placeLabels">Save labels PDF…</button></p></div>
       <div class="card"><h2>🚨 Grab list (PDF)</h2>
         <p class="muted">One page of the things to save first in a fire or flood, sorted by room, with a photo of each. ${state.snap.data.assets.filter(x => x.grab).length ? `<b>${state.snap.data.assets.filter(x => x.grab).length}</b> item${state.snap.data.assets.filter(x => x.grab).length === 1 ? ' is' : 's are'} on it.` : 'Nothing is on it yet: tick <b>On the grab list</b> when editing an item, or use <b>Change…</b> on several items.'}</p>
         <p>${state.snap.data.assets.some(x => x.grab) ? '<button class="btn primary" data-action="grabPdf">Save PDF…</button> <button class="btn" data-action="gap" data-gap="grab">Show the items</button>' : ''}</p></div>
@@ -933,6 +952,11 @@
           ${inp('soldDate', 'Sold on', 'type="date"')}${inp('soldPrice', 'Sold for (£)', 'inputmode="decimal"')}${inp('soldTo', 'Sold to / where')}</div>
         <h3>Purchase and value</h3>
         ${inp('purchaseDate', 'Bought on', 'type="date"')}${inp('purchasePrice', 'Price paid (£)', 'inputmode="decimal"')}${inp('supplier', 'Bought from')}
+        <div class="s3 fxrow"><label class="f">Bought abroad? Paid in<select name="foreignCurrency" id="fxCur">${opt('', 'Pounds (£)', a.foreignCurrency || '')}${FX_CURRENCIES.map(([c, n]) => opt(c, `${c} · ${n}`, a.foreignCurrency || '')).join('')}</select></label>
+          <label class="f">Price in that currency<input name="foreignPrice" id="fxAmt" inputmode="decimal" value="${esc(a.foreignPrice ?? '')}"></label>
+          <button type="button" class="btn" id="fxBtn" style="align-self:end">Work out £</button>
+          <input type="hidden" name="fxRate" id="fxRate" value="${esc(a.fxRate ?? '')}"><input type="hidden" name="fxDate" id="fxDate" value="${esc(a.fxDate || '')}">
+          <div class="faint" id="fxInfo" style="grid-column:1/-1">${a.foreignCurrency && a.fxRate ? fxText(a) : 'Uses the reference rate on the date bought. Your card or bank may have charged a different rate: if you have the £ amount from your statement, type that in Price paid instead.'}</div></div>
         ${inp('currentValue', 'Value now (£)', 'inputmode="decimal"')}${inp('warrantyExpiry', 'Warranty until', 'type="date"')}${inp('barcode', 'Barcode', 'inputmode="numeric"')}${inp('webLink', 'Web page (link)', 'type="url" placeholder="https://… product page, manual or shop"', 's2')}
         <label class="switch s3" style="font-weight:500"><input type="checkbox" name="grab" ${a.grab ? 'checked' : ''}> 🚨 On the grab list: one of the first things to save in a fire or flood</label>
         <h3>Vehicle or boat</h3>
@@ -962,6 +986,16 @@
     };
     $('#fKind').onchange = (e) => showKind(e.target.value);
     $('#fCat').onchange = (e) => { if (!$('#fKind').value) { const k = guessKind(e.target.value); if (k) { $('#fKind').value = k; showKind(k); } } };
+    if ($('#fxBtn')) $('#fxBtn').onclick = async () => {
+      const b = $('#fxBtn'); b.disabled = true; b.textContent = 'Looking up…';
+      try {
+        const r = await keep.fxConvert($('#fxCur').value, $('#fxAmt').value, f.purchaseDate.value);
+        f.purchasePrice.value = r.gbp.toFixed(2); $('#fxRate').value = r.rate; $('#fxDate').value = r.date;
+        $('#fxInfo').textContent = fxText({ foreignCurrency: r.currency, foreignPrice: r.amount, fxRate: r.rate, fxDate: r.date }) + (f.purchaseDate.value ? '' : ' (today\'s rate, as no date bought is entered)');
+      } catch (ex) { $('#fxInfo').textContent = '⚠ ' + ex.message; }
+      b.disabled = false; b.textContent = 'Work out £';
+    };
+    if ($('#fxCur')) $('#fxCur').onchange = () => { $('#fxRate').value = ''; $('#fxDate').value = ''; };
     f.onsubmit = async (e) => {
       e.preventDefault();
       const raw = Object.fromEntries(new FormData(e.target).entries());
@@ -970,7 +1004,7 @@
       data.details = details;
       data.grab = !!e.target.grab.checked;
       if (!data.name.trim()) { $('#formErr').textContent = 'Give the item a name.'; return; }
-      for (const k of ['purchasePrice', 'currentValue', 'insuredValue', 'soldPrice']) {
+      for (const k of ['purchasePrice', 'currentValue', 'insuredValue', 'soldPrice', 'foreignPrice']) {
         if (data[k] && !Number.isFinite(Number(String(data[k]).replace(/[£,\s]/g, '')))) { $('#formErr').textContent = 'Money amounts must be numbers, e.g. 249.99'; return; }
       }
       if (a.id) data.id = a.id;
@@ -1183,6 +1217,10 @@
         case 'phoneReset': await run(() => keep.phoneReset()); loadPhone(); break;
         case 'report': { const p = await run(() => keep.exportReport({ includePhotos: $('#rPhotos').checked, includeInactive: $('#rInactive').checked, groupBy: $('#rGroup').value, place: $('#rPlace').value })); if (p) toast('Report saved'); break; }
         case 'openLink': e.preventDefault(); await run(() => keep.openItemLink(a.id)); break;
+        case 'placeAdd': { const r = await run(() => keep.placePick(state.f.location)); if (r && r.added) toast(`✓ ${r.added} file${r.added === 1 ? '' : 's'} added`); if (r && r.errors.length) toast('⚠ ' + r.errors.join(' · '), 7000); await refresh(); break; }
+        case 'placeOpen': { const e = state.snap.data.places[state.f.location]; if (e) await run(() => keep.openAttachment(e.id, act.dataset.file, act.dataset.name)); break; }
+        case 'placeRm': if (confirm('Delete this file from OpenSafe?')) { await run(() => keep.placeRemove(state.f.location, act.dataset.fid), 'Deleted'); await refresh(); } break;
+        case 'placeLabels': { const places = [...document.querySelectorAll('.plab:checked')].map(i => i.value); if (!places.length) { toast('Tick at least one place'); break; } const p = await run(() => keep.placeLabels(places, { copies: Number($('#plCopies').value), skip: Number($('#plSkip').value) || 0 })); if (p) toast('✓ Labels saved. Print at 100% (no "fit to page").', 5000); break; }
         case 'grabPdf': { const p = await run(() => keep.exportGrab()); if (p) toast('Grab list saved'); break; }
         case 'csv': { const p = await run(() => keep.exportCsv()); if (p) toast('CSV saved'); break; }
         case 'saveDep': { const dep = {}; for (const i of document.querySelectorAll('[data-dep]')) if (i.value.trim()) dep[i.dataset.dep] = i.value.trim(); try { await run(() => keep.updateSettings({ depreciation: dep }), 'Saved'); await refresh(); } catch (_) {} break; }

@@ -17,13 +17,13 @@ const DEFAULT_CATEGORIES = [
 const DEFAULT_LOCATIONS = ['Home', 'Garage', 'Car', 'Storage', 'Boat'];
 const STATUSES = ['Owned', 'Lent out', 'Needs repair', 'In repair', 'Sold', 'Disposed', 'Lost / Stolen'];
 const CONDITIONS = ['New', 'Excellent', 'Good', 'Fair', 'Poor'];
-const DOC_TYPES = ['Receipt', 'Warranty', 'Manual', 'Insurance', 'Other'];
+const DOC_TYPES = ['Receipt', 'Warranty', 'Manual', 'Insurance', 'Video', 'Other'];
 
 const STRING_FIELDS = ['name', 'category', 'location', 'brand', 'model', 'serial', 'supplier',
   'condition', 'status', 'insurer', 'policyNumber', 'notes', 'purchaseDate', 'warrantyExpiry',
-  'barcode', 'webLink', 'policyId', 'partOf', 'lentTo', 'lentContact', 'lentDate', 'dueBack', 'soldDate', 'soldTo'];
-const DATE_FIELDS = new Set(['purchaseDate', 'warrantyExpiry', 'lentDate', 'dueBack', 'soldDate']);
-const MONEY_FIELDS = ['purchasePrice', 'currentValue', 'insuredValue', 'soldPrice'];
+  'barcode', 'webLink', 'foreignCurrency', 'fxDate', 'policyId', 'partOf', 'lentTo', 'lentContact', 'lentDate', 'dueBack', 'soldDate', 'soldTo'];
+const DATE_FIELDS = new Set(['purchaseDate', 'warrantyExpiry', 'lentDate', 'dueBack', 'soldDate', 'fxDate']);
+const MONEY_FIELDS = ['purchasePrice', 'currentValue', 'insuredValue', 'soldPrice', 'foreignPrice'];
 // Extra details for vehicles (car, van, motorbike) and boats
 const DETAIL_KINDS = ['', 'vehicle', 'boat'];
 const DETAIL_FIELDS = {
@@ -32,7 +32,8 @@ const DETAIL_FIELDS = {
 };
 const POLICY_TYPES = ['Home contents', 'Vehicle', 'Motorbike', 'Boat', 'Gadget', 'Travel', 'Other'];
 const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
-const DOC_EXT = new Set(['.pdf', '.jpg', '.jpeg', '.png', '.webp', '.gif', '.txt', '.doc', '.docx', '.xls', '.xlsx', '.csv']);
+const VIDEO_EXT = new Set(['.mp4', '.mov', '.m4v', '.webm', '.avi', '.mkv', '.3gp']);
+const DOC_EXT = new Set(['.pdf', '.jpg', '.jpeg', '.png', '.webp', '.gif', '.txt', '.doc', '.docx', '.xls', '.xlsx', '.csv', ...VIDEO_EXT]);
 
 const MAX_STRING = 5000;
 const BIN_DAYS = 30;
@@ -130,6 +131,7 @@ function emptyData() {
       depreciation: {} // category -> percent lost per year
     },
     policies: [],
+    places: {}, // photos and videos of a room or place: { 'Home / Lounge': { id, files: [{ id, file, name, kind, addedAt }] } }
     bin: [], // deleted items, kept for BIN_DAYS: [{ asset, deletedAt }]
     categories: DEFAULT_CATEGORIES.slice(),
     locations: DEFAULT_LOCATIONS.slice(),
@@ -215,6 +217,7 @@ class Store {
     out.assets = Array.isArray(out.assets) ? out.assets.map(a => this._normaliseAsset(a, a, true)) : [];
     if (out.vault && typeof out.vault !== 'object') delete out.vault;
     out.settings.autoBackup = Object.assign(emptyData().settings.autoBackup, (d && d.settings && d.settings.autoBackup) || {});
+    out.places = out.places && typeof out.places === 'object' && !Array.isArray(out.places) ? out.places : {};
     out.bin = Array.isArray(out.bin) ? out.bin.filter(b => b && b.asset && b.asset.id).map(b => ({ asset: this._normaliseAsset(b.asset, b.asset, true), deletedAt: b.deletedAt || nowIso() })) : [];
     out.policies = Array.isArray(out.policies) ? out.policies.map(p => this._normalisePolicy(p, p)) : [];
     out.version = DATA_VERSION;
@@ -268,6 +271,11 @@ class Store {
       const v = input[f] !== undefined ? input[f] : existing && existing[f];
       a[f] = cleanMoney(v);
     }
+    // Bought abroad: the price in the other currency, and the rate used for the £ price (pounds per unit, date of the rate).
+    a.foreignCurrency = /^[A-Z]{3}$/.test(String(a.foreignCurrency).toUpperCase()) && String(a.foreignCurrency).toUpperCase() !== 'GBP' ? String(a.foreignCurrency).toUpperCase() : '';
+    const rate = Number(input.fxRate !== undefined ? input.fxRate : existing && existing.fxRate);
+    a.fxRate = a.foreignCurrency && Number.isFinite(rate) && rate > 0 && rate < 1e6 ? Math.round(rate * 1e6) / 1e6 : null;
+    if (!a.foreignCurrency) { a.foreignPrice = null; a.fxRate = null; a.fxDate = ''; }
     a.tags = cleanTags(input.tags !== undefined ? input.tags : existing && existing.tags);
     a.grab = input.grab !== undefined ? input.grab === true || input.grab === 'on' || input.grab === 'true' : !!(existing && existing.grab); // on the grab list (save first in a fire or flood)
     a.details = cleanDetails(input.details !== undefined ? input.details : existing && existing.details);
@@ -403,6 +411,32 @@ class Store {
     return old.length;
   }
 
+
+  // ---------- photos and videos of a room or place (e.g. an insurance walk-through) ----------
+  placeFiles(place) { const e = this.data.places[cleanLocation(place)]; return e ? e.files : []; }
+  addPlaceFile(place, originalName, buffer) {
+    const p = cleanLocation(place);
+    if (!p) throw new Error('Choose a place first.');
+    const ext = path.extname(originalName || '').toLowerCase();
+    const kind = VIDEO_EXT.has(ext) ? 'video' : IMAGE_EXT.has(ext) ? 'photo' : null;
+    if (!kind) throw new Error(`${originalName}: only photos (JPG, PNG, WebP, GIF) and videos (MP4, MOV, M4V, WebM, AVI, MKV, 3GP) can be added to a place.`);
+    const entry = this.data.places[p] = this.data.places[p] || { id: uid(), files: [] };
+    const id = uid(), file = id + ext;
+    this._storeFile({ id: entry.id }, file, buffer);
+    const rec = { id, file, name: safeFileName(originalName), kind, addedAt: nowIso() };
+    entry.files.push(rec);
+    this.save();
+    return rec;
+  }
+  removePlaceFile(place, fileId) {
+    const e = this.data.places[cleanLocation(place)];
+    const i = e ? e.files.findIndex(f => f.id === fileId) : -1;
+    if (i < 0) throw new Error('File not found');
+    const [f] = e.files.splice(i, 1);
+    try { fs.unlinkSync(this.attachmentPath(e.id, f.file)); } catch (_) { /* already gone */ }
+    this.save();
+    return true;
+  }
 
   // ---------- spreadsheet import ----------
   /** Add items read from a spreadsheet. Duplicates: same name and serial number, or (with no
@@ -554,7 +588,7 @@ class Store {
     this._storeFile(asset, file, buffer);
     const rec = {
       id, file, name: safeFileName(originalName),
-      type: DOC_TYPES.includes(docType) ? docType : 'Other', addedAt: nowIso()
+      type: VIDEO_EXT.has(ext) ? 'Video' : DOC_TYPES.includes(docType) ? docType : 'Other', addedAt: nowIso()
     };
     asset.documents.push(rec);
     asset.updatedAt = nowIso();
@@ -960,7 +994,7 @@ class Store {
   toCSV() {
     const cols = ['name', 'category', 'location', 'brand', 'model', 'serial', 'status', 'condition',
       'purchaseDate', 'purchasePrice', 'supplier', 'currentValue', 'warrantyExpiry', 'insurer',
-      'policyNumber', 'insuredValue', 'barcode', 'webLink', 'lentTo', 'lentContact', 'lentDate', 'dueBack', 'soldDate', 'soldPrice', 'soldTo',
+      'policyNumber', 'insuredValue', 'barcode', 'webLink', 'foreignCurrency', 'foreignPrice', 'lentTo', 'lentContact', 'lentDate', 'dueBack', 'soldDate', 'soldPrice', 'soldTo',
       'reg', 'vin', 'engineNo', 'mileage', 'motDue', 'taxDue', 'hin', 'engineHours', 'tags', 'notes', 'photos', 'documents'];
     const esc = (v) => {
       let s = v === null || v === undefined ? '' : String(v);
@@ -1383,4 +1417,4 @@ class Store {
   }
 }
 
-module.exports = { Store, STATUSES, CONDITIONS, DOC_TYPES, POLICY_TYPES, DETAIL_FIELDS, cleanMoney, cleanDate, cleanLocation, inLocation, cleanUrl, estimateValue, valueNow, emptyData };
+module.exports = { VIDEO_EXT, Store, STATUSES, CONDITIONS, DOC_TYPES, POLICY_TYPES, DETAIL_FIELDS, cleanMoney, cleanDate, cleanLocation, inLocation, cleanUrl, estimateValue, valueNow, emptyData };

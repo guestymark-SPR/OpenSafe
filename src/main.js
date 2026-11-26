@@ -11,7 +11,7 @@ const { buildReportHtml } = require('./report');
 const { buildClaimPack } = require('./claim');
 const ocr = require('./ocr');
 const phoneview = require('./phoneview');
-const { buildLabelsHtml } = require('./labels');
+const { buildLabelsHtml, buildPlaceLabelsHtml } = require('./labels');
 const csv = require('./csv');
 const { buildGrabListHtml } = require('./grablist');
 const updater = require('./updater');
@@ -253,7 +253,8 @@ function addFilesFromPaths(assetId, kind, docType, paths) {
     try {
       const st = fs.statSync(p);
       if (!st.isFile()) continue;
-      if (st.size > 100 * 1024 * 1024) throw new Error('File is over 100 MB');
+      const isVideo = /\.(mp4|mov|m4v|webm|avi|mkv|3gp)$/i.test(p);
+      if (st.size > (isVideo ? 1024 : 100) * 1024 * 1024) throw new Error(isVideo ? 'Video is over 1 GB. Trim it or record it in a lower quality (1080p is plenty).' : 'File is over 100 MB');
       const buf = fs.readFileSync(p);
       const name = path.basename(p);
       const isImage = /\.(jpe?g|png|webp|gif)$/i.test(name);
@@ -396,7 +397,7 @@ function registerIpc() {
   h('attach:pick', async (assetId, kind, docType) => {
     const filters = kind === 'photo'
       ? [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif'] }]
-      : [{ name: 'Documents', extensions: ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'txt', 'doc', 'docx', 'xls', 'xlsx', 'csv'] }];
+      : [{ name: 'Documents and videos', extensions: ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'txt', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'mp4', 'mov', 'm4v', 'webm', 'avi', 'mkv', '3gp'] }];
     const r = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'], filters });
     if (r.canceled) return { added: 0, errors: [] };
     return addFilesFromPaths(assetId, kind, docType, r.filePaths);
@@ -405,6 +406,21 @@ function registerIpc() {
     if (!Array.isArray(paths)) throw new Error('No files');
     return addFilesFromPaths(assetId, kind, docType, paths.slice(0, 50).map(String));
   });
+  h('place:pick', async (place) => {
+    const r = await dialog.showOpenDialog(win, { title: `Photos and videos of ${place}`, properties: ['openFile', 'multiSelections'], filters: [{ name: 'Photos and videos', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'mp4', 'mov', 'm4v', 'webm', 'avi', 'mkv', '3gp'] }] });
+    if (r.canceled) return { added: 0, errors: [] };
+    const res = { added: 0, errors: [] };
+    for (const f of r.filePaths.slice(0, 50)) {
+      try {
+        const st = fs.statSync(f);
+        const isVideo = /\.(mp4|mov|m4v|webm|avi|mkv|3gp)$/i.test(f);
+        if (st.size > (isVideo ? 1024 : 100) * 1024 * 1024) throw new Error(isVideo ? 'over 1 GB' : 'over 100 MB');
+        store.addPlaceFile(String(place), path.basename(f), fs.readFileSync(f)); res.added++;
+      } catch (e) { res.errors.push(`${path.basename(f)}: ${e.message}`); }
+    }
+    return res;
+  });
+  h('place:remove', (place, fileId) => store.removePlaceFile(String(place), String(fileId)));
   h('attach:remove', (assetId, attId) => store.removeAttachment(assetId, attId));
   h('attach:cover', (assetId, attId) => store.setCoverPhoto(assetId, attId));
   h('attach:open', async (assetId, file, name) => {
@@ -443,6 +459,19 @@ function registerIpc() {
     return r.filePath;
   });
 
+  h('export:placeLabels', async (places, opts) => {
+    const html = await buildPlaceLabelsHtml(Array.isArray(places) ? places.map(String) : [], opts || {});
+    const r = await dialog.showSaveDialog(win, { title: 'Save labels for places', defaultPath: path.join(app.getPath('documents'), `OpenSafe-place-labels-${new Date().toISOString().slice(0, 10)}.pdf`), filters: [{ name: 'PDF', extensions: ['pdf'] }] });
+    if (r.canceled || !r.filePath) return null;
+    fs.mkdirSync(OPEN_DIR, { recursive: true });
+    const tmp = path.join(OPEN_DIR, `plabels-${Date.now()}.html`);
+    fs.writeFileSync(tmp, html, 'utf8');
+    const pw = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, javascript: false } });
+    try { await pw.loadFile(tmp); fs.writeFileSync(r.filePath, await pw.webContents.printToPDF({ pageSize: 'A4', printBackground: true, margins: { marginType: 'none' }, preferCSSPageSize: true })); }
+    finally { pw.destroy(); fs.rm(tmp, () => {}); }
+    shell.openPath(r.filePath);
+    return r.filePath;
+  });
   h('export:grab', async () => {
     const r = await dialog.showSaveDialog(win, { title: 'Save grab list', defaultPath: path.join(app.getPath('documents'), 'OpenSafe-grab-list.pdf'), filters: [{ name: 'PDF', extensions: ['pdf'] }] });
     if (r.canceled || !r.filePath) return null;
@@ -557,6 +586,25 @@ function registerIpc() {
     } finally { pw.destroy(); fs.rm(tmp, () => {}); }
     shell.openPath(r.filePath);
     return r.filePath;
+  });
+
+  // Exchange rate for something bought abroad: Frankfurter (free, no key; European Central Bank
+  // reference rates). A weekend or holiday date gives the rate of the working day before.
+  h('fx:convert', async (currency, amount, date) => {
+    const cur = String(currency || '').toUpperCase();
+    if (!/^[A-Z]{3}$/.test(cur) || cur === 'GBP') throw new Error('Choose the currency you paid in.');
+    const amt = Number(String(amount || '').replace(/[,\s]/g, ''));
+    if (!Number.isFinite(amt) || amt <= 0) throw new Error('Enter the price you paid, as a number.');
+    const d = /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')) ? String(date) : '';
+    if (d && d > new Date().toISOString().slice(0, 10)) throw new Error('The date bought is in the future.');
+    if (d && d < '1999-01-04') throw new Error('Rates are only available from 4 January 1999.');
+    let res;
+    try { res = await net.fetch(`https://api.frankfurter.dev/v1/${d || 'latest'}?base=${cur}&symbols=GBP`, { headers: { Accept: 'application/json' } }); }
+    catch (_) { throw new Error('Couldn\'t reach the exchange rate service. Check your internet connection, or type the £ amount from your bank statement.'); }
+    let j = null; try { j = await res.json(); } catch (_) {}
+    const rate = j && j.rates && Number(j.rates.GBP);
+    if (!res.ok || !Number.isFinite(rate) || rate <= 0) throw new Error(res.status === 404 || res.status === 422 ? `No exchange rate is available for ${cur}${d ? ' on that date' : ''}.` : 'The exchange rate service didn\'t answer properly. Try again later, or type the £ amount.');
+    return { gbp: Math.round(amt * rate * 100) / 100, rate, date: String(j.date || d), currency: cur, amount: amt };
   });
 
   h('barcode:lookup', async (code) => {

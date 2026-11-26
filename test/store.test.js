@@ -521,3 +521,30 @@ test('web link, grab list flag, report grouped by room for one place', () => {
   assert.ok(r.includes('<h2>Home / Bedroom') && r.includes('<h2>Home / Office') && !r.includes('Drill'));
   assert.ok(r.includes('Household inventory report: Home'));
 });
+
+test('batch E: videos, photos and videos of a place, place labels, bought abroad', async () => {
+  const s = tmpStore();
+  const a = s.saveAsset({ name: 'Lounge TV' });
+  const v = s.addDocument(a.id, 'walkround.MP4', Buffer.from('fake video'), 'Other');
+  assert.strictEqual(v.type, 'Video');
+  assert.throws(() => s.addPlaceFile('', 'x.mp4', Buffer.from('x')), /Choose a place/);
+  assert.throws(() => s.addPlaceFile('Home / Lounge', 'notes.pdf', Buffer.from('x')), /only photos/);
+  const f = s.addPlaceFile('home/lounge', 'Lounge walk-through.mov', Buffer.from('movie bytes'));
+  assert.strictEqual(f.kind, 'video');
+  const e = s.data.places['home / lounge'];
+  assert.strictEqual(s.readAttachment(e.id, f.file).toString(), 'movie bytes');
+  assert.strictEqual(s.placeFiles('home / lounge').length, 1);
+  s.removePlaceFile('home / lounge', f.id);
+  assert.ok(!fs.existsSync(s.attachmentPath(e.id, f.file)));
+  const { buildPlaceLabelsHtml } = require('../src/labels');
+  const html = await buildPlaceLabelsHtml(['Home / Garage / Box 3'], { copies: 2 });
+  assert.strictEqual((html.match(/class="lab"/g) || []).length, 2);
+  assert.ok(html.includes('>Box 3<') && html.includes('Home / Garage'));
+  const { placeLink } = require('../src/phoneview');
+  assert.strictEqual(placeLink('Home / Garage / Box 3'), 'https://guestymark-spr.github.io/OpenSafe/#place=Home%20%2F%20Garage%20%2F%20Box%203');
+  const t = s.saveAsset({ name: 'Tent', purchasePrice: '252.55', foreignCurrency: 'eur', foreignPrice: '300', fxRate: 0.84183, fxDate: '2025-03-14' });
+  assert.deepStrictEqual([t.foreignCurrency, t.foreignPrice, t.fxRate, t.fxDate], ['EUR', 300, 0.84183, '2025-03-14']);
+  const g = s.saveAsset({ id: t.id, name: 'Tent', foreignCurrency: '' });
+  assert.deepStrictEqual([g.foreignCurrency, g.foreignPrice, g.fxRate, g.fxDate, g.purchasePrice], ['', null, null, '', 252.55]);
+  assert.strictEqual(s.saveAsset({ name: 'X', foreignCurrency: 'GBP', foreignPrice: 5 }).foreignCurrency, '');
+});

@@ -446,6 +446,8 @@
   $('invQ').oninput = () => renderInv();
 
   function openFromHash() {
+    const pm = location.hash.match(/place=([^&]+)/);
+    if (pm) { history.replaceState(null, '', location.pathname); let p = ''; try { p = decodeURIComponent(pm[1]); } catch (_) {} if (p) showPlace(p); return; }
     const m = location.hash.match(/item=([0-9a-f-]{36})/i);
     if (!m) return;
     history.replaceState(null, '', location.pathname);
@@ -617,7 +619,7 @@
       btn.disabled = true; btn.textContent = 'Opening…';
       try {
         inv = await decryptInventory((await kvGet('inventory')).text, f.pass.value);
-        showActions(f.dataset.id);
+        if (f.dataset.place) showPlace(f.dataset.place); else showActions(f.dataset.id);
         if (tab === 'inv') showInv(); else renderList();
       } catch (ex) { $('quErr').textContent = ex.message; $('quErr').classList.remove('hidden'); btn.disabled = false; btn.textContent = 'Open'; }
     }
@@ -627,6 +629,8 @@
       $('scanMsg').textContent = 'Point the camera at an OpenSafe label';
       const text = await scan(['qr_code']);
       if (!text) return;
+      const place = placeFromLabel(text);
+      if (place) { showPlace(place); return; }
       const m = String(text).match(/item=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
       if (m) showActions(m[1].toLowerCase()); else toast('That QR code isn\'t an OpenSafe label.', 4000);
     } catch (ex) { stopScan(); toast(ex.message, 5000); }
@@ -689,6 +693,53 @@
   let stock = null;
   const inLoc = (loc, place) => place === '' ? !loc : !!loc && (loc === place || loc.startsWith(place + ' / '));
   const idFromLabel = (text) => { const m = String(text).match(/item=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i); return m ? m[1].toLowerCase() : null; };
+  const placeFromLabel = (text) => { const m = String(text).match(/[#&]place=([^&]+)/); if (!m) return ''; try { return decodeURIComponent(m[1]); } catch (_) { return ''; } };
+  // A box, shelf or room label: what's there, put items there, or stock-check it.
+  async function showPlace(place, skipUnlock) {
+    await loadUpdates();
+    await autoOpen();
+    if (!inv && !skipUnlock && await kvGet('inventory')) {
+      sheet(`<form id="quickUnlock" data-place="${esc(place)}" autocomplete="off"><h2>🔒 ${esc(place)}</h2>
+        <p class="muted">Enter your inventory passphrase to see what's here.</p>
+        <label>Passphrase<input type="password" name="pass" autocomplete="current-password"></label>
+        <div id="quErr" class="error hidden" role="alert"></div>
+        <button class="btn primary" type="submit">Open</button>
+        <button class="btn" type="button" data-act="skipUnlock" data-place="${esc(place)}">Skip</button></form>`);
+      return;
+    }
+    const here = inv ? inv.items.filter(a => { const st = currentState(a.id); return inLoc(st.location || '', place) && !GONE.includes(st.status); }) : [];
+    const parts = place.split(' / ');
+    sheet(`<h2>📦 ${esc(parts[parts.length - 1])}</h2>${parts.length > 1 ? `<p class="muted" style="margin-top:-6px">${esc(parts.slice(0, -1).join(' / '))}</p>` : ''}
+      <button class="btn primary" style="flex-direction:column;gap:2px;width:100%" data-act="placePut" data-place="${esc(place)}">📥 Put items here<span style="display:block;font-weight:400;font-size:13px">Scan each item's label as you put it in</span></button>
+      ${inv ? `<button class="btn" data-act="placeStock" data-place="${esc(place)}">📋 Stock check here</button>` : ''}
+      ${inv ? `<h3 class="stockh">In here (${here.length})</h3>${here.length ? `<ul class="stocklist">${here.map(a => { const w = currentState(a.id).location || ''; return `<li data-act="itemActions" data-id="${a.id}">${esc(a.name)}${w !== place ? `<small>${esc(w.slice(place.length + 3))}</small>` : ''}</li>`; }).join('')}</ul>` : '<p class="muted">Nothing recorded here yet.</p>'}` : '<p class="muted small">Load your inventory from the PC (My inventory tab) to see what\'s here.</p>'}
+      <button class="btn" data-act="closeSheet">Close</button>`);
+  }
+  async function putItemsHere(place) {
+    closeSheet();
+    await loadUpdates();
+    let moved = 0;
+    const at = () => new Date().toISOString();
+    try {
+      $('scanMsg').textContent = `Scan each item going into ${place}`;
+      $('scanCount').textContent = '';
+      await scanMany(['qr_code'], (text) => {
+        const id = idFromLabel(text);
+        if (!id) return { text: placeFromLabel(text) ? 'That\'s a place label. Scan the items.' : 'That isn\'t an OpenSafe label', warn: true };
+        const info = itemInfo(id);
+        if ((currentState(id).location || '') === place) return { text: `✓ ${info.name} is already here`, count: `${moved} moved` };
+        updates.push({ id: uid(), itemId: id, itemName: info.known ? info.name : '', at: at(), kind: 'move', changes: { location: place }, summary: `Moved to ${place}`, note: '', exportedAt: null });
+        kvSet('updates', updates);
+        moved++;
+        return { text: `📥 ${info.name} → ${place.split(' / ').pop()}`, count: `${moved} moved` };
+      });
+    } catch (ex) { stopScan(); toast(ex.message, 5000); }
+    $('scanCloseBtn').textContent = 'Cancel';
+    await kvSet('updates', updates);
+    if (moved) toast(`✓ ${moved} move${moved === 1 ? '' : 's'} saved. Export to send them to your PC.`, 4000);
+    showPlace(place);
+  }
+
   async function startStockCheck() {
     await loadUpdates();
     if (!(await autoOpen())) {
@@ -718,6 +769,7 @@
       $('scanCount').textContent = stock.found.size ? `${stock.found.size} found` : '';
       await scanMany(['qr_code'], (text) => {
         const id = idFromLabel(text);
+        if (!id && placeFromLabel(text)) return { text: 'That\'s a place label. Scan the items.', warn: true };
         if (!id) return { text: 'That isn\'t an OpenSafe label', warn: true };
         const a = inv.items.find(x => x.id === id);
         if (!a) { stock.unknown.add(id); return { text: `? This label isn't in your inventory copy (${id.slice(0, 8)})`, warn: true, count: `${stock.found.size} found` }; }
@@ -808,7 +860,10 @@
       case 'itemActions': showActions(a.dataset.id); break;
       case 'itemAction': actionForm(a.dataset.kind, a.dataset.id); break;
       case 'itemDetails': showInvItem(a.dataset.id); break;
-      case 'skipUnlock': showActions(a.dataset.id, true); break;
+      case 'skipUnlock': if (a.dataset.place) showPlace(a.dataset.place, true); else showActions(a.dataset.id, true); break;
+      case 'placePut': putItemsHere(a.dataset.place); break;
+      case 'placeStock': stock = { loc: a.dataset.place, found: new Set(), unknown: new Set() }; runStockScan(); break;
+      case 'placeShow': showPlace(a.dataset.place); break;
       case 'grabFilter': grabOnly = !grabOnly; renderInv(); break;
       case 'stockCheck': startStockCheck(); break;
       case 'stockMore': runStockScan(); break;
