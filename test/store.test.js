@@ -600,3 +600,49 @@ test('batch F: borrowed, owner, spending by year, duplicates and merge, delete m
   s.dismissRecall(tv.id, saved.matches[0].link);
   assert.strictEqual(s.saveRecallCheck({ checked: 1, skipped: 0, matches: r.matchesFor({ id: tv.id, name: 'TV', brand: 'LG', model: 'RESU' }, res), errors: [] }).matches.length, 0);
 });
+
+test('batch G: premium history, label reading, photo dates, long reminder look-ahead', () => {
+  const s = tmpStore();
+  const p = s.savePolicy({ insurer: 'Aviva', type: 'Home contents', renewalDate: '2026-03-01', premium: 240, excess: 100 });
+  assert.throws(() => s.renewPolicy(p.id, { premium: 260, renewalDate: '2026-02-01' }), /after the current one/);
+  s.renewPolicy(p.id, { premium: '£281.50', renewalDate: '2027-03-01', insurer: 'Direct Line', note: 'Aviva wanted £320' });
+  const p2 = s.data.policies[0];
+  assert.deepStrictEqual([p2.insurer, p2.premium, p2.renewalDate, p2.excess], ['Direct Line', 281.5, '2027-03-01', 100]);
+  assert.deepStrictEqual(p2.history.map(h => [h.endedOn, h.insurer, h.premium, h.note]), [['2026-03-01', 'Aviva', 240, 'Aviva wanted £320']]);
+  s.addPolicyHistory(p.id, { endedOn: '2025-03-01', premium: 199, insurer: 'Aviva' });
+  assert.deepStrictEqual(s.data.policies[0].history.map(h => h.endedOn), ['2025-03-01', '2026-03-01']);
+  s.savePolicy({ id: p.id, insurer: 'Direct Line', notes: 'edited' });                 // editing keeps the history
+  assert.strictEqual(s.data.policies[0].history.length, 2);
+  s.removePolicyHistory(p.id, s.data.policies[0].history[0].id);
+  assert.strictEqual(s.data.policies[0].history.length, 1);
+  // label reading
+  const { parseLabel } = require('../src/ocr');
+  assert.deepStrictEqual((({ serial, model }) => ({ serial, model }))(parseLabel('MAKITA\nModel: DHP485\nSerial No. 0012345Y')), { serial: '0012345Y', model: 'DHP485' });
+  assert.strictEqual(parseLabel('SERIAL NUMBER\nMODEL NUMBER').serial, '');
+  // photo dates
+  const { takenAt } = require('../src/exif');
+  const le = fs.readFileSync(path.join(__dirname, 'fixtures', 'exif-2023-07-15.jpg'));
+  assert.strictEqual(takenAt(le), '2023-07-15');
+  assert.strictEqual(takenAt(fs.readFileSync(path.join(__dirname, 'fixtures', 'exif-be-2021-12-24.jpg'))), '2021-12-24');
+  assert.strictEqual(takenAt(Buffer.from('not a jpeg at all')), '');
+  const a = s.saveAsset({ name: 'Tent' });
+  s.addPhoto(a.id, 'tent.jpg', le);
+  assert.strictEqual(s.getAsset(a.id).photos[0].takenAt, '2023-07-15');
+  assert.strictEqual(s.photoDateHint(s.getAsset(a.id)), '2023-07-15');
+  s.dismissDateHint(a.id);
+  assert.strictEqual(s.photoDateHint(s.getAsset(a.id)), null);
+  const b = s.saveAsset({ name: 'Bike' });
+  s.addPhoto(b.id, 'bike.jpg', le);
+  delete s.getAsset(b.id).photos[0].takenAt;                                          // an older photo, not checked yet
+  assert.strictEqual(s.backfillPhotoDates(10), 1);
+  assert.strictEqual(s.getAsset(b.id).photos[0].takenAt, '2023-07-15');
+  assert.strictEqual(s.backfillPhotoDates(10), 0);
+  // the phone sends the photo date (shrinking removes it from the file)
+  const r = s.importCapture({ format: 'opensafe-export', version: 1, items: [{ id: 'abcdef01-2345-4678-89ab-cdef01234568', name: 'Kayak', photos: [{ id: 'p1', name: 'k.jpg', type: 'image/jpeg', takenAt: '2024-08-02', data: Buffer.from('jpegish').toString('base64') }] }] });
+  assert.strictEqual(r.added, 1);
+  assert.strictEqual(s.getAsset('abcdef01-2345-4678-89ab-cdef01234568').photos[0].takenAt, '2024-08-02');
+  // reminders far ahead (used for reminders while closed)
+  s.saveAsset({ name: 'Car', details: { kind: 'vehicle', motDue: addDays(200) } });
+  assert.ok(!s.reminders().some(x => x.assetName === 'Car'));
+  assert.ok(s.reminders(new Date(), 400).some(x => x.assetName === 'Car'));
+});

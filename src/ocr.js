@@ -96,4 +96,21 @@ function parseReceipt(text) {
   return { shop: findShop(lines), date: findDate(text), total: findTotal(lines), text: String(text || '').slice(0, 5000) };
 }
 
-module.exports = { readText, parseReceipt, stop, _paths: paths };
+// Serial and model numbers from a photo of a rating plate, sticker or box label.
+// Only values that contain a digit are taken, so words like "NUMBER" aren't mistaken for one.
+function parseLabel(text) {
+  const t = String(text || '').replace(/[|]/g, 'I');
+  const pick = (re) => {
+    for (const m of t.matchAll(re)) {
+      const v = m[1].replace(/[.,;:]+$/, '');
+      if (/\d/.test(v) && v.length >= 4 && !/^(NO|NUMBER)$/i.test(v)) return v.toUpperCase();
+    }
+    return '';
+  };
+  const serial = pick(/(?:S\s*\/\s*N|\bSN|SER(?:IAL)?\.?\s*(?:NO\.?|NUMBER|#)?)\s*[.:#]?\s*([A-Z0-9][A-Z0-9\-\/]{3,29})/gi);
+  const model = pick(/(?:M\s*\/\s*N|MODEL(?:\s*(?:NO\.?|NUMBER|#))?|\bMOD\.|TYPE)\s*[.:#]?\s*([A-Z0-9][A-Z0-9\-\/.]{2,29})/gi);
+  const im = t.match(/IMEI\s*\d?\s*[.:#]?\s*(\d{15})\b/i);
+  return { serial, model, imei: im ? im[1] : '', text: t.trim() };
+}
+
+module.exports = { readText, parseReceipt, parseLabel, stop, _paths: paths };

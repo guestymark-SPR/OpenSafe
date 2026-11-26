@@ -130,10 +130,11 @@
       const row = (k, v) => v ? `<div><div class="k">${k}</div><div class="v">${v}</div></div>` : '';
       return `<div class="card" style="margin-bottom:14px">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><h2 style="margin:0;flex:1">${esc(p.insurer)} <span class="muted" style="font-weight:500">· ${esc(p.type)}</span></h2>
-          <button class="btn small" data-action="polItems" data-pid="${p.id}">Items covered…</button><button class="btn small" data-action="polEdit" data-pid="${p.id}">Edit</button><button class="btn small danger" data-action="polDel" data-pid="${p.id}">Delete</button></div>
+          <button class="btn small primary" data-action="polRenew" data-pid="${p.id}">Renewed…</button><button class="btn small" data-action="polItems" data-pid="${p.id}">Items covered…</button><button class="btn small" data-action="polEdit" data-pid="${p.id}">Edit</button><button class="btn small danger" data-action="polDel" data-pid="${p.id}">Delete</button></div>
         <div class="kv">${row('Policy number', p.policyNumber ? `<span class="mono">${esc(p.policyNumber)}</span>` : '')}${row('Renews', p.renewalDate ? ukDate(p.renewalDate) + dueSoon(p.renewalDate) : '')}${row('Premium', p.premium !== null ? money(p.premium) : '')}
           ${row('Excess', p.excess !== null ? money(p.excess) : '')}${row('Cover limit', p.coverLimit !== null ? money(p.coverLimit) : '')}${row('Claims line', p.claimsPhone ? esc(p.claimsPhone) : '')}</div>
         ${p.notes ? `<div class="notes">${esc(p.notes)}</div>` : ''}
+        ${premiumHistory(p)}
         <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line2)"><b>${covered.length} item${covered.length === 1 ? '' : 's'} covered</b> <span class="muted">worth ${money0(total)}</span>
           ${over ? ` <span class="pill bad">Over the cover limit by ${money0(total - p.coverLimit)}</span>` : ''}
           ${covered.length ? `<div class="meta" style="margin-top:4px">${covered.slice(0, 12).map(a => esc(a.name)).join(' · ')}${covered.length > 12 ? ' …' : ''}</div>` : ''}</div></div>`;
@@ -142,6 +143,38 @@
       ${pols.length ? pols.slice().sort((x, y) => (x.renewalDate || '9').localeCompare(y.renewalDate || '9')).map(card).join('')
         : '<div class="card empty">No policies yet. Add your home contents, car, bike or boat insurance here. OpenSafe will remind you before each one renews, and you can link the items each policy covers.</div>'}
       ${unlinked.length ? `<div class="card"><h2>Not covered by a policy</h2><div class="meta">${unlinked.slice(0, 30).map(a => `<a href="#" data-open="${a.id}">${esc(a.name)}</a>`).join(' · ')}${unlinked.length > 30 ? ' …' : ''}</div></div>` : ''}`;
+  }
+
+  function premiumHistory(p) {
+    const h = (p.history || []).slice().sort((x, y) => (y.endedOn || '').localeCompare(x.endedOn || ''));
+    const rows = [{ current: true, endedOn: p.renewalDate, insurer: p.insurer, premium: p.premium, excess: p.excess }, ...h];
+    if (!h.length) return `<div class="faint" style="margin-top:10px">Premium history: none yet. When the policy renews, use <b>Renewed…</b> to keep last year's price. <a href="#" data-action="polAddYear" data-pid="${p.id}">Add an earlier year</a></div>`;
+    const pct = (a, b) => (a !== null && b) ? Math.round((a - b) / b * 100) : null;
+    return `<div style="margin-top:12px"><h3 style="margin:0 0 4px;font-size:13px">Premium history <a href="#" class="meta" style="font-weight:400" data-action="polAddYear" data-pid="${p.id}">add an earlier year</a></h3>
+      <table class="list"><thead><tr><th>Term ending</th><th>Insurer</th><th class="r">Premium</th><th class="r">Change</th><th class="r">Excess</th><th>Note</th><th></th></tr></thead><tbody>
+      ${rows.map((r, i) => { const prev = rows[i + 1]; const c = prev ? pct(r.premium, prev.premium) : null; return `<tr${r.current ? ' style="font-weight:600"' : ''}><td class="nowrap">${r.endedOn ? ukDate(r.endedOn) : '—'}${r.current ? ' <span class="pill">now</span>' : ''}</td><td>${esc(r.insurer)}</td><td class="r">${r.premium !== null && r.premium !== undefined ? money(r.premium) : '—'}</td>
+        <td class="r ${c > 0 ? 'neg' : ''}">${c === null ? '' : (c > 0 ? '+' : '') + c + '%'}</td><td class="r">${r.excess !== null && r.excess !== undefined ? money(r.excess) : ''}</td><td class="meta">${esc(r.note || '')}</td><td class="r">${r.current ? '' : `<button class="btn small danger" data-action="polHistRm" data-pid="${p.id}" data-hid="${r.id}">Delete</button>`}</td></tr>`; }).join('')}
+      </tbody></table></div>`;
+  }
+  function renewForm(p, earlier) {
+    const next = p.renewalDate ? (() => { const d = new Date(p.renewalDate + 'T00:00:00Z'); d.setUTCFullYear(d.getUTCFullYear() + 1); return d.toISOString().slice(0, 10); })() : '';
+    openModal(`<form class="dialog narrow" id="renewForm"><div class="dh"><h2>${earlier ? 'Add an earlier year' : 'Policy renewed'}</h2></div>
+      <div class="db"><p class="s3 muted" style="margin:0">${earlier ? 'From old paperwork: what an earlier term cost.' : `This year's details (${esc(p.insurer)}${p.premium !== null ? ', ' + money(p.premium) : ''}) go into the premium history, and the policy gets the new ones.`}</p>
+        ${earlier ? `<label class="f">Term ended on<input name="endedOn" type="date"></label>` : `<label class="f">Next renewal date<input name="renewalDate" type="date" value="${next}"></label>`}
+        <label class="f">${earlier ? 'Premium' : 'New premium'} (£)<input name="premium" inputmode="decimal"></label>
+        <label class="f">Insurer<input name="insurer" value="${earlier ? '' : esc(p.insurer)}" placeholder="${esc(p.insurer)}"></label>
+        ${earlier ? '' : `<label class="f">Policy number<input name="policyNumber" value="${esc(p.policyNumber || '')}"></label>`}
+        <label class="f">Excess (£)<input name="excess" inputmode="decimal" value="${earlier ? '' : esc(p.excess ?? '')}"></label>
+        <label class="f s3">Note<input name="note" maxlength="300" placeholder="${earlier ? 'e.g. first year with them' : 'e.g. Quote was £412, haggled down'}"></label>
+        <div class="err" id="renewErr"></div></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Save</button></div></form>`);
+    $('#renewForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const v = Object.fromEntries(new FormData(e.target).entries());
+      busy(e.target, true, 'Saving…');
+      try { await (earlier ? keep.addPolicyHistory(p.id, v) : keep.renewPolicy(p.id, v)); closeModal(); toast('✓ Saved'); await refresh(); }
+      catch (ex) { $('#renewErr').textContent = ex.message; busy(e.target, false); }
+    };
   }
 
   function policyForm(p) {
@@ -267,6 +300,29 @@
       if (f.model && f.model.checked) patch.model = r.model;
       if (Object.keys(patch).length > 1) await run(() => keep.saveAsset(patch), 'Copied');
       closeModal(); await refresh();
+    };
+  }
+
+  async function readLabel(a, file) {
+    openModal(`<div class="dialog narrow"><div class="dh"><h2>Reading label…</h2></div><div class="db"><p class="s3 muted" style="margin:0">Reading the text on this PC (nothing is uploaded).</p></div></div>`);
+    let r;
+    try { r = await keep.readLabel(a.id, file); }
+    catch (ex) { closeModal(); toast('⚠ ' + ex.message, 6000); return; }
+    const serial = r.serial || r.imei;
+    const row = (key, label, val, cur) => val ? `<label class="switch s3" style="font-weight:500;display:flex;gap:10px"><input type="checkbox" name="${key}" ${cur ? '' : 'checked'}> <span style="flex:1">${label}: <b class="mono">${esc(val)}</b>${cur ? ` <span class="muted">(currently ${esc(cur)})</span>` : ''}</span></label>` : '';
+    openModal(`<form class="dialog narrow" id="lblForm"><div class="dh"><h2>Label details</h2></div>
+      <div class="db">${serial || r.model ? '<p class="s3 muted" style="margin:0">Tick what to copy into this item, and check it against the label: reading isn\'t always perfect (0 and O, 1 and I are easily mixed up).</p>' : '<p class="s3" style="margin:0">Couldn\'t find a serial or model number. Try a sharper, straight-on photo of the label in good light, filling most of the picture.</p>'}
+        ${row('serial', r.serial ? 'Serial number' : 'Serial number (IMEI)', serial, a.serial)}${row('model', 'Model', r.model, a.model)}
+        <details class="s3"><summary class="muted" style="cursor:pointer">Text found on the label</summary><pre style="white-space:pre-wrap;font-size:12px;max-height:200px;overflow:auto">${esc(r.text)}</pre></details></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Close</button>${serial || r.model ? '<button class="btn primary" type="submit">Copy to item</button>' : ''}</div></form>`);
+    const f = $('#lblForm');
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const patch = { id: a.id };
+      if (f.serial && f.serial.checked) patch.serial = serial;
+      if (f.model && f.model.checked) patch.model = r.model;
+      if (Object.keys(patch).length === 1) { closeModal(); return; }
+      await run(() => keep.saveAsset(patch), 'Label details copied'); closeModal(); await refresh();
     };
   }
 
@@ -429,6 +485,7 @@
     if (state.view === 'item') wireDrop();
     if (state.view === 'vault') wireVaultForm();
     if (state.view === 'reports') spendingCard();
+    if (state.view === 'settings' && !state.bg) keep.bgGet().then(b => { state.bg = b; if (state.view === 'settings' && $('#bgOn')) $('#bgOn').checked = b.enabled; }).catch(() => {});
   }
 
   function viewDashboard() {
@@ -683,6 +740,7 @@
       ${a.status === 'Lent out' ? kv('Lent to', esc(a.lentTo)) + kv('Contact', esc(a.lentContact)) + kv('Lent on', a.lentDate ? ukDate(a.lentDate) : '') + kv('Due back', a.dueBack ? ukDate(a.dueBack) : '') : ''}
       ${a.status === 'Sold' ? kv('Sold on', a.soldDate ? ukDate(a.soldDate) : '') + kv('Sold for', a.soldPrice !== null && a.soldPrice !== undefined ? money(a.soldPrice) : '') + kv('Sold to', esc(a.soldTo)) : ''}
       </div>${a.notes ? `<div class="notes">${esc(a.notes)}</div>` : ''}</div>
+      ${(() => { if (a.purchaseDate || (state.snap.data.dismissedHints || []).includes(a.id)) return ''; const d = a.photos.map(p => p.takenAt).filter(Boolean).sort()[0]; return d ? `<div class="card" style="margin-top:14px;display:flex;align-items:center;gap:12px;background:var(--surface2)"><span style="flex:1">📷 The first photo of this item was taken on <b>${ukDate(d)}</b>. Use that as the date bought? It's only a guess: check it if you can.</span><button class="btn small primary" data-action="useDateHint" data-date="${d}">Use ${ukDate(d)}</button><button class="btn small" data-action="dismissDateHint">No thanks</button></div>` : ''; })()}
       ${setCard(a)}
       ${valueCard(a)}
       ${a.details && a.details.kind ? `<div class="card" style="margin-top:14px"><h2>${a.details.kind === 'boat' ? 'Boat details' : 'Vehicle details'}</h2><div class="kv">
@@ -693,7 +751,7 @@
       ${a.photos.length ? `<div class="gallery">${a.photos.map((p, i) => p.locked ? `<div class="ph-tile locked" data-nav="vault"><div>🔒<br>Vault photo<br><small>Unlock the vault to see it</small></div></div>` : `<div class="ph-tile">
         <img src="${img(a, p)}" alt="${esc(p.name)}" data-zoom="${img(a, p)}">
         ${i === 0 ? '<span class="pill acc coverflag">Cover</span>' : ''}${p.vaultFile ? '<span class="pill vault coverflag" style="left:auto;right:6px">🔒 Vault</span>' : ''}
-        <div class="acts">${i ? `<button data-action="cover" data-att="${p.id}">Make cover</button>` : ''}<button data-action="ocr" data-file="${esc(p.file)}" title="Read a photo of a receipt">Read receipt</button>${fileVaultBtn(a, p)}<button data-action="rmAtt" data-att="${p.id}">Delete</button></div></div>`).join('')}</div>`
+        <div class="acts">${i ? `<button data-action="cover" data-att="${p.id}">Make cover</button>` : ''}<button data-action="ocr" data-file="${esc(p.file)}" title="Read a photo of a receipt">Read receipt</button><button data-action="ocrLabel" data-file="${esc(p.file)}" title="Read the serial and model number from a photo of the label">Read label</button>${fileVaultBtn(a, p)}<button data-action="rmAtt" data-att="${p.id}">Delete</button></div></div>`).join('')}</div>`
         : '<div class="empty">No photos yet. Photos of the item, its serial plate and its box all help with insurance claims.</div>'}`;
     } else if (t === 'docs') {
       body = `<div class="drop" id="drop">Drag receipts, manuals, warranty cards or videos here as
@@ -702,7 +760,7 @@
       ${a.documents.length ? `<table class="list"><thead><tr><th>Name</th><th>Type</th><th>Added</th><th></th></tr></thead><tbody>
         ${a.documents.map(d => d.locked ? `<tr><td colspan="3">🔒 <b>Vault file</b> <span class="muted">(unlock the vault to see its name and open it)</span></td><td class="r"><button class="btn small" data-nav="vault">Unlock vault</button></td></tr>`
         : `<tr><td data-action="openDoc" data-file="${esc(d.file)}" data-name="${esc(d.name)}"><b>${esc(d.name)}</b> ${d.vaultFile ? '<span class="pill vault">🔒 Vault</span>' : ''}</td><td><span class="pill ${d.type === 'Receipt' ? 'good' : ''}">${esc(d.type)}</span></td>
-        <td>${ukDate(d.addedAt.slice(0, 10))}</td><td class="r nowrap"><button class="btn small" data-action="openDoc" data-file="${esc(d.file)}" data-name="${esc(d.name)}">Open</button> ${/\.(jpe?g|png|webp|gif)$/i.test(d.file) ? `<button class="btn small" data-action="ocr" data-file="${esc(d.file)}">Read receipt</button> ` : ''}${fileVaultBtn(a, d, true)}<button class="btn small danger" data-action="rmAtt" data-att="${d.id}">Delete</button></td></tr>`).join('')}
+        <td>${ukDate(d.addedAt.slice(0, 10))}</td><td class="r nowrap"><button class="btn small" data-action="openDoc" data-file="${esc(d.file)}" data-name="${esc(d.name)}">Open</button> ${/\.(jpe?g|png|webp|gif)$/i.test(d.file) ? `<button class="btn small" data-action="ocr" data-file="${esc(d.file)}">Read receipt</button> <button class="btn small" data-action="ocrLabel" data-file="${esc(d.file)}">Read label</button> ` : ''}${fileVaultBtn(a, d, true)}<button class="btn small danger" data-action="rmAtt" data-att="${d.id}">Delete</button></td></tr>`).join('')}
       </tbody></table>` : '<div class="empty">No documents yet.</div>'}`;
     } else if (t === 'service') {
       const cost = a.service.reduce((x, s) => x + (s.cost || 0), 0);
@@ -931,6 +989,10 @@
         <p class="muted" id="updMsg">${esc(updText())}</p>
         <p>${state.upd && state.upd.canUpdate ? '<button class="btn" data-action="updCheck">Check now</button> ' : ''}${state.upd && state.upd.state === 'ready' ? '<button class="btn primary" data-action="updInstall">Restart and update</button>' : ''}</p>
         <p class="faint">OpenSafe checks for new versions when it starts and every 4 hours, and downloads them quietly. Your items, photos and settings are kept when it updates.</p></div>
+      <div class="card" id="bgCard"><h2>Reminders when OpenSafe is closed</h2>
+        <p class="muted">OpenSafe starts quietly with Windows and waits by the clock (bottom right). Once a day, between 8am and 9pm, it shows a Windows notification if anything is due in the next 7 days: MOT, tax, warranties, service dates, loans and policy renewals. Closing the window still locks OpenSafe.</p>
+        ${state.snap.security.encrypted ? '<p class="note" style="margin:0 0 10px">With password protection on, OpenSafe can\'t read your items while it\'s locked, so the notification only says how many things are due. To make that possible it keeps the due dates, without any item names, in its settings file.</p>' : ''}
+        <label class="switch" style="font-weight:500"><input type="checkbox" id="bgOn" ${state.bg && state.bg.enabled ? 'checked' : ''}> Keep reminders running</label></div>
       <div class="card"><h2>Value drop per year</h2><p class="muted">Optional. For items with no "value now", OpenSafe estimates it from the price paid and the purchase date, losing this percentage each year. Leave a category blank to use the price paid. The estimate is used on the dashboard and item pages, not in claim packs or reports.</p>
         <div class="deplist">${[...new Set([...d.categories, ...d.assets.map(x => x.category).filter(Boolean)])].map(c => `<label class="deprow"><span>${esc(c)}</span><input data-dep="${esc(c)}" inputmode="decimal" value="${esc((d.settings.depreciation || {})[c] ?? '')}" placeholder="—"><span class="faint">% a year</span></label>`).join('')}</div>
         <p><button class="btn primary" data-action="saveDep">Save</button></p></div>
@@ -1234,6 +1296,9 @@
           break;
         case 'polNew': policyForm(null); break;
         case 'polEdit': policyForm((state.snap.data.policies || []).find(p => p.id === act.dataset.pid)); break;
+        case 'polRenew': renewForm(state.snap.data.policies.find(x => x.id === act.dataset.pid)); break;
+        case 'polAddYear': e.preventDefault(); renewForm(state.snap.data.policies.find(x => x.id === act.dataset.pid), true); break;
+        case 'polHistRm': if (confirm('Delete this year from the premium history?')) { await run(() => keep.removePolicyHistory(act.dataset.pid, act.dataset.hid), 'Deleted'); await refresh(); } break;
         case 'polItems': policyItemsForm((state.snap.data.policies || []).find(p => p.id === act.dataset.pid)); break;
         case 'polDel': { const ok = await run(() => keep.deletePolicy(act.dataset.pid)); if (ok) { toast('Policy deleted'); await refresh(); } break; }
         case 'abFolder': { const f = await run(() => keep.chooseBackupFolder()); if (f) { $('#abFolder').value = f; } break; }
@@ -1265,6 +1330,9 @@
         case 'claimOne': claimForm([a.id]); break;
         case 'selClear': state.sel.clear(); render(); break;
         case 'ocr': readReceipt(a, act.dataset.file); break;
+        case 'useDateHint': await run(() => keep.saveAsset({ id: a.id, purchaseDate: act.dataset.date }), 'Date bought set'); await refresh(); break;
+        case 'dismissDateHint': await run(() => keep.dismissDateHint(a.id)); await refresh(); break;
+        case 'ocrLabel': readLabel(a, act.dataset.file); break;
         case 'csvPick': { try { const r = await keep.csvPick(); if (r) csvForm(r); } catch (ex) { toast('⚠ ' + ex.message, 8000); } break; }
         case 'importPick': { await run(() => keep.importPick()); await refresh(); break; }
         case 'phoneReset': await run(() => keep.phoneReset()); loadPhone(); break;
@@ -1311,6 +1379,11 @@
   });
 
   let qTimer;
+  document.addEventListener('change', async (e) => {
+    if (e.target.id !== 'bgOn') return;
+    try { const on = await keep.bgSet(e.target.checked); state.bg = Object.assign(state.bg || {}, { enabled: on }); toast(on ? '✓ Reminders will keep running when OpenSafe is closed' : 'Reminders now only show when OpenSafe is open'); }
+    catch (ex) { e.target.checked = !e.target.checked; toast('⚠ ' + ex.message, 5000); }
+  });
   document.addEventListener('input', (e) => {
     if (e.target.id === 'q') {
       state.f.q = e.target.value;

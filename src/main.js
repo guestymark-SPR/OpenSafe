@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol, Notification, Menu, clipboard, nativeTheme, nativeImage, net } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, Notification, Menu, Tray, clipboard, nativeTheme, nativeImage, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -45,6 +45,73 @@ function applyTheme() { const t = readPrefs().theme; nativeTheme.themeSource = [
 
 // Automatic backups: checked after unlocking and every hour while OpenSafe is open.
 let backupTimer = null;
+// ---------- reminders while OpenSafe is closed ----------
+// With "Keep reminders running" on, OpenSafe starts with Windows (hidden, with --background), waits
+// by the clock, and closing the window locks it instead of quitting. While locked it can't read
+// encrypted items, so it keeps only the due dates (no names) in prefs.json; without password
+// protection the names are kept too, as the data file itself isn't encrypted.
+const STARTED_IN_BACKGROUND = process.argv.includes('--background');
+let tray = null, quitting = false, bgTimer = null, scheduleTimer = null;
+const bgEnabled = () => !!readPrefs().background;
+const localISO = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const dayDiff = (a, b) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);
+function writeSchedule() {
+  if (!store || store.isLocked()) return;
+  const enc = store.isEncrypted();
+  const entries = store.reminders(new Date(), 400).map(r => enc ? { date: r.date } : { date: r.date, label: `${r.kind}: ${r.assetName}` });
+  const p = readPrefs();
+  p.schedule = { updatedAt: new Date().toISOString(), named: !enc, entries };
+  writePrefs(p);
+}
+function scheduleSoon() { clearTimeout(scheduleTimer); scheduleTimer = setTimeout(() => { try { writeSchedule(); } catch (_) {} }, 1500); }
+function dueFromSchedule(today = localISO()) {
+  const sch = readPrefs().schedule;
+  return sch && Array.isArray(sch.entries) ? { named: !!sch.named, due: sch.entries.filter(e => dayDiff(today, e.date) <= 7 && dayDiff(today, e.date) >= -60) } : { named: false, due: [] };
+}
+function backgroundRemind(force) {
+  if (!Notification.isSupported()) return;
+  const today = localISO(), hour = new Date().getHours();
+  const p = readPrefs();
+  if (!force && (p.lastNotified === today || hour < 8 || hour >= 21)) return;
+  if (store && !store.isLocked()) writeSchedule();
+  const { named, due } = dueFromSchedule(today);
+  if (!due.length) { if (force) new Notification({ title: 'OpenSafe', body: 'Nothing is due in the next 7 days.' }).show(); return; }
+  const overdue = due.filter(e => e.date < today).length;
+  const body = named
+    ? due.slice(0, 3).map(e => `${e.label} (${e.date < today ? 'overdue' : e.date === today ? 'today' : ukShort(e.date)})`).join('\n') + (due.length > 3 ? `\n…and ${due.length - 3} more` : '')
+    : `${due.length} thing${due.length === 1 ? ' is' : 's are'} due in the next 7 days${overdue ? ` (${overdue} overdue)` : ''}. Open OpenSafe to see ${due.length === 1 ? 'it' : 'them'}.`;
+  const n = new Notification({ title: 'OpenSafe reminders', body });
+  n.on('click', () => { showWindow(); if (win) win.webContents.once('did-finish-load', () => win.webContents.send('nav', 'reminders')); if (win && !win.webContents.isLoading()) win.webContents.send('nav', 'reminders'); });
+  n.show();
+  const q = readPrefs(); q.lastNotified = today; writePrefs(q);
+}
+const ukShort = (iso) => new Date(iso + 'T00:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+function showWindow() { if (win && !win.isDestroyed()) { win.show(); win.focus(); } else createWindow(); }
+function ensureTray() {
+  if (tray) return;
+  tray = new Tray(nativeImage.createFromPath(path.join(__dirname, 'renderer', 'icon.png')).resize({ width: 16, height: 16 }));
+  tray.setToolTip('OpenSafe');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Open OpenSafe', click: showWindow },
+    { label: 'Check reminders now', click: () => backgroundRemind(true) },
+    { type: 'separator' },
+    { label: 'Quit OpenSafe', click: () => { quitting = true; app.quit(); } }
+  ]));
+  tray.on('click', showWindow);
+}
+function startBackground() {
+  ensureTray();
+  if (!bgTimer) bgTimer = setInterval(() => backgroundRemind(false), 30 * 60 * 1000);
+  setTimeout(() => backgroundRemind(false), 60 * 1000);
+}
+function setBackground(on) {
+  const p = readPrefs(); p.background = !!on; writePrefs(p);
+  if (process.platform === 'win32' || process.platform === 'darwin') app.setLoginItemSettings({ openAtLogin: !!on, args: ['--background'] });
+  if (on) { writeSchedule(); startBackground(); }
+  else { if (tray) { tray.destroy(); tray = null; } clearInterval(bgTimer); bgTimer = null; }
+  return !!on;
+}
+
 function checkAutoBackup() {
   if (!store || store.isLocked() || !store.autoBackupDue()) return;
   const r = store.runAutoBackup();
@@ -59,7 +126,15 @@ function sendSecurity() {
 }
 
 /** Everything that should happen once the data is readable (at start-up, or after unlocking). */
+let backfillTimer = null;
 function afterUnlock() {
+  // Read the dates older photos were taken (a few at a time, so the app stays responsive).
+  clearInterval(backfillTimer);
+  backfillTimer = setInterval(() => {
+    try { if (!store || store.isLocked()) return clearInterval(backfillTimer); if (store.backfillPhotoDates(20) === 0) { clearInterval(backfillTimer); notifyChanged(); } }
+    catch (_) { clearInterval(backfillTimer); }
+  }, 1500);
+  if (bgEnabled()) scheduleSoon();
   try { store.purgeOldBin(); } catch (_) { /* never block opening */ }
   if (store.data.settings.phoneLinkEnabled && !phone.running) startPhone().catch(() => {});
   setTimeout(checkAutoBackup, 20000);
@@ -79,7 +154,7 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', (_e, argv) => {
-    if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
+    if (win && !win.isDestroyed()) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } else if (app.isReady()) createWindow();
     const f = exportFileFromArgs(argv);
     if (f && store) { if (store.isLocked()) { pendingImport = f; } else importFromPath(f).catch(() => {}); }
   });
@@ -130,13 +205,14 @@ async function init() {
   });
 
   Menu.setApplicationMenu(null);
-  createWindow();
+  if (!(STARTED_IN_BACKGROUND && bgEnabled())) createWindow();
   registerIpc();
+  if (bgEnabled()) startBackground();
 
   // Opened by double-clicking a .opensafe file
   const startFile = exportFileFromArgs(process.argv);
   if (startFile) pendingImport = startFile;
-  if (!store.isLocked()) win.webContents.once('did-finish-load', () => setTimeout(afterUnlock, 1500));
+  if (!store.isLocked()) { if (win) win.webContents.once('did-finish-load', () => setTimeout(afterUnlock, 1500)); else setTimeout(afterUnlock, 1500); }
 
   updater.init((st) => { if (win && !win.isDestroyed()) win.webContents.send('update:status', st); });
 }
@@ -198,7 +274,7 @@ function createWindow() {
 }
 
 function remindOnStartup() {
-  if (!Notification.isSupported() || store.isLocked()) return;
+  if (!Notification.isSupported() || store.isLocked() || readPrefs().lastNotified === localISO()) return; // at most one reminder notification a day
   const due = store.reminders().filter(r => r.daysLeft <= 7);
   if (!due.length) return;
   const overdue = due.filter(r => r.daysLeft < 0).length;
@@ -210,6 +286,7 @@ function remindOnStartup() {
   });
   n.on('click', () => { if (win) { win.show(); win.webContents.send('nav', 'reminders'); } });
   n.show();
+  const q = readPrefs(); q.lastNotified = localISO(); writePrefs(q);
 }
 
 function snapshot() {
@@ -270,8 +347,14 @@ function addFilesFromPaths(assetId, kind, docType, paths) {
 
 function registerIpc() {
   const h = (ch, fn) => ipcMain.handle(ch, async (_e, ...args) => {
-    try { return { ok: true, value: await fn(...args) }; } catch (e) { return { ok: false, error: e.message, code: e.code }; }
+    try { const value = await fn(...args); if (bgEnabled() && !/^(data:get|update:|phone:status|spending:)/.test(ch)) scheduleSoon(); return { ok: true, value }; } catch (e) { return { ok: false, error: e.message, code: e.code }; }
   });
+  h('policy:renew', (id, v) => store.renewPolicy(String(id), v || {}));
+  h('policy:history', (id, v) => store.addPolicyHistory(String(id), v || {}));
+  h('policy:historyRemove', (id, hid) => store.removePolicyHistory(String(id), String(hid)));
+  h('hint:dismiss', (id) => store.dismissDateHint(String(id)));
+  h('bg:get', () => ({ enabled: bgEnabled(), platform: process.platform }));
+  h('bg:set', (on) => setBackground(!!on));
   // Password attempts: after 5 wrong in a row, wait 30 s (doubling).
   const pw = { fails: 0, until: 0 };
   const pwGuard = () => {
@@ -662,6 +745,11 @@ function registerIpc() {
     return ocr.parseReceipt(text);
   });
 
+  h('ocr:label', async (assetId, file) => {
+    if (!/\.(jpe?g|png|webp|gif)$/i.test(String(file))) throw new Error('Label reading works on photos (JPG, PNG or WebP).');
+    return ocr.parseLabel(await ocr.readText(store.readAttachment(String(assetId), String(file))));
+  });
+
   h('backup:create', async () => {
     const r = await dialog.showOpenDialog(win, { title: 'Choose where to save the backup folder', properties: ['openDirectory', 'createDirectory'] });
     if (r.canceled || !r.filePaths[0]) return null;
@@ -744,7 +832,18 @@ function registerIpc() {
   });
 }
 
+app.on('before-quit', () => { quitting = true; });
 app.on('window-all-closed', async () => {
+  if (bgEnabled() && !quitting) {
+    // Keep running by the clock for reminders, but lock as if OpenSafe had closed.
+    try { writeSchedule(); } catch (_) {}
+    if (phone) await phone.stop();
+    await ocr.stop();
+    if (store && store.isEncrypted()) store.lock();
+    cleanOpenDir();
+    ensureTray();
+    return;
+  }
   if (phone) await phone.stop();
   await ocr.stop();
   if (store) store.lock();

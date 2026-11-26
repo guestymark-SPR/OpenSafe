@@ -65,6 +65,35 @@
   function freeUrls() { while (urls.length) URL.revokeObjectURL(urls.pop()); }
 
   // ---------- images ----------
+  // The date a photo was taken, from its EXIF data (JPEG). Read before shrinking, which removes it.
+  // Same rules as the PC's src/exif.js. Returns 'YYYY-MM-DD' or ''.
+  async function photoDate(file) {
+    try {
+      if (!/jpe?g/i.test(file.type || file.name || '')) return '';
+      const v = new DataView(await file.slice(0, 256 * 1024).arrayBuffer());
+      if (v.getUint16(0) !== 0xffd8) return '';
+      let i = 2;
+      while (i + 4 < v.byteLength && v.getUint8(i) === 0xff) {
+        const marker = v.getUint8(i + 1), len = v.getUint16(i + 2);
+        if (marker === 0xda || marker === 0xd9) break;
+        if (marker === 0xe1 && v.getUint32(i + 4) === 0x45786966 && v.getUint16(i + 8) === 0) {
+          const start = i + 10, end = Math.min(v.byteLength, start + len - 8);
+          const le = v.getUint16(start) === 0x4949;
+          const u16 = (o) => start + o + 2 <= end ? v.getUint16(start + o, le) : 0;
+          const u32 = (o) => start + o + 4 <= end ? v.getUint32(start + o, le) : 0;
+          if (u16(2) !== 42) return '';
+          const str = (o) => { let t = ''; for (let k = 0; k < 19 && start + o + k < end; k++) t += String.fromCharCode(v.getUint8(start + o + k)); return t; };
+          const ifd = (off) => { const tags = {}; const n = u16(off); if (!n || n > 500) return tags; for (let k = 0; k < n; k++) { const e = off + 2 + k * 12; const tag = u16(e), type = u16(e + 2), count = u32(e + 4); if (type === 2 && count >= 19 && count <= 64) tags[tag] = str(u32(e + 8)); else if (type === 4) tags[tag] = u32(e + 8); } return tags; };
+          const i0 = ifd(u32(4)); const ex = i0[0x8769] ? ifd(i0[0x8769]) : {};
+          for (const val of [ex[0x9003], ex[0x9004], i0[0x0132]]) { const m = typeof val === 'string' && val.match(/^(\d{4}):(\d{2}):(\d{2})/); if (m && m[1] >= '1990' && m[2] >= '01' && m[2] <= '12' && m[3] >= '01' && m[3] <= '31') return `${m[1]}-${m[2]}-${m[3]}`; }
+          return '';
+        }
+        i += 2 + len;
+      }
+    } catch (_) { /* unusual file */ }
+    return '';
+  }
+
   async function shrink(file, max = 2000) {
     const isImg = /^image\//.test(file.type) || /\.(jpe?g|png|webp|heic|heif)$/i.test(file.name || '');
     if (!isImg) return { blob: file, name: file.name || 'file', type: file.type || 'application/octet-stream' };
@@ -178,7 +207,7 @@
   }
 
   async function addPhotos(files) {
-    for (const f of files) { const s = await shrink(f); editing.photos.push({ id: uid(), name: s.name, type: s.type, blob: s.blob }); }
+    for (const f of files) { const t = await photoDate(f); const s = await shrink(f); editing.photos.push({ id: uid(), name: s.name, type: s.type, blob: s.blob, takenAt: t }); }
     renderPhotos();
   }
   $('cam').onchange = (e) => { addPhotos([...e.target.files]); e.target.value = ''; };
@@ -232,14 +261,14 @@
       const x = { id: it.id, createdAt: it.createdAt, updatedAt: it.updatedAt };
       for (const k of FIELDS) x[k] = it[k] || '';
       x.photos = [];
-      for (const p of it.photos) x.photos.push({ id: p.id, name: p.name, type: p.type, data: await blobToBase64(p.blob) });
+      for (const p of it.photos) x.photos.push({ id: p.id, name: p.name, type: p.type, takenAt: p.takenAt || '', data: await blobToBase64(p.blob) });
       x.documents = [];
       for (const r of it.receipts) x.documents.push({ id: r.id, name: r.name, type: r.type, docType: 'Receipt', data: await blobToBase64(r.blob) });
       out.items.push(x);
     }
     for (const u of ups) {
       const x = { id: u.id, itemId: u.itemId, itemName: u.itemName, at: u.at, kind: u.kind, changes: u.changes, summary: u.summary, note: u.note };
-      if (u.photos && u.photos.length) { x.photos = []; for (const p of u.photos) x.photos.push({ id: p.id, name: p.name, type: p.type, data: await blobToBase64(p.blob) }); }
+      if (u.photos && u.photos.length) { x.photos = []; for (const p of u.photos) x.photos.push({ id: p.id, name: p.name, type: p.type, takenAt: p.takenAt || '', data: await blobToBase64(p.blob) }); }
       if (u.documents && u.documents.length) { x.documents = []; for (const d of u.documents) x.documents.push({ id: d.id, name: d.name, type: d.type, docType: 'Receipt', data: await blobToBase64(d.blob) }); }
       (out.updates = out.updates || []).push(x);
     }
@@ -482,7 +511,7 @@
     if (!inp) return;
     for (const f of [...inp.files]) {
       if (inp.dataset.attach === 'doc' && (f.type === 'application/pdf' || /\.pdf$/i.test(f.name))) attPending.push({ id: uid(), kind: 'doc', name: f.name, type: 'application/pdf', blob: f });
-      else { const r = await shrink(f, inp.dataset.attach === 'doc' ? 2400 : 2000); attPending.push({ id: uid(), kind: inp.dataset.attach, name: (inp.dataset.attach === 'doc' ? 'receipt-' : '') + r.name, type: r.type, blob: r.blob }); }
+      else { const t = inp.dataset.attach === 'photo' ? await photoDate(f) : ''; const r = await shrink(f, inp.dataset.attach === 'doc' ? 2400 : 2000); attPending.push({ id: uid(), kind: inp.dataset.attach, name: (inp.dataset.attach === 'doc' ? 'receipt-' : '') + r.name, type: r.type, blob: r.blob, takenAt: t }); }
     }
     inp.value = '';
     if ($('actErr')) $('actErr').classList.add('hidden');
@@ -601,7 +630,7 @@
     await loadUpdates();
     const info = itemInfo(id);
     const rec = { id: uid(), itemId: id, itemName: info.known ? info.name : '', at: new Date().toISOString(), kind, changes: c, summary, note, exportedAt: null };
-    if (kind === 'photos') rec.photos = attPending.map(({ id, name, type, blob }) => ({ id, name, type, blob }));
+    if (kind === 'photos') rec.photos = attPending.map(({ id, name, type, blob, takenAt }) => ({ id, name, type, blob, takenAt }));
     if (kind === 'receipt') rec.documents = attPending.map(({ id, name, type, blob }) => ({ id, name, type, blob }));
     attPending = [];
     updates.push(rec);

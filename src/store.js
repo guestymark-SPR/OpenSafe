@@ -5,6 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { takenAt } = require('./exif');
 const sec = require('./secure');
 
 const DATA_VERSION = 1;
@@ -458,6 +459,32 @@ class Store {
     return true;
   }
 
+  // ---------- date bought, suggested from when the photos were taken ----------
+  /** Read the photo date of up to `limit` older photos that haven't been checked yet. Returns how many were checked. */
+  backfillPhotoDates(limit = 25) {
+    let n = 0;
+    for (const a of this.allAssets()) {
+      for (const p of a.photos) {
+        if (p.takenAt !== undefined || p.vault) continue;
+        try { p.takenAt = /\.jpe?g$/i.test(p.file) ? takenAt(this.readAttachment(a.id, p.file)) : ''; } catch (_) { p.takenAt = ''; }
+        if (++n >= limit) { this.save(); return n; }
+      }
+    }
+    if (n) this.save();
+    return n;
+  }
+  /** The earliest photo date for an item with no date bought (null if none, or dismissed). */
+  photoDateHint(a) {
+    if (a.purchaseDate || (this.data.dismissedHints || []).includes(a.id)) return null;
+    const d = a.photos.map(p => p.takenAt).filter(Boolean).sort()[0];
+    return d || null;
+  }
+  dismissDateHint(id) {
+    if (!Array.isArray(this.data.dismissedHints)) this.data.dismissedHints = [];
+    if (!this.data.dismissedHints.includes(id)) this.data.dismissedHints.push(id);
+    this.save();
+  }
+
   // ---------- spending by year ----------
   /** What you paid, by the year bought (items you own or owned; not borrowed ones). */
   spendingByYear() {
@@ -692,7 +719,7 @@ class Store {
     const id = uid();
     const file = id + ext;
     this._storeFile(asset, file, buffer);
-    const rec = { id, file, name: safeFileName(originalName || file), addedAt: nowIso() };
+    const rec = { id, file, name: safeFileName(originalName || file), addedAt: nowIso(), takenAt: takenAt(buffer) };
     asset.photos.push(rec);
     asset.updatedAt = nowIso();
     this.save();
@@ -757,6 +784,7 @@ class Store {
     const file = id + ext;
     this._storeFile(asset, file, buf);
     const rec = { id, file, name, addedAt: nowIso() };
+    if (kind === 'photo') rec.takenAt = cleanDate(p.takenAt) || takenAt(buf); // the phone sends the date, as shrinking a photo removes it
     if (p.id) rec.captureId = cleanString(p.id, 60);
     if (kind === 'photo') asset.photos.push(rec);
     else { rec.type = DOC_TYPES.includes(p.docType) ? p.docType : 'Receipt'; asset.documents.push(rec); }
@@ -951,8 +979,8 @@ class Store {
   }
 
   // ---------- derived ----------
-  reminders(today = new Date()) {
-    const days = this.data.settings.reminderDays;
+  reminders(today = new Date(), lookAheadDays) {
+    const days = lookAheadDays || this.data.settings.reminderDays;
     const t0 = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
     const diff = (d) => Math.round((Date.parse(d + 'T00:00:00Z') - t0) / 86400000);
     const out = [];
@@ -1010,6 +1038,8 @@ class Store {
     p.coverLimit = cleanMoney(get('coverLimit'));
     p.claimsPhone = cleanString(get('claimsPhone'), 40);
     p.notes = cleanString(get('notes'), 2000);
+    // Past terms: what each year cost and who with, to compare at renewal time.
+    p.history = (existing && Array.isArray(existing.history) ? existing.history : []).filter(h => h && h.id);
     return p;
   }
   savePolicy(input) {
@@ -1021,6 +1051,42 @@ class Store {
     if (existing) Object.assign(existing, p); else this.data.policies.push(p);
     this.save();
     return existing || p;
+  }
+  /** Record a renewal: the term that's ending goes into the premium history, and the policy gets the new details. */
+  renewPolicy(id, input) {
+    const p = this.data.policies.find(x => x.id === id);
+    if (!p) throw new Error('Policy not found');
+    const premium = cleanMoney(input.premium);
+    const renewalDate = cleanDate(input.renewalDate);
+    if (premium === null) throw new Error('Enter the new premium in pounds.');
+    if (!renewalDate) throw new Error('Enter the date the new term ends (the next renewal date).');
+    if (p.renewalDate && renewalDate <= p.renewalDate) throw new Error('The next renewal date should be after the current one.');
+    p.history.push({ id: uid(), endedOn: p.renewalDate, insurer: p.insurer, policyNumber: p.policyNumber, premium: p.premium, excess: p.excess, coverLimit: p.coverLimit, note: cleanString(input.note, 300), recordedAt: nowIso() });
+    const insurer = cleanString(input.insurer, 120);
+    if (insurer) p.insurer = insurer;
+    if (input.policyNumber !== undefined && cleanString(input.policyNumber, 80)) p.policyNumber = cleanString(input.policyNumber, 80);
+    if (input.excess !== undefined && input.excess !== '') p.excess = cleanMoney(input.excess);
+    p.premium = premium;
+    p.renewalDate = renewalDate;
+    this.save();
+    return p;
+  }
+  /** Add an earlier year by hand (e.g. from old paperwork). */
+  addPolicyHistory(id, input) {
+    const p = this.data.policies.find(x => x.id === id);
+    if (!p) throw new Error('Policy not found');
+    const premium = cleanMoney(input.premium), endedOn = cleanDate(input.endedOn);
+    if (premium === null || !endedOn) throw new Error('Enter the premium and the date that term ended.');
+    p.history.push({ id: uid(), endedOn, insurer: cleanString(input.insurer, 120) || p.insurer, policyNumber: '', premium, excess: cleanMoney(input.excess), coverLimit: null, note: cleanString(input.note, 300), recordedAt: nowIso() });
+    p.history.sort((x, y) => (x.endedOn || '').localeCompare(y.endedOn || ''));
+    this.save();
+    return p;
+  }
+  removePolicyHistory(id, hid) {
+    const p = this.data.policies.find(x => x.id === id);
+    if (!p) throw new Error('Policy not found');
+    p.history = p.history.filter(h => h.id !== hid);
+    this.save();
   }
   deletePolicy(id) {
     const i = this.data.policies.findIndex(p => p.id === id);
