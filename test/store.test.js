@@ -122,3 +122,10 @@ test('phone API: auth, create item, upload photo', async () => {
     assert.strictEqual(changed, 2);
   } finally { await ps.stop(); }
 });
+
+test('firewall commands remove old rules and allow private TCP only', () => {
+  const { buildCommands } = require('../src/firewall');
+  const [del, add] = buildCommands('D:\\OpenSafe\\OpenSafe.exe', 47820);
+  assert.ok(del.includes('delete rule name=all program="D:\\OpenSafe\\OpenSafe.exe"'));
+  assert.ok(add.includes('action=allow') && add.includes('protocol=TCP') && add.includes('localport=47820-47829') && add.includes('profile=private'));
+});

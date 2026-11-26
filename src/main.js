@@ -9,6 +9,7 @@ const { Store, STATUSES, CONDITIONS, DOC_TYPES } = require('./store');
 const { PhoneServer } = require('./phoneServer');
 const { buildReportHtml } = require('./report');
 const updater = require('./updater');
+const firewall = require('./firewall');
 
 app.setName('OpenSafe');
 // UK date and number formats everywhere (date pickers, spellcheck)
@@ -121,6 +122,7 @@ function snapshot() {
     reminders: store.reminders(),
     lists: { statuses: STATUSES, conditions: CONDITIONS, docTypes: DOC_TYPES },
     dataDir: DATA_DIR,
+    platform: process.platform,
     version: require('../package.json').version
   };
 }
@@ -268,6 +270,11 @@ function registerIpc() {
   h('update:check', () => updater.checkNow());
   h('update:install', () => updater.installNow());
 
+  h('phone:fixFirewall', async () => {
+    const r = await firewall.fix(process.execPath, store.data.settings.phonePort || 47820);
+    return r;
+  });
+  h('phone:firewallRule', () => process.platform === 'win32' ? firewall.ruleExists() : true);
   h('phone:status', () => phoneStatus());
   h('phone:enable', async (on) => {
     store.updateSettings({ phoneLinkEnabled: !!on });

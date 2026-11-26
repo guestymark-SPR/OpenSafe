@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld('keep', {
   phoneStatus: () => call('phone:status'),
   phoneEnable: (on) => call('phone:enable', on),
   phoneReset: () => call('phone:reset'),
+  fixFirewall: () => call('phone:fixFirewall'),
+  firewallRule: () => call('phone:firewallRule'),
   updateStatus: () => call('update:status'),
   checkForUpdates: () => call('update:check'),
   installUpdate: () => call('update:install'),

@@ -285,7 +285,13 @@
       <div class="qrs">${shown.map(u => `<div class="qr"><img src="${u.qr}" alt="QR code to pair your phone"><div><b>${esc(u.name)}</b></div><div class="u">${esc(u.url.replace(/#.*/, ''))}</div></div>`).join('')}</div>
       ${shown.length > 1 ? '<p class="muted">More than one network was found. Use the code for the network your phone is on (usually Wi-Fi).</p>' : ''}
       <p class="muted">Running on port ${s.port}. ${s.lastSeen ? 'Phone last connected ' + new Date(s.lastSeen).toLocaleString('en-GB') + '.' : 'No phone has connected since OpenSafe started.'}</p>
-      <button class="btn" data-action="phoneReset">New pairing code</button>`;
+      <button class="btn" data-action="phoneReset">New pairing code</button>
+      ${state.snap.platform === 'win32' ? `<div class="card" style="margin-top:16px;box-shadow:none;background:#fbfaf7">
+        <h2>Phone can't connect?</h2>
+        <p class="muted">Windows Firewall can block your phone, even when OpenSafe looks allowed. This button removes any firewall rules blocking OpenSafe and adds one rule that lets your phone in on your home Wi-Fi (private networks only). Windows will ask for permission: click <b>Yes</b>.</p>
+        <p id="fwState" class="muted"></p>
+        <button class="btn primary" data-action="fixFirewall">Fix Windows Firewall</button></div>` : ''}`;
+    if (state.snap.platform === 'win32') keep.firewallRule().then(ok => { const el = $('#fwState'); if (el) el.innerHTML = ok ? '✓ OpenSafe\'s firewall rule is in place.' : 'OpenSafe\'s own firewall rule isn\'t set up yet.'; }).catch(() => {});
   }
 
   function viewReports() {
@@ -472,6 +478,11 @@
         case 'filterCat': state.f = Object.assign(state.f, { category: act.dataset.cat === 'Uncategorised' ? '' : act.dataset.cat, status: 'active', gap: '', q: '' }); go('items'); break;
         case 'gap': state.f = Object.assign(state.f, { gap: act.dataset.gap, status: 'active', category: '', location: '', q: '' }); go('items'); break;
         case 'clearGap': state.f.gap = ''; render(); break;
+        case 'fixFirewall': {
+          act.disabled = true; act.textContent = 'Waiting for Windows…';
+          try { await run(() => keep.fixFirewall(), '✓ Firewall fixed. Try your phone again.'); } catch (_) {}
+          loadPhone(); break;
+        }
         case 'phoneReset': await run(() => keep.phoneReset()); loadPhone(); break;
         case 'report': { const p = await run(() => keep.exportReport({ includePhotos: $('#rPhotos').checked, includeInactive: $('#rInactive').checked })); if (p) toast('Report saved'); break; }
         case 'csv': { const p = await run(() => keep.exportCsv()); if (p) toast('CSV saved'); break; }
