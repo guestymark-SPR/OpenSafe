@@ -14,8 +14,31 @@ Everything stays on your PC. There's no account, no cloud and no subscription.
 - **Reminders:** warranty end dates and next-due service dates, looking ahead a number of days you choose, plus a Windows notification at start-up for anything due within 7 days.
 - **Dashboard:** total value, amount paid, insured value, value by category, what's coming up, and gaps to fill (no serial number, no receipt, no insurer, no photo).
 - **Reports:** a printable PDF inventory for your insurer, with photos, and a CSV export for Excel.
+- **Password protection and vault:** AES-256 encryption of everything, a recovery key, and a PIN-protected vault for sensitive items and files.
 - **Backups:** a copy of your item list every day, kept for 30 days, plus a full backup (with photos and documents) to any folder or USB stick, and restore.
 - **OpenSafe Capture:** an offline phone and tablet app for adding items with photos, imported on the PC from one file.
+
+## Password protection and the vault
+
+**Settings → Password protection** encrypts everything OpenSafe stores: the item list, photos, documents and daily backups.
+
+- **Encryption:** files are encrypted with AES-256-GCM using a random master key. The master key is stored only in wrapped form, encrypted with a key derived from your password (scrypt, N=2¹⁷).
+- **Asking for the password:** OpenSafe asks for it every time it opens. **🔒 Lock OpenSafe** locks it straight away. Five wrong passwords in a row add a 30-second wait, which doubles each time.
+- **Recovery key:** when you turn protection on, you get a 24-character recovery key, shown once. It resets a forgotten password or vault PIN. **If you lose both the password and the recovery key, the data can't be recovered.**
+- **Turning it off:** protection can be turned off, which decrypts everything again, or the password changed. A new recovery key can be made at any time, and the old one then stops working.
+
+**The vault** is a second layer, opened with a separate 4–8 digit PIN:
+
+- **What goes in:** move a whole item into the vault, or put single photos and documents in it, such as an ID scan or a V5C logbook.
+- **Separate key:** vault items and files are encrypted with their own key, which is unlocked by the PIN or the recovery key.
+- **While locked:** vault items are hidden and left out of totals, reminders, reports and CSV exports. Vault files show only as "Vault file".
+- **Locking:** the vault locks when OpenSafe locks or closes, or with **Lock vault**.
+
+Notes:
+- Photos are decrypted in memory to show them. A document you open is decrypted into a private temporary folder, which is deleted when OpenSafe locks or closes.
+- PDF reports and CSV exports are saved unencrypted, because they're meant for sharing.
+- A full backup to a folder stays encrypted. Restoring an encrypted backup needs the password that was in use when the backup was made.
+- Protection guards against someone reading your files, for example from a stolen laptop or a copied backup. It can't protect against malware running on your PC while OpenSafe is unlocked.
 
 ## Adding items from your phone or tablet: OpenSafe Capture
 
@@ -73,7 +96,8 @@ Or just change `version` in `package.json` and push. The repo must be public for
 ```
 src/main.js         Electron main process: window, file dialogs, PDF/CSV export, IPC
 src/preload.js      Safe bridge between the window and the main process
-src/store.js        Data store (JSON file + attachments folder, daily backups)
+src/store.js        Data store (JSON file + attachments folder, daily backups, encryption, vault)
+src/secure.js       Encryption primitives (AES-256-GCM, scrypt, recovery key, X25519)
 src/phoneServer.js  Wi-Fi phone link (token-protected local web server)
 src/report.js       Insurance/inventory PDF layout
 src/renderer/       Desktop UI (plain HTML/CSS/JS)

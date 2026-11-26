@@ -171,6 +171,7 @@ class PhoneServer {
     }
 
     if (!p.startsWith('/api/')) return send(res, 404, { error: 'Not found' });
+    if (this.store.isLocked()) return send(res, 423, { error: 'OpenSafe is locked on the PC. Unlock it, then try again.' });
 
     if (!tokenOk(req.headers['x-opensafe-token'], this.store.data.settings.phoneToken)) {
       return send(res, 401, { error: 'This phone is not paired. Scan the QR code in OpenSafe on your PC.' });

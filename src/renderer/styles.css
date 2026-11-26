@@ -145,3 +145,24 @@ table.list{width:100%;border-collapse:collapse;background:var(--panel);border:1p
 .updbar{display:flex;align-items:center;gap:12px;background:var(--accent);color:#fff;padding:9px 32px;font-weight:500}
 .updbar .btn{background:#fff;color:var(--accent);border-color:#fff}
 .updbar .btn.ghost{background:transparent;color:#fff;border-color:rgba(255,255,255,.5)}
+
+/* security */
+.pill.vault{background:#ece6f7;color:#4b3a78}
+.vstate{margin-left:auto;font-size:11px;font-weight:600;color:var(--faint)}
+#lockBtn{margin-bottom:4px}
+.ph-tile.locked{display:flex;align-items:center;justify-content:center;text-align:center;color:var(--muted);cursor:pointer;background:#ece6f7;font-size:13px}
+.ph-tile.locked small{color:var(--faint)}
+.lockscreen{position:fixed;inset:0;background:var(--bg);z-index:50;display:flex;align-items:center;justify-content:center;padding:20px}
+.lockbox{background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);padding:30px 32px;width:min(440px,100%)}
+.lockbox .logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:20px;color:var(--accent);margin-bottom:6px}
+.lockbox .logo img{width:36px;height:36px;border-radius:8px}
+.lockbox h2{font-size:17px;margin:14px 0 4px}
+.lockbox form{display:grid;gap:12px;margin-top:14px}
+.lockbox .err{min-height:18px}
+.linkbtn{background:none;border:0;color:var(--accent-2);cursor:pointer;padding:0;font:inherit;text-decoration:underline}
+.rk{font-family:Consolas,"Cascadia Mono",monospace;font-size:22px;letter-spacing:.06em;background:#fbfaf7;border:1px dashed var(--accent-2);border-radius:10px;padding:14px;text-align:center;user-select:all;grid-column:1/-1}
+.pinbox{max-width:420px}
+.pinbox input{font-size:22px;letter-spacing:.3em;text-align:center}
+.seclist{display:grid;gap:10px}
+.secrow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line2)}
+.secrow:last-child{border:0}

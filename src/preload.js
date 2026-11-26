@@ -3,7 +3,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 async function call(ch, ...args) {
   const r = await ipcRenderer.invoke(ch, ...args);
-  if (!r.ok) throw new Error(r.error);
+  if (!r.ok) { const e = new Error(r.error); e.code = r.code; throw e; }
   return r.value;
 }
 
@@ -17,7 +17,26 @@ contextBridge.exposeInMainWorld('keep', {
     call('attach:addPaths', assetId, kind, docType, Array.from(files).map(f => webUtils.getPathForFile(f)).filter(Boolean)),
   removeAttachment: (assetId, attId) => call('attach:remove', assetId, attId),
   setCover: (assetId, attId) => call('attach:cover', assetId, attId),
-  openAttachment: (assetId, file) => call('attach:open', assetId, file),
+  openAttachment: (assetId, file, name) => call('attach:open', assetId, file, name),
+  security: () => call('sec:state'),
+  enableProtection: (pw) => call('sec:enable', pw),
+  unlock: (pw) => call('sec:unlock', pw),
+  recover: (rk, pw) => call('sec:recover', rk, pw),
+  changePassword: (cur, next) => call('sec:changePassword', cur, next),
+  newRecoveryKey: (pw) => call('sec:newRecovery', pw),
+  disableProtection: (pw) => call('sec:disable', pw),
+  lock: () => call('sec:lock'),
+  saveRecoveryKey: (rk) => call('sec:saveRecovery', rk),
+  copyText: (t) => call('clip:copy', t),
+  vaultSetup: (pin) => call('vault:setup', pin),
+  vaultUnlock: (pin) => call('vault:unlock', pin),
+  vaultLock: () => call('vault:lock'),
+  vaultChangePin: (cur, next) => call('vault:changePin', cur, next),
+  vaultRecoverPin: (rk, pin) => call('vault:recoverPin', rk, pin),
+  vaultRemove: () => call('vault:remove'),
+  vaultMoveItem: (id, to) => call('vault:moveItem', id, to),
+  vaultMoveFile: (assetId, attId, to) => call('vault:moveFile', assetId, attId, to),
+  onSecurity: (fn) => ipcRenderer.on('security:changed', (_e, st) => fn(st)),
   saveService: (assetId, entry) => call('service:save', assetId, entry),
   deleteService: (assetId, id) => call('service:delete', assetId, id),
   updateSettings: (patch) => call('settings:update', patch),

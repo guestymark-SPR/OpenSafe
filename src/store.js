@@ -5,6 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const sec = require('./secure');
 
 const DATA_VERSION = 1;
 
@@ -80,39 +81,67 @@ function emptyData() {
 class Store {
   constructor(dir) {
     this.dir = dir;
-    this.file = path.join(dir, 'opensafe-data.json');
+    this.file = path.join(dir, 'opensafe-data.json');     // used when not encrypted
+    this.binFile = path.join(dir, 'opensafe-data.bin');   // used when encrypted
+    this.securityFile = path.join(dir, 'security.json');  // salts + wrapped keys (no secrets)
     this.attachDir = path.join(dir, 'attachments');
     this.backupDir = path.join(dir, 'backups');
     this.data = null;
+    this.keys = null;   // { 0: masterKey, 1: vaultKey } while unlocked
+    this.vault = null;  // { assets: [], fileMeta: {} } while the vault is unlocked
   }
 
+  // ---------- low-level file IO (encrypts when protection is on) ----------
+  isEncrypted() { return fs.existsSync(this.securityFile); }
+  isLocked() { return this.isEncrypted() && !(this.keys && this.keys[sec.KEY_MASTER]); }
+  _security() { return JSON.parse(fs.readFileSync(this.securityFile, 'utf8')); }
+  _writeSecurity(obj) { this._atomicWrite(this.securityFile, Buffer.from(JSON.stringify(obj, null, 2))); }
+
+  _atomicWrite(p, buf) {
+    const tmp = p + '.tmp';
+    fs.writeFileSync(tmp, buf);
+    fs.renameSync(tmp, p);
+  }
+  _seal(buf, keyId = sec.KEY_MASTER) {
+    if (!this.keys || !this.keys[sec.KEY_MASTER]) return buf;
+    const key = this.keys[keyId];
+    if (!key) { const e = new Error('The vault is locked.'); e.code = 'VAULT_LOCKED'; throw e; }
+    return sec.seal(key, keyId, buf);
+  }
+  _open(buf) { return sec.open(this.keys, buf); }
+  readFileData(p) { return this._open(fs.readFileSync(p)); }
+
   load() {
+    if (this.isLocked()) { const e = new Error('OpenSafe is locked.'); e.code = 'LOCKED'; throw e; }
     fs.mkdirSync(this.attachDir, { recursive: true });
     fs.mkdirSync(this.backupDir, { recursive: true });
-    if (fs.existsSync(this.file)) {
-      const raw = fs.readFileSync(this.file, 'utf8');
+    const enc = this.isEncrypted();
+    const src = enc && fs.existsSync(this.binFile) ? this.binFile : (fs.existsSync(this.file) ? this.file : null);
+    if (src) {
       let parsed;
       try {
-        parsed = JSON.parse(raw);
+        parsed = JSON.parse(this._open(fs.readFileSync(src)).toString('utf8'));
       } catch (e) {
+        if (e.code === 'LOCKED') throw e;
         // Keep the damaged file so nothing is lost, then start from the newest backup.
-        const bad = this.file + '.corrupt-' + Date.now();
-        fs.copyFileSync(this.file, bad);
+        fs.copyFileSync(src, src + '.corrupt-' + Date.now());
         parsed = this._newestBackup() || emptyData();
       }
       this.data = this._migrate(parsed);
+      if (enc && src === this.file) this.save(); // finish an interrupted "turn on protection"
     } else {
       this.data = emptyData();
       this.save();
     }
+    this.vault = null;
     return this.data;
   }
 
   _newestBackup() {
     try {
-      const files = fs.readdirSync(this.backupDir).filter(f => f.endsWith('.json')).sort();
+      const files = fs.readdirSync(this.backupDir).filter(f => /^opensafe-\d{4}-\d{2}-\d{2}\.(json|bin)$/.test(f)).sort();
       for (let i = files.length - 1; i >= 0; i--) {
-        try { return JSON.parse(fs.readFileSync(path.join(this.backupDir, files[i]), 'utf8')); } catch (_) { /* try older */ }
+        try { return JSON.parse(this._open(fs.readFileSync(path.join(this.backupDir, files[i]))).toString('utf8')); } catch (_) { /* try older */ }
       }
     } catch (_) { /* none */ }
     return null;
@@ -124,33 +153,45 @@ class Store {
     out.settings = Object.assign(emptyData().settings, (d && d.settings) || {});
     if (!Array.isArray(out.categories) || !out.categories.length) out.categories = DEFAULT_CATEGORIES.slice();
     if (!Array.isArray(out.locations) || !out.locations.length) out.locations = DEFAULT_LOCATIONS.slice();
-    out.assets = Array.isArray(out.assets) ? out.assets.map(a => this._normaliseAsset(a, a)) : [];
+    out.assets = Array.isArray(out.assets) ? out.assets.map(a => this._normaliseAsset(a, a, true)) : [];
+    if (out.vault && typeof out.vault !== 'object') delete out.vault;
     out.version = DATA_VERSION;
     return out;
   }
 
   save() {
-    const json = JSON.stringify(this.data, null, 2);
-    const tmp = this.file + '.tmp';
-    fs.writeFileSync(tmp, json, 'utf8');
-    fs.renameSync(tmp, this.file);
+    if (!this.data) throw new Error('OpenSafe is locked.');
+    if (this.vault && this.keys && this.keys[sec.KEY_VAULT] && this.data.vault) {
+      const vjson = Buffer.from(JSON.stringify({ assets: this.vault.assets, fileMeta: this.vault.fileMeta }));
+      this.data.vault.blob = sec.seal(this.keys[sec.KEY_VAULT], sec.KEY_VAULT, vjson).toString('base64');
+    }
+    const json = Buffer.from(JSON.stringify(this.data, null, 2));
+    if (this.isEncrypted()) {
+      this._atomicWrite(this.binFile, this._seal(json));
+      if (fs.existsSync(this.file)) fs.unlinkSync(this.file);
+    } else {
+      this._atomicWrite(this.file, json);
+    }
     this._dailyBackup(json);
   }
 
   _dailyBackup(json) {
     const day = new Date().toISOString().slice(0, 10);
-    const target = path.join(this.backupDir, `opensafe-${day}.json`);
-    fs.writeFileSync(target, json, 'utf8');
-    const files = fs.readdirSync(this.backupDir).filter(f => /^opensafe-\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort();
+    const enc = this.isEncrypted();
+    const target = path.join(this.backupDir, `opensafe-${day}.${enc ? 'bin' : 'json'}`);
+    fs.writeFileSync(target, enc ? this._seal(json) : json);
+    const other = path.join(this.backupDir, `opensafe-${day}.${enc ? 'json' : 'bin'}`);
+    if (fs.existsSync(other)) fs.unlinkSync(other);
+    const files = fs.readdirSync(this.backupDir).filter(f => /^opensafe-\d{4}-\d{2}-\d{2}\.(json|bin)$/.test(f)).sort();
     while (files.length > 30) fs.unlinkSync(path.join(this.backupDir, files.shift()));
   }
 
   // ---------- assets ----------
-  _normaliseAsset(input, existing) {
+  _normaliseAsset(input, existing, keepUpdated) {
     const a = {
       id: (existing && existing.id) || uid(),
       createdAt: (existing && existing.createdAt) || nowIso(),
-      updatedAt: nowIso(),
+      updatedAt: (keepUpdated && existing && existing.updatedAt) || nowIso(),
       photos: (existing && Array.isArray(existing.photos)) ? existing.photos : [],
       documents: (existing && Array.isArray(existing.documents)) ? existing.documents : [],
       service: (existing && Array.isArray(existing.service)) ? existing.service : [],
@@ -171,7 +212,10 @@ class Store {
     return a;
   }
 
-  getAsset(id) { return this.data.assets.find(a => a.id === id) || null; }
+  /** Items you can currently see: normal items, plus vault items while the vault is unlocked. */
+  allAssets() { return this.vault ? this.data.assets.concat(this.vault.assets) : this.data.assets; }
+  isVaultAsset(asset) { return !!(this.vault && this.vault.assets.includes(asset)); }
+  getAsset(id) { return this.allAssets().find(a => a.id === id) || null; }
 
   saveAsset(input) {
     if (!input || typeof input !== 'object') throw new Error('Invalid item');
@@ -191,9 +235,11 @@ class Store {
   }
 
   deleteAsset(id) {
-    const i = this.data.assets.findIndex(a => a.id === id);
+    const list = this.data.assets.some(a => a.id === id) ? this.data.assets : (this.vault ? this.vault.assets : []);
+    const i = list.findIndex(a => a.id === id);
     if (i < 0) return false;
-    this.data.assets.splice(i, 1);
+    const [gone] = list.splice(i, 1);
+    if (this.vault) for (const r of [...gone.photos, ...gone.documents]) delete this.vault.fileMeta[r.id];
     const dir = this._assetDir(id);
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
     this.save();
@@ -207,7 +253,7 @@ class Store {
     delete copy.id;
     const created = this._normaliseAsset(copy, null);
     created.photos = []; created.documents = []; created.service = [];
-    this.data.assets.push(created);
+    (this.isVaultAsset(src) ? this.vault.assets : this.data.assets).push(created);
     this.save();
     return created;
   }
@@ -225,6 +271,18 @@ class Store {
     return p;
   }
 
+  /** Write an attachment file for an item, encrypted with the right key. */
+  _storeFile(asset, file, buffer, vaultFile) {
+    fs.mkdirSync(this._assetDir(asset.id), { recursive: true });
+    const keyId = (vaultFile || this.isVaultAsset(asset)) ? sec.KEY_VAULT : sec.KEY_MASTER;
+    this._atomicWrite(this.attachmentPath(asset.id, file), this._seal(buffer, keyId));
+  }
+
+  /** Read an attachment (decrypted). Throws with code VAULT_LOCKED for vault files while the vault is locked. */
+  readAttachment(assetId, file) {
+    return this.readFileData(this.attachmentPath(assetId, file));
+  }
+
   addPhoto(assetId, originalName, buffer) {
     const asset = this.getAsset(assetId);
     if (!asset) throw new Error('Item not found');
@@ -232,8 +290,7 @@ class Store {
     if (!IMAGE_EXT.has(ext)) throw new Error('Photos must be JPG, PNG, WebP or GIF');
     const id = uid();
     const file = id + ext;
-    fs.mkdirSync(this._assetDir(assetId), { recursive: true });
-    fs.writeFileSync(this.attachmentPath(assetId, file), buffer);
+    this._storeFile(asset, file, buffer);
     const rec = { id, file, name: safeFileName(originalName || file), addedAt: nowIso() };
     asset.photos.push(rec);
     asset.updatedAt = nowIso();
@@ -248,8 +305,7 @@ class Store {
     if (!DOC_EXT.has(ext)) throw new Error('Unsupported document type: ' + (ext || 'none'));
     const id = uid();
     const file = id + ext;
-    fs.mkdirSync(this._assetDir(assetId), { recursive: true });
-    fs.writeFileSync(this.attachmentPath(assetId, file), buffer);
+    this._storeFile(asset, file, buffer);
     const rec = {
       id, file, name: safeFileName(originalName),
       type: DOC_TYPES.includes(docType) ? docType : 'Other', addedAt: nowIso()
@@ -267,7 +323,9 @@ class Store {
       const i = asset[key].findIndex(x => x.id === attId);
       if (i >= 0) {
         const [rec] = asset[key].splice(i, 1);
+        if (rec.vault && !this.vault) { asset[key].splice(i, 0, rec); const e = new Error('Unlock the vault to delete this file.'); e.code = 'VAULT_LOCKED'; throw e; }
         try { fs.unlinkSync(this.attachmentPath(assetId, rec.file)); } catch (_) { /* already gone */ }
+        if (this.vault) delete this.vault.fileMeta[rec.id];
         asset.updatedAt = nowIso();
         this.save();
         return true;
@@ -296,8 +354,7 @@ class Store {
     if (!buf.length) throw new Error(`${p.name || 'file'}: empty`);
     const id = uid();
     const file = id + ext;
-    fs.mkdirSync(this._assetDir(asset.id), { recursive: true });
-    fs.writeFileSync(this.attachmentPath(asset.id, file), buf);
+    this._storeFile(asset, file, buf);
     const rec = { id, file, name, addedAt: nowIso() };
     if (p.id) rec.captureId = cleanString(p.id, 60);
     if (kind === 'photo') asset.photos.push(rec);
@@ -419,7 +476,7 @@ class Store {
     const t0 = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
     const diff = (d) => Math.round((Date.parse(d + 'T00:00:00Z') - t0) / 86400000);
     const out = [];
-    for (const a of this.data.assets) {
+    for (const a of this.allAssets()) {
       if (['Sold', 'Disposed', 'Lost / Stolen'].includes(a.status)) continue;
       if (a.warrantyExpiry) {
         const n = diff(a.warrantyExpiry);
@@ -441,7 +498,8 @@ class Store {
   }
 
   summary() {
-    const active = this.data.assets.filter(a => !['Sold', 'Disposed', 'Lost / Stolen'].includes(a.status));
+    const all = this.allAssets();
+    const active = all.filter(a => !['Sold', 'Disposed', 'Lost / Stolen'].includes(a.status));
     const sum = (k) => active.reduce((t, a) => t + (a[k] || 0), 0);
     const byCategory = {};
     for (const a of active) {
@@ -455,7 +513,7 @@ class Store {
     const noReceipt = active.filter(a => !a.documents.some(d => d.type === 'Receipt')).length;
     return {
       count: active.length,
-      totalCount: this.data.assets.length,
+      totalCount: all.length,
       purchaseTotal: sum('purchasePrice'),
       currentTotal: active.reduce((t, a) => t + (a.currentValue ?? a.purchasePrice ?? 0), 0),
       insuredTotal: sum('insuredValue'),
@@ -473,7 +531,7 @@ class Store {
       return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     };
     const rows = [cols.join(',')];
-    for (const a of this.data.assets) {
+    for (const a of this.allAssets()) {
       rows.push(cols.map(c => {
         if (c === 'tags') return esc(a.tags.join('; '));
         if (c === 'photos') return esc(a.photos.length);
@@ -489,26 +547,396 @@ class Store {
     const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16);
     const dest = path.join(destParent, `OpenSafe-backup-${stamp}`);
     fs.mkdirSync(dest, { recursive: true });
-    fs.copyFileSync(this.file, path.join(dest, 'opensafe-data.json'));
-    fs.cpSync(this.attachDir, path.join(dest, 'attachments'), { recursive: true });
+    for (const f of [this.file, this.binFile, this.securityFile]) {
+      if (fs.existsSync(f)) fs.copyFileSync(f, path.join(dest, path.basename(f)));
+    }
+    if (fs.existsSync(this.attachDir)) fs.cpSync(this.attachDir, path.join(dest, 'attachments'), { recursive: true });
     return dest;
   }
 
+  /**
+   * Restore a backup folder.
+   * - An encrypted backup replaces everything, including the password: OpenSafe locks
+   *   and needs the password that was in use when the backup was made. Returns { locked: true }.
+   * - A plain backup is restored into the current setup (and encrypted if protection is on).
+   */
   restoreFrom(srcDir) {
-    const dataFile = path.join(srcDir, 'opensafe-data.json');
-    if (!fs.existsSync(dataFile)) throw new Error('That folder is not an OpenSafe backup (no opensafe-data.json).');
-    const parsed = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
-    if (!parsed || !Array.isArray(parsed.assets)) throw new Error('Backup file is not valid OpenSafe data.');
-    // safety copy of what we have now
-    this.backupTo(this.backupDir);
-    const keepSettings = this.data.settings;
-    this.data = this._migrate(parsed);
-    this.data.settings.phoneToken = keepSettings.phoneToken;
-    const srcAttach = path.join(srcDir, 'attachments');
+    const sJson = path.join(srcDir, 'opensafe-data.json');
+    const sBin = path.join(srcDir, 'opensafe-data.bin');
+    const sSec = path.join(srcDir, 'security.json');
+    const sAttach = path.join(srcDir, 'attachments');
+    const encrypted = fs.existsSync(sSec);
+    if (!fs.existsSync(sJson) && !fs.existsSync(sBin)) throw new Error('That folder is not an OpenSafe backup (no opensafe-data file).');
+    if (encrypted && !fs.existsSync(sBin)) throw new Error('This backup is incomplete: its data file is missing.');
+    if (!encrypted) {
+      const raw = fs.readFileSync(sJson);
+      if (sec.isSealed(raw)) throw new Error('This backup is encrypted but its security.json file is missing, so it can\'t be opened.');
+      let parsed;
+      try { parsed = JSON.parse(raw.toString('utf8')); } catch (_) { throw new Error('Backup file is not valid OpenSafe data.'); }
+      if (!parsed || !Array.isArray(parsed.assets)) throw new Error('Backup file is not valid OpenSafe data.');
+      if (this.data && this.data.vault) throw new Error('This older backup has no vault. Move your vault items out and remove the vault before restoring it, so nothing in the vault is lost.');
+      this.backupTo(this.backupDir); // safety copy of what we have now
+      const keepSettings = this.data.settings;
+      this.data = this._migrate(parsed);
+      this.data.settings.phoneToken = keepSettings.phoneToken;
+      fs.rmSync(this.attachDir, { recursive: true, force: true });
+      if (fs.existsSync(sAttach)) fs.cpSync(sAttach, this.attachDir, { recursive: true });
+      else fs.mkdirSync(this.attachDir, { recursive: true });
+      this.save();
+      this._sealPending();
+      return { locked: false };
+    }
+    try { JSON.parse(fs.readFileSync(sSec, 'utf8')).password.wrap.ct.length; } catch (_) { throw new Error('This backup\'s security.json file is damaged.'); }
+    this.backupTo(this.backupDir); // safety copy (stays encrypted if it was)
+    fs.copyFileSync(sSec, this.securityFile + '.restoring');
+    fs.copyFileSync(sBin, this.binFile + '.restoring');
     fs.rmSync(this.attachDir, { recursive: true, force: true });
-    if (fs.existsSync(srcAttach)) fs.cpSync(srcAttach, this.attachDir, { recursive: true });
+    if (fs.existsSync(sAttach)) fs.cpSync(sAttach, this.attachDir, { recursive: true });
     else fs.mkdirSync(this.attachDir, { recursive: true });
+    fs.renameSync(this.binFile + '.restoring', this.binFile);
+    fs.renameSync(this.securityFile + '.restoring', this.securityFile);
+    if (fs.existsSync(this.file)) fs.unlinkSync(this.file);
+    this.lock();
+    return { locked: true };
+  }
+
+  // ---------- password protection ----------
+  static validPassword(pw) {
+    if (typeof pw !== 'string' || pw.length < 8) throw Object.assign(new Error('Use at least 8 characters for your password.'), { code: 'WEAK' });
+    if (pw.length > 256) throw new Error('That password is too long.');
+  }
+
+  /** Walk a folder and encrypt every file that isn't encrypted yet (master key). */
+  _sealTree(dir) {
+    if (!fs.existsSync(dir)) return;
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, ent.name);
+      if (ent.isDirectory()) { this._sealTree(p); continue; }
+      if (ent.name.endsWith('.tmp')) { fs.unlinkSync(p); continue; }
+      const buf = fs.readFileSync(p);
+      if (sec.isSealed(buf)) continue;
+      const daily = ent.name.match(/^(opensafe-\d{4}-\d{2}-\d{2})\.json$/);
+      if (daily && dir === this.backupDir) {
+        const bin = path.join(dir, daily[1] + '.bin');
+        if (!fs.existsSync(bin)) this._atomicWrite(bin, this._seal(buf));
+        fs.unlinkSync(p);
+      } else {
+        this._atomicWrite(p, this._seal(buf));
+      }
+    }
+  }
+  /** Decrypt every file under a folder (used when turning protection off). */
+  _unsealTree(dir) {
+    if (!fs.existsSync(dir)) return;
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, ent.name);
+      if (ent.isDirectory()) { this._unsealTree(p); continue; }
+      const buf = fs.readFileSync(p);
+      if (!sec.isSealed(buf)) continue;
+      const plain = this._open(buf);
+      const daily = ent.name.match(/^(opensafe-\d{4}-\d{2}-\d{2})\.bin$/);
+      if (daily && dir === this.backupDir) {
+        this._atomicWrite(path.join(dir, daily[1] + '.json'), plain);
+        fs.unlinkSync(p);
+      } else {
+        this._atomicWrite(p, plain);
+      }
+    }
+  }
+  /** Finish any half-done encryption (e.g. if the PC lost power while turning protection on). */
+  _sealPending() {
+    if (!this.isEncrypted() || this.isLocked()) return;
+    this._sealTree(this.attachDir);
+    this._sealTree(this.backupDir);
+    for (const f of fs.readdirSync(this.dir)) {
+      if (!/\.corrupt-\d+$/.test(f)) continue; // damaged copies of the data file
+      const p = path.join(this.dir, f);
+      const buf = fs.readFileSync(p);
+      if (!sec.isSealed(buf)) this._atomicWrite(p, this._seal(buf));
+    }
+    if (fs.existsSync(this.binFile) && fs.existsSync(this.file)) fs.unlinkSync(this.file);
+  }
+
+  /** Turn protection on. Returns the recovery key, which is shown to the user once. */
+  async enableEncryption(password) {
+    if (this.isEncrypted()) throw new Error('Password protection is already on.');
+    if (!this.data) throw new Error('OpenSafe is locked.');
+    Store.validPassword(password);
+    const mk = sec.randomKey();
+    const recoveryKey = sec.newRecoveryKey();
+    const pwSalt = sec.randomSalt(), recSalt = sec.randomSalt();
+    const params = { N: sec.SCRYPT.N, r: sec.SCRYPT.r, p: sec.SCRYPT.p };
+    const pwKek = await sec.kdf(password, pwSalt, params);
+    const rec = await sec.recoveryMaterial(recoveryKey, recSalt, params);
+    // The security file goes first, so an interruption never leaves files encrypted with a lost key.
+    this._writeSecurity({
+      version: 1, kdf: params,
+      password: { salt: pwSalt, wrap: sec.wrap(pwKek, mk) },
+      recovery: { salt: recSalt, wrap: sec.wrap(rec.kek, mk), pub: rec.x.publicDer }
+    });
+    this.keys = { [sec.KEY_MASTER]: mk };
     this.save();
+    this._sealPending();
+    return recoveryKey;
+  }
+
+  async _checkPassword(password) {
+    const s = this._security();
+    const mk = sec.unwrap(await sec.kdf(password, s.password.salt, s.kdf), s.password.wrap);
+    return mk;
+  }
+
+  async unlock(password) {
+    if (!this.isEncrypted()) { if (!this.data) this.load(); return true; }
+    const mk = await this._checkPassword(String(password || ''));
+    if (!mk) throw Object.assign(new Error('That password isn\'t right.'), { code: 'WRONG_PASSWORD' });
+    this.keys = { [sec.KEY_MASTER]: mk };
+    this.load();
+    this._sealPending();
+    return true;
+  }
+
+  /** Forgotten password: open with the recovery key and set a new password. */
+  async recover(recoveryKey, newPassword) {
+    if (!this.isEncrypted()) throw new Error('Password protection isn\'t on.');
+    if (!sec.looksLikeRecoveryKey(recoveryKey)) throw Object.assign(new Error('A recovery key has 24 letters and numbers, like ABCD-EFGH-JKMN-PQRS-TVWX-YZ12.'), { code: 'WRONG_RECOVERY' });
+    Store.validPassword(newPassword);
+    const s = this._security();
+    const rec = await sec.recoveryMaterial(recoveryKey, s.recovery.salt, s.kdf);
+    const mk = sec.unwrap(rec.kek, s.recovery.wrap);
+    if (!mk) throw Object.assign(new Error('That recovery key isn\'t right.'), { code: 'WRONG_RECOVERY' });
+    const salt = sec.randomSalt();
+    s.password = { salt, wrap: sec.wrap(await sec.kdf(newPassword, salt, s.kdf), mk) };
+    this._writeSecurity(s);
+    this.keys = { [sec.KEY_MASTER]: mk };
+    this.load();
+    this._sealPending();
+    return true;
+  }
+
+  async changePassword(current, next) {
+    if (this.isLocked() || !this.isEncrypted()) throw new Error('Unlock OpenSafe first.');
+    const mk = await this._checkPassword(String(current || ''));
+    if (!mk || !mk.equals(this.keys[sec.KEY_MASTER])) throw Object.assign(new Error('Your current password isn\'t right.'), { code: 'WRONG_PASSWORD' });
+    Store.validPassword(next);
+    const s = this._security();
+    const salt = sec.randomSalt();
+    s.password = { salt, wrap: sec.wrap(await sec.kdf(next, salt, s.kdf), mk) };
+    this._writeSecurity(s);
+    return true;
+  }
+
+  /** Replace the recovery key (the old one stops working). Returns the new key. */
+  async newRecoveryKey(password) {
+    if (this.isLocked() || !this.isEncrypted()) throw new Error('Unlock OpenSafe first.');
+    const mk = await this._checkPassword(String(password || ''));
+    if (!mk || !mk.equals(this.keys[sec.KEY_MASTER])) throw Object.assign(new Error('That password isn\'t right.'), { code: 'WRONG_PASSWORD' });
+    if (this.data.vault && !this.keys[sec.KEY_VAULT]) throw Object.assign(new Error('Unlock the vault first, so the new recovery key can open it too.'), { code: 'VAULT_LOCKED' });
+    const s = this._security();
+    const recoveryKey = sec.newRecoveryKey();
+    const recSalt = sec.randomSalt();
+    const rec = await sec.recoveryMaterial(recoveryKey, recSalt, s.kdf);
+    s.recovery = { salt: recSalt, wrap: sec.wrap(rec.kek, mk), pub: rec.x.publicDer };
+    this._writeSecurity(s);
+    if (this.data.vault) { this.data.vault.recovery = sec.wrapForRecovery(rec.x.publicDer, this.keys[sec.KEY_VAULT]); this.save(); }
+    return recoveryKey;
+  }
+
+  async disableEncryption(password) {
+    if (this.isLocked() || !this.isEncrypted()) throw new Error('Unlock OpenSafe first.');
+    const mk = await this._checkPassword(String(password || ''));
+    if (!mk || !mk.equals(this.keys[sec.KEY_MASTER])) throw Object.assign(new Error('That password isn\'t right.'), { code: 'WRONG_PASSWORD' });
+    if (this.data.vault) throw new Error('Move everything out of the vault and remove it first. The vault needs password protection.');
+    this._unsealTree(this.attachDir);
+    this._unsealTree(this.backupDir);
+    for (const f of fs.readdirSync(this.dir)) if (/\.corrupt-\d+$/.test(f)) { const p = path.join(this.dir, f); const b = fs.readFileSync(p); if (sec.isSealed(b)) this._atomicWrite(p, this._open(b)); }
+    this._atomicWrite(this.file, Buffer.from(JSON.stringify(this.data, null, 2)));
+    fs.unlinkSync(this.securityFile); // from here on, plain files
+    if (fs.existsSync(this.binFile)) fs.unlinkSync(this.binFile);
+    this.keys = null;
+    this.save();
+    return true;
+  }
+
+  lock() {
+    this.keys = null;
+    this.data = null;
+    this.vault = null;
+  }
+
+  // ---------- vault ----------
+  static validPin(pin) {
+    if (typeof pin !== 'string' || !/^\d{4,8}$/.test(pin)) throw Object.assign(new Error('The PIN must be 4 to 8 digits.'), { code: 'WEAK' });
+  }
+  vaultExists() { return !!(this.data && this.data.vault); }
+  vaultUnlocked() { return !!this.vault; }
+
+  async setupVault(pin) {
+    if (!this.isEncrypted() || this.isLocked()) throw new Error('Turn on password protection first. The vault is encrypted inside it.');
+    if (this.data.vault) throw new Error('The vault is already set up.');
+    Store.validPin(pin);
+    const vk = sec.randomKey();
+    const salt = sec.randomSalt();
+    const s = this._security();
+    this.data.vault = {
+      pin: { salt, wrap: sec.wrap(await sec.kdf(pin, salt, s.kdf), vk) },
+      recovery: sec.wrapForRecovery(s.recovery.pub, vk),
+      blob: null
+    };
+    this.keys[sec.KEY_VAULT] = vk;
+    this.vault = { assets: [], fileMeta: {} };
+    this.save();
+    return true;
+  }
+
+  _openVault(vk) {
+    this.keys[sec.KEY_VAULT] = vk;
+    let v = { assets: [], fileMeta: {} };
+    if (this.data.vault.blob) v = JSON.parse(sec.open(this.keys, Buffer.from(this.data.vault.blob, 'base64')).toString('utf8'));
+    v.assets = Array.isArray(v.assets) ? v.assets.map(a => this._normaliseAsset(a, a, true)) : [];
+    v.fileMeta = v.fileMeta && typeof v.fileMeta === 'object' ? v.fileMeta : {};
+    // forget names of vault files that no longer exist
+    const live = new Set();
+    for (const a of this.data.assets) for (const r of [...a.photos, ...a.documents]) if (r.vault) live.add(r.id);
+    for (const id of Object.keys(v.fileMeta)) if (!live.has(id)) delete v.fileMeta[id];
+    this.vault = v;
+  }
+
+  async unlockVault(pin) {
+    if (this.isLocked()) throw new Error('Unlock OpenSafe first.');
+    if (!this.data.vault) throw new Error('The vault isn\'t set up.');
+    const now = Date.now();
+    this._pin = this._pin || { fails: 0, until: 0 };
+    if (this._pin.until > now) {
+      const secs = Math.ceil((this._pin.until - now) / 1000);
+      throw Object.assign(new Error(`Too many wrong PINs. Try again in ${secs} seconds.`), { code: 'PIN_WAIT', wait: secs });
+    }
+    const vk = sec.unwrap(await sec.kdf(String(pin || ''), this.data.vault.pin.salt, this._security().kdf), this.data.vault.pin.wrap);
+    if (!vk) {
+      this._pin.fails++;
+      if (this._pin.fails >= 5) this._pin.until = Date.now() + 30000 * Math.pow(2, this._pin.fails - 5);
+      const left = Math.max(0, 5 - this._pin.fails);
+      throw Object.assign(new Error(left ? `Wrong PIN. ${left} more ${left === 1 ? 'try' : 'tries'} before a short wait.` : 'Wrong PIN. Please wait before trying again.'), { code: 'WRONG_PIN' });
+    }
+    this._pin = { fails: 0, until: 0 };
+    this._openVault(vk);
+    return true;
+  }
+
+  lockVault() {
+    if (this.keys) delete this.keys[sec.KEY_VAULT];
+    this.vault = null;
+  }
+
+  async changePin(current, next) {
+    if (!this.vault) throw new Error('Unlock the vault first.');
+    const vk = sec.unwrap(await sec.kdf(String(current || ''), this.data.vault.pin.salt, this._security().kdf), this.data.vault.pin.wrap);
+    if (!vk || !vk.equals(this.keys[sec.KEY_VAULT])) throw Object.assign(new Error('Your current PIN isn\'t right.'), { code: 'WRONG_PIN' });
+    Store.validPin(next);
+    const salt = sec.randomSalt();
+    this.data.vault.pin = { salt, wrap: sec.wrap(await sec.kdf(next, salt, this._security().kdf), vk) };
+    this.save();
+    return true;
+  }
+
+  /** Forgotten PIN: open the vault with the recovery key and set a new PIN. */
+  async recoverVaultPin(recoveryKey, newPin) {
+    if (this.isLocked()) throw new Error('Unlock OpenSafe first.');
+    if (!this.data.vault) throw new Error('The vault isn\'t set up.');
+    if (!sec.looksLikeRecoveryKey(recoveryKey)) throw Object.assign(new Error('A recovery key has 24 letters and numbers, like ABCD-EFGH-JKMN-PQRS-TVWX-YZ12.'), { code: 'WRONG_RECOVERY' });
+    Store.validPin(newPin);
+    const s = this._security();
+    const rec = await sec.recoveryMaterial(recoveryKey, s.recovery.salt, s.kdf);
+    const vk = sec.unwrapWithRecovery(rec.x.privateKey, this.data.vault.recovery);
+    if (!vk) throw Object.assign(new Error('That recovery key isn\'t right.'), { code: 'WRONG_RECOVERY' });
+    const salt = sec.randomSalt();
+    this.data.vault.pin = { salt, wrap: sec.wrap(await sec.kdf(newPin, salt, s.kdf), vk) };
+    this._pin = { fails: 0, until: 0 };
+    this._openVault(vk);
+    this.save();
+    return true;
+  }
+
+  removeVault() {
+    if (!this.vault) throw new Error('Unlock the vault first.');
+    const files = this.data.assets.reduce((n, a) => n + [...a.photos, ...a.documents].filter(r => r.vault).length, 0);
+    if (this.vault.assets.length || files) throw new Error(`Move everything out of the vault first (${this.vault.assets.length} item(s) and ${files} file(s) are still in it).`);
+    delete this.data.vault;
+    this.lockVault();
+    this.save();
+    return true;
+  }
+
+  _reseal(assetId, file, keyId) {
+    const p = this.attachmentPath(assetId, file);
+    if (!fs.existsSync(p)) return;
+    const plain = this._open(fs.readFileSync(p));
+    this._atomicWrite(p, sec.seal(this.keys[keyId], keyId, plain));
+  }
+
+  /** Move a whole item into the vault (toVault = true) or back out. */
+  moveItemToVault(id, toVault) {
+    if (!this.vault) throw Object.assign(new Error('Unlock the vault first.'), { code: 'VAULT_LOCKED' });
+    const inVault = this.vault.assets.find(a => a.id === id);
+    const normal = this.data.assets.find(a => a.id === id);
+    if (toVault) {
+      if (!normal) { if (inVault) return inVault; throw new Error('Item not found'); }
+      for (const r of [...normal.photos, ...normal.documents]) {
+        if (r.vault) { r.name = (this.vault.fileMeta[r.id] && this.vault.fileMeta[r.id].name) || r.name; delete r.vault; delete this.vault.fileMeta[r.id]; }
+        this._reseal(id, r.file, sec.KEY_VAULT);
+      }
+      this.data.assets.splice(this.data.assets.indexOf(normal), 1);
+      this.vault.assets.push(normal);
+      this.save();
+      return normal;
+    }
+    if (!inVault) { if (normal) return normal; throw new Error('Item not found'); }
+    for (const r of [...inVault.photos, ...inVault.documents]) this._reseal(id, r.file, sec.KEY_MASTER);
+    this.vault.assets.splice(this.vault.assets.indexOf(inVault), 1);
+    this.data.assets.push(inVault);
+    this.save();
+    return inVault;
+  }
+
+  /** Put one photo or document of a normal item into the vault (or take it out). */
+  moveFileToVault(assetId, attId, toVault) {
+    if (!this.vault) throw Object.assign(new Error('Unlock the vault first.'), { code: 'VAULT_LOCKED' });
+    const asset = this.data.assets.find(a => a.id === assetId);
+    if (!asset) throw new Error(this.vault.assets.some(a => a.id === assetId) ? 'This whole item is already in the vault.' : 'Item not found');
+    const r = [...asset.photos, ...asset.documents].find(x => x.id === attId);
+    if (!r) throw new Error('File not found');
+    if (toVault && !r.vault) {
+      this._reseal(assetId, r.file, sec.KEY_VAULT);
+      this.vault.fileMeta[r.id] = { name: r.name };
+      r.name = 'Vault file'; r.vault = true;
+    } else if (!toVault && r.vault) {
+      this._reseal(assetId, r.file, sec.KEY_MASTER);
+      r.name = (this.vault.fileMeta[r.id] && this.vault.fileMeta[r.id].name) || 'file';
+      delete r.vault; delete this.vault.fileMeta[r.id];
+    }
+    asset.updatedAt = nowIso();
+    this.save();
+    return r;
+  }
+
+  /** Copy of the visible items for the window: vault flags and real names where allowed. */
+  viewAssets() {
+    const meta = this.vault ? this.vault.fileMeta : {};
+    const mapRec = (r) => {
+      if (!r.vault) return Object.assign({}, r);
+      return this.vault ? Object.assign({}, r, { name: (meta[r.id] && meta[r.id].name) || r.name, vaultFile: true })
+        : Object.assign({}, r, { vaultFile: true, locked: true });
+    };
+    const map = (a, inVault) => Object.assign({}, a, { inVault, photos: a.photos.map(mapRec), documents: a.documents.map(mapRec) });
+    return this.data.assets.map(a => map(a, false)).concat(this.vault ? this.vault.assets.map(a => map(a, true)) : []);
+  }
+
+  securityState() {
+    return {
+      encrypted: this.isEncrypted(),
+      locked: this.isLocked(),
+      vault: { exists: !!(this.data && this.data.vault), unlocked: !!this.vault }
+    };
   }
 }
 

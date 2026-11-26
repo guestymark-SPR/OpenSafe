@@ -35,9 +35,137 @@
   }
   async function refresh() {
     state.snap = await keep.getData();
+    if (state.snap.locked) { showLock(); return; }
+    $('#lockscreen').classList.add('hidden'); $('#lockscreen').innerHTML = '';
     const rem = state.snap.reminders.filter(r => r.daysLeft <= 7).length;
     const b = $('#remBadge'); b.textContent = rem; b.classList.toggle('hidden', !rem);
+    const sec = state.snap.security;
+    $('#lockBtn').classList.toggle('hidden', !sec.encrypted);
+    $('#vaultNav').classList.toggle('hidden', !sec.vault.exists);
+    $('#vaultState').textContent = sec.vault.exists ? (sec.vault.unlocked ? 'open' : 'locked') : '';
+    if (state.view === 'vault' && !sec.vault.exists) state.view = 'settings';
     render();
+  }
+
+  // ---------- lock screen ----------
+  function showLock(mode = 'unlock') {
+    closeModal();
+    const ls = $('#lockscreen');
+    ls.classList.remove('hidden');
+    const logo = '<div class="logo"><img src="icon.png" alt="">OpenSafe</div>';
+    if (mode === 'recover') {
+      ls.innerHTML = `<div class="lockbox">${logo}<h2>Forgotten your password?</h2>
+        <p class="muted">Enter the recovery key you saved when you turned on password protection, then choose a new password.</p>
+        <form id="recoverForm"><label class="f">Recovery key<input name="rk" class="mono" autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX"></label>
+        <label class="f">New password<input name="pw" type="password" autocomplete="new-password"></label>
+        <label class="f">New password again<input name="pw2" type="password" autocomplete="new-password"></label>
+        <div class="err" id="lockErr"></div>
+        <button class="btn primary" type="submit">Unlock and set new password</button>
+        <button class="linkbtn" type="button" data-action="lockBack">Back</button></form></div>`;
+      $('#recoverForm').onsubmit = async (e) => {
+        e.preventDefault();
+        const f = e.target, err = $('#lockErr');
+        if (f.pw.value !== f.pw2.value) { err.textContent = 'The two passwords don\'t match.'; return; }
+        busy(f, true, 'Checking…');
+        try { await keep.recover(f.rk.value, f.pw.value); toast('Unlocked. Your new password is set.'); await refresh(); }
+        catch (ex) { err.textContent = ex.message; busy(f, false); }
+      };
+      return;
+    }
+    ls.innerHTML = `<div class="lockbox">${logo}<h2>OpenSafe is locked</h2>
+      <p class="muted">Enter your password to open your inventory.</p>
+      <form id="unlockForm"><input name="pw" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password">
+      <div class="err" id="lockErr"></div>
+      <button class="btn primary" type="submit">Unlock</button>
+      <button class="linkbtn" type="button" data-action="lockForgot">Forgotten your password?</button></form></div>`;
+    const f = $('#unlockForm');
+    f.pw.focus();
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      busy(f, true, 'Unlocking…');
+      try { await keep.unlock(f.pw.value); await refresh(); }
+      catch (ex) { $('#lockErr').textContent = ex.message; busy(f, false); f.pw.select(); }
+    };
+  }
+  function busy(form, on, text) {
+    const b = form.querySelector('button[type=submit]');
+    if (!b.dataset.label) b.dataset.label = b.textContent;
+    b.disabled = on; b.textContent = on ? text : b.dataset.label;
+  }
+
+  // ---------- vault screen ----------
+  function viewVault() {
+    const sec = state.snap.security;
+    if (!sec.vault.unlocked) {
+      return `<div class="head"><h1>Vault</h1></div>
+      <div class="card pinbox"><h2>🔒 The vault is locked</h2>
+        <p class="muted">Enter your vault PIN to see the items and files you keep in it.</p>
+        <form id="vaultForm" style="display:grid;gap:12px"><input name="pin" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="PIN" aria-label="Vault PIN">
+        <div class="err" id="vaultErr"></div>
+        <button class="btn primary" type="submit">Unlock vault</button></form>
+        <p style="margin-top:12px"><button class="linkbtn" data-action="vaultForgot">Forgotten your PIN?</button></p></div>`;
+    }
+    const items = state.snap.data.assets.filter(a => a.inVault);
+    const files = [];
+    for (const a of state.snap.data.assets) if (!a.inVault) for (const r of [...a.photos, ...a.documents]) if (r.vaultFile) files.push({ a, r });
+    return `<div class="head"><h1>Vault</h1><span class="sub">open</span><span class="spacer"></span><button class="btn" data-action="vaultLock">🔒 Lock vault</button></div>
+      <p class="muted" style="margin-top:-8px">Vault items and files have their own encryption key. They're hidden, and left out of totals and reports, whenever the vault is locked. It locks when you close or lock OpenSafe.</p>
+      <div class="card" style="margin-bottom:16px"><h2>Items in the vault (${items.length})</h2>
+        ${items.length ? `<div class="rows">${items.map(a => `<div class="rowi" data-open="${a.id}">${thumb(a)}<div style="flex:1"><div class="name">${esc(a.name)}</div><div class="meta">${esc([a.category, a.location].filter(Boolean).join(' · '))}</div></div><span class="meta">${value(a) ? money(value(a)) : ''}</span></div>`).join('')}</div>`
+          : '<div class="muted">None yet. Open an item and choose <b>🔒 Move to vault</b>.</div>'}</div>
+      <div class="card"><h2>Single files in the vault (${files.length})</h2>
+        ${files.length ? `<div class="rows">${files.map(({ a, r }) => `<div class="rowi" data-open="${a.id}" data-opentab="${a.photos.includes(r) ? 'photos' : 'docs'}"><span style="flex:1"><b>${esc(r.name)}</b> <span class="meta">in ${esc(a.name)}</span></span><span class="pill vault">🔒</span></div>`).join('')}</div>`
+          : '<div class="muted">None yet. On an item\'s Photos or Documents tab, choose <b>🔒 To vault</b> on a file, such as an ID scan, a logbook or a receipt.</div>'}</div>`;
+  }
+
+  // ---------- security modals ----------
+  function secModal(title, bodyHtml, submitLabel, onSubmit) {
+    openModal(`<form class="dialog narrow" id="secForm" novalidate><div class="dh"><h2>${title}</h2></div>
+      <div class="db">${bodyHtml}<div class="err" id="secErr"></div></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button type="submit" class="btn primary">${submitLabel}</button></div></form>`);
+    $('#secForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const f = e.target;
+      busy(f, true, 'Working…');
+      try { await onSubmit(f); } catch (ex) { $('#secErr').textContent = ex.message; busy(f, false); }
+    };
+  }
+  const pwField = (name, label, auto = 'new-password') => `<label class="f s3">${label}<input name="${name}" type="password" autocomplete="${auto}"></label>`;
+  const pinField = (name, label) => `<label class="f">${label}<input name="${name}" type="password" inputmode="numeric" maxlength="8" autocomplete="off"></label>`;
+
+  function showRecoveryKey(rk, intro) {
+    openModal(`<div class="dialog narrow"><div class="dh"><h2>Your recovery key</h2></div>
+      <div class="db"><p class="s3" style="margin:0">${intro} <b>Write it down or save it now. It won't be shown again.</b></p>
+      <div class="rk">${esc(rk)}</div>
+      <p class="s3 muted" style="margin:0">Keep it somewhere safe and away from this PC: printed in a drawer, or on a USB stick. If you forget your password <i>and</i> lose this key, nobody can open your data, not even with OpenSafe's help.</p>
+      <div class="s3" style="display:flex;gap:8px"><button class="btn" data-action="rkCopy">Copy</button><button class="btn" data-action="rkSave">Save to a file…</button></div>
+      <label class="switch s3" style="font-weight:500"><input type="checkbox" id="rkOk"> I've saved my recovery key somewhere safe</label></div>
+      <div class="df"><button class="btn primary" id="rkDone" disabled data-action="rkDone">Done</button></div></div>`);
+    state.rk = rk;
+    $('#rkOk').onchange = (e) => { $('#rkDone').disabled = !e.target.checked; };
+  }
+
+  function securityCard() {
+    const sec = state.snap.security;
+    if (!sec.encrypted) {
+      return `<div class="card"><h2>Password protection</h2>
+        <p class="muted">Off. Anyone who can use this Windows account can open OpenSafe and read its files.</p>
+        <p>Turning it on encrypts your items, photos, receipts and daily backups with AES-256. OpenSafe will ask for your password each time it opens. You'll also get a recovery key for if you forget the password.</p>
+        <button class="btn primary" data-action="secEnable">Turn on password protection…</button></div>`;
+    }
+    const v = sec.vault;
+    return `<div class="card"><h2>Password protection</h2>
+      <p><span class="pill good">On</span> Your items, photos, receipts and daily backups are encrypted.</p>
+      <div class="secrow"><span>Lock OpenSafe now</span><button class="btn small" data-action="lockApp">🔒 Lock</button></div>
+      <div class="secrow"><span>Change password</span><button class="btn small" data-action="secChangePw">Change…</button></div>
+      <div class="secrow"><span>Make a new recovery key <span class="faint">(the old one stops working)</span></span><button class="btn small" data-action="secNewRk">New key…</button></div>
+      <div class="secrow"><span>Turn off password protection</span><button class="btn small danger" data-action="secDisable">Turn off…</button></div>
+      <h2 style="margin-top:18px">Vault</h2>
+      ${!v.exists ? `<p class="muted">Keep sensitive items or single files (ID scans, logbooks, valuables) behind a separate PIN.</p><button class="btn" data-action="vaultSetup">Set up the vault…</button>`
+      : `<div class="secrow"><span>Vault is <b>${v.unlocked ? 'open' : 'locked'}</b></span><button class="btn small" data-nav="vault">Go to vault</button></div>
+         <div class="secrow"><span>Change vault PIN</span><button class="btn small" data-action="vaultChangePin">Change…</button></div>
+         <div class="secrow"><span>Remove the vault <span class="faint">(it must be empty)</span></span><button class="btn small danger" data-action="vaultRemove">Remove…</button></div>`}
+      </div>`;
   }
   function go(view, extra = {}) {
     Object.assign(state, { view }, extra);
@@ -58,19 +186,23 @@
     if (n <= state.snap.data.settings.reminderDays) return `<span class="pill warn">Warranty ${dueText(n)}</span>`;
     return '<span class="pill good">Under warranty</span>';
   }
+  const cover = (a) => a.photos.find(p => !p.locked) || null;
   function thumb(a, cls = 'thumb') {
-    return a.photos.length ? `<img class="${cls}" src="${img(a, a.photos[0])}" alt="" loading="lazy">` : `<div class="${cls} ph">▣</div>`;
+    const p = cover(a);
+    return p ? `<img class="${cls}" src="${img(a, p)}" alt="" loading="lazy">` : `<div class="${cls} ph">▣</div>`;
   }
+  const vaultPill = (a) => a.inVault ? '<span class="pill vault">🔒 Vault</span>' : '';
 
   // ---------- render ----------
   function render() {
     if (!state.snap) return;
     $$('#nav button').forEach(b => b.classList.toggle('on', b.dataset.nav === (state.view === 'item' ? 'items' : state.view)));
     const v = $('#view');
-    const views = { dashboard: viewDashboard, items: viewItems, item: viewItem, reminders: viewReminders, phone: viewPhone, reports: viewReports, settings: viewSettings };
+    const views = { dashboard: viewDashboard, items: viewItems, item: viewItem, reminders: viewReminders, phone: viewPhone, reports: viewReports, settings: viewSettings, vault: viewVault };
     v.innerHTML = (views[state.view] || viewDashboard)();
     if (state.view === 'phone') { loadCapture(); loadPhone(); const d = $('#wifiDetails'); if (d) d.ontoggle = () => { state.wifiOpen = d.open; }; }
     if (state.view === 'item') wireDrop();
+    if (state.view === 'vault') wireVaultForm();
   }
 
   function viewDashboard() {
@@ -177,7 +309,7 @@
     if (!list.length) return head + toolbar + `<div class="card empty">${d.assets.length ? 'No items match these filters.' : 'No items yet. Add one here or from your phone.'}</div>`;
     if (f.layout === 'grid') {
       return head + toolbar + `<div class="cards">${list.map(a => `<div class="icard" data-open="${a.id}">
-        <div class="img">${a.photos.length ? `<img src="${img(a, a.photos[0])}" alt="" loading="lazy">` : '▣'}</div>
+        <div class="img">${cover(a) ? `<img src="${img(a, cover(a))}" alt="" loading="lazy">` : '▣'}</div>
         <div class="body"><div class="name">${esc(a.name)}</div><div class="meta">${esc(a.category || '')}</div><div class="val">${value(a) ? money(value(a)) : '<span class="faint">No value</span>'}</div></div></div>`).join('')}</div>`;
     }
     return head + toolbar + `<table class="list"><thead><tr><th style="width:60px"></th><th>Item</th><th>Category</th><th>Location</th><th>Serial no.</th><th>Bought</th><th class="r">Value now</th><th></th></tr></thead><tbody>
@@ -185,8 +317,21 @@
         <td><div class="name">${esc(a.name)}</div><div class="meta">${esc([a.brand, a.model].filter(Boolean).join(' '))}</div></td>
         <td>${esc(a.category)}</td><td>${esc(a.location)}</td><td class="mono">${esc(a.serial) || '<span class="faint">—</span>'}</td>
         <td class="nowrap">${ukDate(a.purchaseDate)}</td><td class="r nowrap">${value(a) ? money(value(a)) : '—'}</td>
-        <td>${a.status !== 'Owned' ? `<span class="pill">${esc(a.status)}</span>` : ''}${a.source === 'phone' ? '<span class="pill acc">phone</span>' : ''}${warrantyPill(a).includes('warn') ? warrantyPill(a) : ''}</td></tr>`).join('')}
+        <td>${vaultPill(a)}${a.status !== 'Owned' ? `<span class="pill">${esc(a.status)}</span>` : ''}${a.source === 'phone' ? '<span class="pill acc">phone</span>' : ''}${warrantyPill(a).includes('warn') ? warrantyPill(a) : ''}</td></tr>`).join('')}
     </tbody></table>`;
+  }
+
+  function itemVaultBtn(a) {
+    const sec = state.snap.security;
+    if (!sec.vault.exists) return '';
+    if (a.inVault) return '<button class="btn" data-action="vaultOut">Move out of vault</button>';
+    return `<button class="btn" data-action="vaultIn">🔒 Move to vault</button>`;
+  }
+  function fileVaultBtn(a, r, isDoc) {
+    const sec = state.snap.security;
+    if (!sec.vault.exists || a.inVault) return '';
+    const cls = isDoc ? 'btn small' : '';
+    return r.vaultFile ? `<button class="${cls}" data-action="fileVaultOut" data-att="${r.id}">Out of vault</button> ` : `<button class="${cls}" data-action="fileVaultIn" data-att="${r.id}">🔒 To vault</button> `;
   }
 
   function viewItem() {
@@ -207,18 +352,19 @@
       </div>${a.notes ? `<div class="notes">${esc(a.notes)}</div>` : ''}</div>`;
     } else if (t === 'photos') {
       body = `<div class="drop" id="drop">Drag photos here, or <button class="btn small" data-action="pick" data-kind="photo">Choose photos…</button></div>
-      ${a.photos.length ? `<div class="gallery">${a.photos.map((p, i) => `<div class="ph-tile">
+      ${a.photos.length ? `<div class="gallery">${a.photos.map((p, i) => p.locked ? `<div class="ph-tile locked" data-nav="vault"><div>🔒<br>Vault photo<br><small>Unlock the vault to see it</small></div></div>` : `<div class="ph-tile">
         <img src="${img(a, p)}" alt="${esc(p.name)}" data-zoom="${img(a, p)}">
-        ${i === 0 ? '<span class="pill acc coverflag">Cover</span>' : ''}
-        <div class="acts">${i ? `<button data-action="cover" data-att="${p.id}">Make cover</button>` : ''}<button data-action="rmAtt" data-att="${p.id}">Delete</button></div></div>`).join('')}</div>`
+        ${i === 0 ? '<span class="pill acc coverflag">Cover</span>' : ''}${p.vaultFile ? '<span class="pill vault coverflag" style="left:auto;right:6px">🔒 Vault</span>' : ''}
+        <div class="acts">${i ? `<button data-action="cover" data-att="${p.id}">Make cover</button>` : ''}${fileVaultBtn(a, p)}<button data-action="rmAtt" data-att="${p.id}">Delete</button></div></div>`).join('')}</div>`
         : '<div class="empty">No photos yet. Photos of the item, its serial plate and its box all help with insurance claims.</div>'}`;
     } else if (t === 'docs') {
       body = `<div class="drop" id="drop">Drag receipts, manuals or warranty cards here as
         <select id="docType" style="width:auto;min-width:120px;margin:0 6px">${state.snap.lists.docTypes.map(x => opt(x, x, 'Receipt')).join('')}</select>
         or <button class="btn small" data-action="pick" data-kind="document">Choose files…</button></div>
       ${a.documents.length ? `<table class="list"><thead><tr><th>Name</th><th>Type</th><th>Added</th><th></th></tr></thead><tbody>
-        ${a.documents.map(d => `<tr><td data-action="openDoc" data-file="${esc(d.file)}"><b>${esc(d.name)}</b></td><td><span class="pill ${d.type === 'Receipt' ? 'good' : ''}">${esc(d.type)}</span></td>
-        <td>${ukDate(d.addedAt.slice(0, 10))}</td><td class="r"><button class="btn small" data-action="openDoc" data-file="${esc(d.file)}">Open</button> <button class="btn small danger" data-action="rmAtt" data-att="${d.id}">Delete</button></td></tr>`).join('')}
+        ${a.documents.map(d => d.locked ? `<tr><td colspan="3">🔒 <b>Vault file</b> <span class="muted">(unlock the vault to see its name and open it)</span></td><td class="r"><button class="btn small" data-nav="vault">Unlock vault</button></td></tr>`
+        : `<tr><td data-action="openDoc" data-file="${esc(d.file)}" data-name="${esc(d.name)}"><b>${esc(d.name)}</b> ${d.vaultFile ? '<span class="pill vault">🔒 Vault</span>' : ''}</td><td><span class="pill ${d.type === 'Receipt' ? 'good' : ''}">${esc(d.type)}</span></td>
+        <td>${ukDate(d.addedAt.slice(0, 10))}</td><td class="r nowrap"><button class="btn small" data-action="openDoc" data-file="${esc(d.file)}" data-name="${esc(d.name)}">Open</button> ${fileVaultBtn(a, d, true)}<button class="btn small danger" data-action="rmAtt" data-att="${d.id}">Delete</button></td></tr>`).join('')}
       </tbody></table>` : '<div class="empty">No documents yet.</div>'}`;
     } else if (t === 'service') {
       const cost = a.service.reduce((x, s) => x + (s.cost || 0), 0);
@@ -230,9 +376,10 @@
       </tbody></table>` : '<div class="empty">No service history. Log MOTs, services, repairs, battery changes and inspections here. Set a "next due" date to get a reminder.</div>'}`;
     }
     return `<div class="head"><button class="btn" data-action="back">← Items</button><span class="spacer"></span>
-      <button class="btn" data-action="dup">Duplicate</button><button class="btn danger" data-action="del">Delete</button><button class="btn primary" data-action="edit">Edit</button></div>
+      ${itemVaultBtn(a)}<button class="btn" data-action="dup">Duplicate</button><button class="btn danger" data-action="del">Delete</button><button class="btn primary" data-action="edit">Edit</button></div>
+    ${a.inVault ? '<div class="note" style="margin-bottom:14px">🔒 This item is in the vault. It\'s hidden, and left out of totals and reports, whenever the vault is locked.</div>' : ''}
     <div class="detail-head">
-      ${a.photos.length ? `<img class="cover" src="${img(a, a.photos[0])}" data-zoom="${img(a, a.photos[0])}" alt="">` : '<div class="cover" data-tab="photos">▣</div>'}
+      ${cover(a) ? `<img class="cover" src="${img(a, cover(a))}" data-zoom="${img(a, cover(a))}" alt="">` : '<div class="cover" data-tab="photos">▣</div>'}
       <div><h1>${esc(a.name)}</h1><div class="muted">${esc([a.brand, a.model].filter(Boolean).join(' '))}</div>
       <div style="margin-top:10px;font-size:22px;font-weight:650">${value(a) ? money(value(a)) : ''}</div>
       <div style="margin-top:6px">${a.status !== 'Owned' ? `<span class="pill">${esc(a.status)}</span>` : ''}${warrantyPill(a)}${a.insurer ? '<span class="pill good">Insured</span>' : ''}</div></div>
@@ -338,6 +485,7 @@
         <p><label class="switch" style="font-weight:500"><input type="checkbox" id="rPhotos" checked> Include a photo of each item</label></p>
         <p><label class="switch" style="font-weight:500"><input type="checkbox" id="rInactive"> Include sold, disposed and lost items</label></p>
         <button class="btn primary" data-action="report">Save PDF…</button></div>
+      ${state.snap.security.vault.exists ? `<div class="note" style="grid-column:1/-1">🔒 Vault items are only included while the vault is open. It's ${state.snap.security.vault.unlocked ? '<b>open</b> now, so they will be included' : '<b>locked</b> now, so they will be left out'}. Reports and spreadsheets are saved unencrypted, so keep them somewhere safe.</div>` : ''}
       <div class="card"><h2>Spreadsheet (CSV)</h2>
         <p class="muted">Every item and all its fields, for Excel or Google Sheets.</p>
         <button class="btn primary" data-action="csv">Export CSV…</button></div>
@@ -348,6 +496,7 @@
     const d = state.snap.data;
     return `<div class="head"><h1>Settings</h1></div>
     <div class="grid g2">
+      ${securityCard()}
       <div class="card"><h2>Reminders</h2>
         <label class="f" style="max-width:260px">Remind me this many days ahead<input type="number" id="remDays" min="1" max="365" value="${d.settings.reminderDays}"></label>
         <p class="muted">OpenSafe also shows a Windows notification when you open it if anything is due within 7 days.</p>
@@ -386,6 +535,18 @@
   }
 
   // ---------- modals ----------
+  function wireVaultForm() {
+    const f = $('#vaultForm');
+    if (!f) return;
+    f.pin.focus();
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      busy(f, true, 'Unlocking…');
+      try { await keep.vaultUnlock(f.pin.value); await refresh(); }
+      catch (ex) { $('#vaultErr').textContent = ex.message; busy(f, false); f.pin.select(); }
+    };
+  }
+
   function openModal(html) { const m = $('#modal'); m.innerHTML = html; m.classList.remove('hidden'); const first = $('input,select,textarea', m); first && first.focus(); }
   function closeModal() { const m = $('#modal'); m.classList.add('hidden'); m.innerHTML = ''; }
 
@@ -492,7 +653,7 @@
     const zoom = e.target.closest('[data-zoom]');
     if (zoom) { const lb = $('#lightbox'); lb.innerHTML = `<img src="${esc(zoom.dataset.zoom)}" alt="">`; lb.classList.remove('hidden'); return; }
     if (e.target.closest('#lightbox')) { $('#lightbox').classList.add('hidden'); return; }
-    if (e.target.id === 'modal') { closeModal(); return; }
+    if (e.target.id === 'modal') { if (!state.rk) closeModal(); return; } // never lose an unsaved recovery key
 
     const nav = e.target.closest('[data-nav]');
     if (nav) { if (nav.dataset.nav === 'items') state.f.gap = ''; go(nav.dataset.nav); return; }
@@ -514,7 +675,7 @@
         case 'pick': { const r = await run(() => keep.pickFiles(a.id, act.dataset.kind, $('#docType') ? $('#docType').value : 'Other')); reportAdd(r); await refresh(); break; }
         case 'rmAtt': if (confirm('Delete this file from OpenSafe?')) { await run(() => keep.removeAttachment(a.id, act.dataset.att), 'Deleted'); await refresh(); } break;
         case 'cover': await run(() => keep.setCover(a.id, act.dataset.att)); await refresh(); break;
-        case 'openDoc': await run(() => keep.openAttachment(a.id, act.dataset.file)); break;
+        case 'openDoc': await run(() => keep.openAttachment(a.id, act.dataset.file, act.dataset.name)); break;
         case 'newService': serviceForm(a); break;
         case 'editService': if (!e.target.closest('button')) serviceForm(a, a.service.find(s => s.id === act.dataset.sid)); break;
         case 'rmService': e.stopPropagation(); if (confirm('Delete this service entry?')) { await run(() => keep.deleteService(a.id, act.dataset.sid), 'Deleted'); await refresh(); } break;
@@ -527,6 +688,68 @@
           try { await run(() => keep.fixFirewall(), '✓ Firewall fixed. Try your phone again.'); } catch (_) {}
           loadPhone(); break;
         }
+        case 'lockApp': await keep.lock(); break;
+        case 'lockForgot': showLock('recover'); break;
+        case 'lockBack': showLock('unlock'); break;
+        case 'vaultLock': await keep.vaultLock(); toast('Vault locked'); break;
+        case 'vaultIn':
+          if (!state.snap.security.vault.unlocked) { toast('Unlock the vault first'); go('vault'); break; }
+          await run(() => keep.vaultMoveItem(a.id, true), '🔒 Moved to the vault'); await refresh(); break;
+        case 'vaultOut': await run(() => keep.vaultMoveItem(a.id, false), 'Moved out of the vault'); await refresh(); break;
+        case 'fileVaultIn':
+          if (!state.snap.security.vault.unlocked) { toast('Unlock the vault first'); go('vault'); break; }
+          await run(() => keep.vaultMoveFile(a.id, act.dataset.att, true), '🔒 File moved to the vault'); await refresh(); break;
+        case 'fileVaultOut': await run(() => keep.vaultMoveFile(a.id, act.dataset.att, false), 'File moved out of the vault'); await refresh(); break;
+        case 'secEnable':
+          secModal('Turn on password protection', `<p class="s3 muted" style="margin:0">Choose a password you'll remember: at least 8 characters. A short sentence works well.</p>${pwField('pw', 'Password')}${pwField('pw2', 'Password again')}
+            <p class="s3 muted" style="margin:0">OpenSafe will encrypt everything now. With lots of photos this can take a minute.</p>`, 'Turn on', async (f) => {
+            if (f.pw.value !== f.pw2.value) throw new Error('The two passwords don\'t match.');
+            const rk = await keep.enableProtection(f.pw.value);
+            showRecoveryKey(rk, 'Password protection is on.');
+          });
+          break;
+        case 'rkCopy': await keep.copyText(state.rk); toast('Copied. It\'s cleared from the clipboard after a minute.'); break;
+        case 'rkSave': { const p = await run(() => keep.saveRecoveryKey(state.rk)); if (p) toast('Saved. Move that file off this PC, e.g. to a USB stick.', 5000); break; }
+        case 'rkDone': state.rk = null; closeModal(); await refresh(); break;
+        case 'secChangePw':
+          secModal('Change password', pwField('cur', 'Current password', 'current-password') + pwField('pw', 'New password') + pwField('pw2', 'New password again'), 'Change password', async (f) => {
+            if (f.pw.value !== f.pw2.value) throw new Error('The two new passwords don\'t match.');
+            await keep.changePassword(f.cur.value, f.pw.value); closeModal(); toast('Password changed');
+          });
+          break;
+        case 'secNewRk':
+          secModal('Make a new recovery key', '<p class="s3 muted" style="margin:0">Your old recovery key will stop working.</p>' + pwField('cur', 'Your password', 'current-password'), 'Make new key', async (f) => {
+            const rk = await keep.newRecoveryKey(f.cur.value); showRecoveryKey(rk, 'This is your new recovery key. The old one no longer works.');
+          });
+          break;
+        case 'secDisable':
+          secModal('Turn off password protection', '<p class="s3" style="margin:0">Your files will be decrypted and stored unprotected on this PC.</p>' + pwField('cur', 'Your password', 'current-password'), 'Turn off', async (f) => {
+            await keep.disableProtection(f.cur.value); closeModal(); toast('Password protection is off'); await refresh();
+          });
+          break;
+        case 'vaultSetup':
+          secModal('Set up the vault', '<p class="s3 muted" style="margin:0">Choose a PIN of 4 to 8 digits. It\'s separate from your password. Your recovery key can reset it if you forget it.</p>' + pinField('pin', 'PIN') + pinField('pin2', 'PIN again'), 'Set up vault', async (f) => {
+            if (f.pin.value !== f.pin2.value) throw new Error('The two PINs don\'t match.');
+            await keep.vaultSetup(f.pin.value); closeModal(); toast('🔒 Vault ready. It\'s open now.'); await refresh(); go('vault');
+          });
+          break;
+        case 'vaultChangePin':
+          if (!state.snap.security.vault.unlocked) { toast('Unlock the vault first'); go('vault'); break; }
+          secModal('Change vault PIN', pinField('cur', 'Current PIN') + '<div></div>' + pinField('pin', 'New PIN') + pinField('pin2', 'New PIN again'), 'Change PIN', async (f) => {
+            if (f.pin.value !== f.pin2.value) throw new Error('The two new PINs don\'t match.');
+            await keep.vaultChangePin(f.cur.value, f.pin.value); closeModal(); toast('PIN changed');
+          });
+          break;
+        case 'vaultForgot':
+          secModal('Forgotten your vault PIN?', '<p class="s3 muted" style="margin:0">Enter your recovery key and choose a new PIN.</p><label class="f s3">Recovery key<input name="rk" class="mono" autocomplete="off" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX"></label>' + pinField('pin', 'New PIN') + pinField('pin2', 'New PIN again'), 'Reset PIN', async (f) => {
+            if (f.pin.value !== f.pin2.value) throw new Error('The two PINs don\'t match.');
+            await keep.vaultRecoverPin(f.rk.value, f.pin.value); closeModal(); toast('New PIN set. The vault is open.'); await refresh();
+          });
+          break;
+        case 'vaultRemove':
+          if (!state.snap.security.vault.unlocked) { toast('Unlock the vault first'); go('vault'); break; }
+          if (confirm('Remove the vault? It must be empty. You can set it up again later.')) { await run(() => keep.vaultRemove(), 'Vault removed'); await refresh(); }
+          break;
         case 'importPick': { await run(() => keep.importPick()); await refresh(); break; }
         case 'phoneReset': await run(() => keep.phoneReset()); loadPhone(); break;
         case 'report': { const p = await run(() => keep.exportReport({ includePhotos: $('#rPhotos').checked, includeInactive: $('#rInactive').checked })); if (p) toast('Report saved'); break; }
@@ -565,16 +788,18 @@
   });
 
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { $('#lightbox').classList.add('hidden'); closeModal(); }
+    if (e.key === 'Escape') { $('#lightbox').classList.add('hidden'); if (!state.rk) closeModal(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n' && $('#modal').classList.contains('hidden')) { e.preventDefault(); itemForm(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); if (state.view !== 'items') go('items'); setTimeout(() => $('#q') && $('#q').focus(), 0); }
   });
 
   keep.onChanged(async () => {
-    const before = state.snap ? state.snap.data.assets.length : 0;
+    if (!state.snap || state.snap.locked) return;
+    const before = state.snap.data.assets.length;
     // don't re-render under an open form
     const modalOpen = !$('#modal').classList.contains('hidden');
     state.snap = await keep.getData();
+    if (state.snap.locked) { showLock(); return; }
     const rem = state.snap.reminders.filter(r => r.daysLeft <= 7).length;
     $('#remBadge').textContent = rem; $('#remBadge').classList.toggle('hidden', !rem);
     if (!modalOpen) render();
@@ -582,6 +807,7 @@
     if (after > before) toast(`📱 New item from your phone: ${state.snap.data.assets[after - 1].name}`, 4000);
   });
   keep.onNav((w) => go(w));
+  keep.onSecurity(() => refresh());
   keep.onUpdate((u) => { const was = state.upd && state.upd.state; state.upd = u; renderUpdate(); if (state.view === 'settings' && was !== u.state) render(); });
   keep.updateStatus().then((u) => { state.upd = u; renderUpdate(); });
 

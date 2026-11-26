@@ -1,9 +1,9 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, Notification, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, Notification, Menu, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { pathToFileURL } = require('url');
+const crypto = require('crypto');
 const QRCode = require('qrcode');
 const { Store, STATUSES, CONDITIONS, DOC_TYPES } = require('./store');
 const { PhoneServer } = require('./phoneServer');
@@ -26,6 +26,29 @@ protocol.registerSchemesAsPrivileged([
 let win = null;
 let store = null;
 let phone = null;
+let pendingImport = null; // a .opensafe file opened while OpenSafe was locked
+const OPEN_DIR = path.join(os.tmpdir(), 'OpenSafe-open'); // decrypted copies of documents you open
+const MIME = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif', '.pdf': 'application/pdf' };
+
+function cleanOpenDir() { try { fs.rmSync(OPEN_DIR, { recursive: true, force: true }); } catch (_) { /* a file may still be open in another app */ } }
+
+function sendSecurity() {
+  if (win && !win.isDestroyed()) win.webContents.send('security:changed', store.securityState());
+}
+
+/** Everything that should happen once the data is readable (at start-up, or after unlocking). */
+function afterUnlock() {
+  if (store.data.settings.phoneLinkEnabled && !phone.running) startPhone().catch(() => {});
+  setTimeout(remindOnStartup, 1500);
+  if (pendingImport) { const f = pendingImport; pendingImport = null; setTimeout(() => importFromPath(f).catch(() => {}), 500); }
+}
+
+async function lockAll() {
+  store.lock();
+  if (phone) await phone.stop();
+  cleanOpenDir();
+  sendSecurity();
+}
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -33,7 +56,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', (_e, argv) => {
     if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
     const f = exportFileFromArgs(argv);
-    if (f && store) importFromPath(f);
+    if (f && store) { if (store.isLocked()) { pendingImport = f; } else importFromPath(f).catch(() => {}); }
   });
   app.whenReady().then(init);
 }
@@ -53,18 +76,21 @@ async function startPhone() {
 
 async function init() {
   store = new Store(DATA_DIR);
-  store.load();
+  if (!store.isEncrypted()) store.load(); // with protection on, data is read after the password
   phone = new PhoneServer({ store, onChange: notifyChanged });
+  cleanOpenDir();
 
   protocol.handle('keep', (req) => {
-    // keep://file/<assetId>/<file>
+    // keep://file/<assetId>/<file>  (photos are decrypted in memory, never written out)
     try {
+      if (store.isLocked()) return new Response('Locked', { status: 403 });
       const u = new URL(req.url);
       const [, assetId, file] = u.pathname.split('/');
-      const p = store.attachmentPath(decodeURIComponent(assetId), decodeURIComponent(file));
-      return net.fetch(pathToFileURL(p).toString());
+      const name = decodeURIComponent(file);
+      const buf = store.readAttachment(decodeURIComponent(assetId), name);
+      return new Response(buf, { headers: { 'Content-Type': MIME[path.extname(name).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-store' } });
     } catch (e) {
-      return new Response('Not found', { status: 404 });
+      return new Response('Not found', { status: e.code === 'VAULT_LOCKED' ? 403 : 404 });
     }
   });
 
@@ -74,13 +100,9 @@ async function init() {
 
   // Opened by double-clicking a .opensafe file
   const startFile = exportFileFromArgs(process.argv);
-  if (startFile) win.webContents.once('did-finish-load', () => setTimeout(() => importFromPath(startFile), 600));
+  if (startFile) pendingImport = startFile;
+  if (!store.isLocked()) win.webContents.once('did-finish-load', () => setTimeout(afterUnlock, 1500));
 
-  if (store.data.settings.phoneLinkEnabled) {
-    startPhone().catch(() => { /* shown as stopped in the Phone screen */ });
-  }
-
-  setTimeout(remindOnStartup, 4000);
   updater.init((st) => { if (win && !win.isDestroyed()) win.webContents.send('update:status', st); });
 }
 
@@ -91,6 +113,7 @@ function exportFileFromArgs(argv) {
 }
 
 async function importFromPath(file) {
+  if (store.isLocked()) { pendingImport = file; throw new Error('Unlock OpenSafe to import this file.'); }
   let res;
   try {
     const st = fs.statSync(file);
@@ -137,7 +160,7 @@ function createWindow() {
 }
 
 function remindOnStartup() {
-  if (!Notification.isSupported()) return;
+  if (!Notification.isSupported() || store.isLocked()) return;
   const due = store.reminders().filter(r => r.daysLeft <= 7);
   if (!due.length) return;
   const overdue = due.filter(r => r.daysLeft < 0).length;
@@ -152,10 +175,13 @@ function remindOnStartup() {
 }
 
 function snapshot() {
-  const data = JSON.parse(JSON.stringify(store.data));
+  if (store.isLocked()) return { locked: true, security: store.securityState(), version: require('../package.json').version };
+  const data = JSON.parse(JSON.stringify(Object.assign({}, store.data, { vault: undefined, assets: [] })));
   delete data.settings.phoneToken;
+  data.assets = store.viewAssets();
   return {
     data,
+    security: store.securityState(),
     summary: store.summary(),
     reminders: store.reminders(),
     lists: { statuses: STATUSES, conditions: CONDITIONS, docTypes: DOC_TYPES },
@@ -203,8 +229,49 @@ function addFilesFromPaths(assetId, kind, docType, paths) {
 
 function registerIpc() {
   const h = (ch, fn) => ipcMain.handle(ch, async (_e, ...args) => {
-    try { return { ok: true, value: await fn(...args) }; } catch (e) { return { ok: false, error: e.message }; }
+    try { return { ok: true, value: await fn(...args) }; } catch (e) { return { ok: false, error: e.message, code: e.code }; }
   });
+  // Password attempts: after 5 wrong in a row, wait 30 s (doubling).
+  const pw = { fails: 0, until: 0 };
+  const pwGuard = () => {
+    if (pw.until > Date.now()) throw Object.assign(new Error(`Too many wrong attempts. Try again in ${Math.ceil((pw.until - Date.now()) / 1000)} seconds.`), { code: 'PW_WAIT' });
+  };
+  const pwResult = async (fn) => {
+    pwGuard();
+    try { const v = await fn(); pw.fails = 0; return v; }
+    catch (e) {
+      if (e.code === 'WRONG_PASSWORD' || e.code === 'WRONG_RECOVERY') { pw.fails++; if (pw.fails >= 5) pw.until = Date.now() + 30000 * Math.pow(2, pw.fails - 5); }
+      throw e;
+    }
+  };
+
+  // ---- security ----
+  h('sec:state', () => store.securityState());
+  h('sec:enable', async (password) => { const rk = await store.enableEncryption(password); sendSecurity(); return rk; });
+  h('sec:unlock', async (password) => { await pwResult(() => store.unlock(password)); sendSecurity(); afterUnlock(); return true; });
+  h('sec:recover', async (rk, password) => { await pwResult(() => store.recover(rk, password)); sendSecurity(); afterUnlock(); return true; });
+  h('sec:changePassword', (cur, next) => pwResult(() => store.changePassword(cur, next)));
+  h('sec:newRecovery', (password) => pwResult(() => store.newRecoveryKey(password)));
+  h('sec:disable', async (password) => { await pwResult(() => store.disableEncryption(password)); sendSecurity(); return true; });
+  h('sec:lock', async () => { await lockAll(); return true; });
+  h('sec:saveRecovery', async (rk) => {
+    if (!/^[0-9A-Z]{4}(-[0-9A-Z]{4}){5}$/.test(String(rk))) throw new Error('Not a recovery key');
+    const r = await dialog.showSaveDialog(win, { title: 'Save your recovery key', defaultPath: path.join(app.getPath('documents'), 'OpenSafe recovery key.txt'), filters: [{ name: 'Text', extensions: ['txt'] }] });
+    if (r.canceled || !r.filePath) return null;
+    fs.writeFileSync(r.filePath, `OpenSafe recovery key\r\n\r\n${rk}\r\n\r\nCreated ${new Date().toLocaleString('en-GB')}.\r\nUse it if you forget your OpenSafe password or vault PIN.\r\nKeep it somewhere safe and private: a USB stick in a drawer, or printed out. Not on this PC.\r\n`, 'utf8');
+    return r.filePath;
+  });
+  h('clip:copy', (text) => { clipboard.writeText(String(text).slice(0, 200)); setTimeout(() => { if (clipboard.readText() === String(text)) clipboard.clear(); }, 60000); return true; });
+
+  // ---- vault ----
+  h('vault:setup', async (pin) => { await store.setupVault(pin); sendSecurity(); return true; });
+  h('vault:unlock', async (pin) => { await store.unlockVault(pin); sendSecurity(); return true; });
+  h('vault:lock', () => { store.lockVault(); cleanOpenDir(); sendSecurity(); return true; });
+  h('vault:changePin', (cur, next) => store.changePin(cur, next));
+  h('vault:recoverPin', async (rk, pin) => { await pwResult(() => store.recoverVaultPin(rk, pin)); sendSecurity(); return true; });
+  h('vault:remove', () => { store.removeVault(); sendSecurity(); return true; });
+  h('vault:moveItem', (id, to) => store.moveItemToVault(id, !!to));
+  h('vault:moveFile', (assetId, attId, to) => store.moveFileToVault(assetId, attId, !!to));
 
   h('data:get', () => snapshot());
   h('asset:save', (a) => store.saveAsset(a));
@@ -235,8 +302,18 @@ function registerIpc() {
   });
   h('attach:remove', (assetId, attId) => store.removeAttachment(assetId, attId));
   h('attach:cover', (assetId, attId) => store.setCoverPhoto(assetId, attId));
-  h('attach:open', async (assetId, file) => {
-    const err = await shell.openPath(store.attachmentPath(assetId, file));
+  h('attach:open', async (assetId, file, name) => {
+    let p = store.attachmentPath(assetId, file);
+    if (store.isEncrypted()) {
+      // Open a decrypted copy in a private temp folder; it's deleted when OpenSafe locks or closes.
+      const buf = store.readAttachment(assetId, file);
+      const dir = path.join(OPEN_DIR, crypto.randomBytes(6).toString('hex'));
+      fs.mkdirSync(dir, { recursive: true });
+      const safe = String(name || file).replace(/[\\/:*?"<>|]/g, '_').slice(0, 120) || file;
+      p = path.join(dir, path.extname(safe) ? safe : safe + path.extname(file));
+      fs.writeFileSync(p, buf);
+    }
+    const err = await shell.openPath(p);
     if (err) throw new Error(err);
     return true;
   });
@@ -269,7 +346,8 @@ function registerIpc() {
     });
     if (r.canceled || !r.filePath) return null;
     const html = buildReportHtml(store, opts || {});
-    const tmp = path.join(os.tmpdir(), `opensafe-report-${Date.now()}.html`);
+    fs.mkdirSync(OPEN_DIR, { recursive: true });
+    const tmp = path.join(OPEN_DIR, `report-${Date.now()}.html`);
     fs.writeFileSync(tmp, html, 'utf8');
     const pw = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, javascript: false } });
     try {
@@ -300,7 +378,11 @@ function registerIpc() {
       detail: 'A safety copy of your current data is saved to the backups folder first.'
     });
     if (c.response !== 0) return null;
-    store.restoreFrom(r.filePaths[0]);
+    const res = store.restoreFrom(r.filePaths[0]);
+    if (res.locked) {
+      await lockAll();
+      dialog.showMessageBox(win, { type: 'info', title: 'Restore backup', message: 'Backup restored', detail: 'This backup is password protected. Unlock OpenSafe with the password that was in use when the backup was made.' });
+    }
     return r.filePaths[0];
   });
   h('data:openFolder', () => shell.openPath(DATA_DIR));
@@ -357,5 +439,7 @@ function registerIpc() {
 
 app.on('window-all-closed', async () => {
   if (phone) await phone.stop();
+  if (store) store.lock();
+  cleanOpenDir();
   app.quit();
 });

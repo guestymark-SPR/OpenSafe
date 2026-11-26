@@ -1,6 +1,5 @@
 'use strict';
 // Builds the printable insurance / inventory report (rendered to PDF by main.js).
-const { pathToFileURL } = require('url');
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const gbp = (n) => (n === null || n === undefined) ? '—' : new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(n);
@@ -9,7 +8,7 @@ const ukDate = (s) => s ? new Date(s + 'T00:00:00Z').toLocaleDateString('en-GB',
 function buildReportHtml(store, opts) {
   const includeInactive = !!opts.includeInactive;
   const includePhotos = opts.includePhotos !== false;
-  const assets = store.data.assets
+  const assets = store.allAssets()
     .filter(a => includeInactive || !['Sold', 'Disposed', 'Lost / Stolen'].includes(a.status))
     .slice()
     .sort((a, b) => (a.category || '').localeCompare(b.category || '') || a.name.localeCompare(b.name));
@@ -25,9 +24,16 @@ function buildReportHtml(store, opts) {
   const insured = assets.reduce((t, a) => t + (a.insuredValue || 0), 0);
   const generated = new Date().toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short' });
 
+  // Photos are embedded as data URLs (decrypted in memory), so nothing unencrypted is written to disk.
+  const mime = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif' };
   const photo = (a) => {
-    if (!includePhotos || !a.photos.length) return '<div class="nophoto"></div>';
-    try { return `<img src="${esc(pathToFileURL(store.attachmentPath(a.id, a.photos[0].file)).toString())}">`; } catch (_) { return '<div class="nophoto"></div>'; }
+    const p = includePhotos && a.photos.find(x => !x.vault);
+    if (!p) return '<div class="nophoto"></div>';
+    try {
+      const buf = store.readAttachment(a.id, p.file);
+      const ext = (p.file.match(/\.[a-z]+$/i) || [''])[0].toLowerCase();
+      return `<img src="data:${mime[ext] || 'image/jpeg'};base64,${buf.toString('base64')}">`;
+    } catch (_) { return '<div class="nophoto"></div>'; }
   };
 
   let body = '';

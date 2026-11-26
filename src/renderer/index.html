@@ -15,11 +15,14 @@
     <button data-nav="reminders"><span class="i">◷</span>Reminders <b id="remBadge" class="badge hidden"></b></button>
     <button data-nav="phone"><span class="i">⇩</span>Import Files</button>
     <button data-nav="reports"><span class="i">⎙</span>Reports</button>
+    <button data-nav="vault" id="vaultNav" class="hidden"><span class="i">🔒</span>Vault <b id="vaultState" class="vstate"></b></button>
     <button data-nav="settings"><span class="i">⚙</span>Settings</button>
   </nav>
+  <button id="lockBtn" class="btn wide hidden" data-action="lockApp" title="Lock OpenSafe now">🔒 Lock OpenSafe</button>
   <button id="addBtn" class="btn primary wide" data-action="new">+ Add item</button>
 </aside>
 <div class="mainwrap"><div id="updBar" class="updbar hidden"></div><main id="view" tabindex="-1"></main></div>
+<div id="lockscreen" class="lockscreen hidden"></div>
 <div id="modal" class="modal hidden" role="dialog" aria-modal="true"></div>
 <div id="lightbox" class="lightbox hidden"></div>
 <div id="toast" class="toast hidden" role="status"></div>
