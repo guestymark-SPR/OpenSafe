@@ -49,7 +49,13 @@ function buildView(store, { includeVault = false, makeThumb }) {
       grab: !!a.grab, owner: a.owner, borrowedFrom: a.borrowedFrom, returnBy: a.returnBy, photos: a.photos.length, documents: a.documents.length, inVault: store.isVaultAsset(a), thumb
     };
   });
-  return { exportedAt: new Date().toISOString(), count: items.length, items };
+  const ids = new Set(items.map(i => i.id));
+  const trips = (store.data.trips || []).map(t => ({
+    id: t.id, name: t.name, startDate: t.startDate, endDate: t.endDate,
+    items: t.items.filter(i => ids.has(i.assetId)).map(i => ({ id: i.assetId, packed: !!i.packed, back: !!i.back })),
+    extras: t.extras.map(x => ({ id: x.id, text: x.text, packed: !!x.packed, back: !!x.back }))
+  }));
+  return { exportedAt: new Date().toISOString(), count: items.length, items, trips };
 }
 
 module.exports = { encryptView, decryptView, buildView, itemLink, placeLink, CAPTURE_URL, ITERATIONS };

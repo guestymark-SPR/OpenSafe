@@ -646,3 +646,45 @@ test('batch G: premium history, label reading, photo dates, long reminder look-a
   assert.ok(!s.reminders().some(x => x.assetName === 'Car'));
   assert.ok(s.reminders(new Date(), 400).some(x => x.assetName === 'Car'));
 });
+
+test('batch H: packing lists and sale listing', () => {
+  const s = tmpStore();
+  const tent = s.saveAsset({ name: 'Tent', location: 'Home / Loft' });
+  const stove = s.saveAsset({ name: 'Stove', location: 'Garage' });
+  assert.throws(() => s.saveTrip({ name: '' }), /Give the packing list a name/);
+  assert.throws(() => s.saveTrip({ name: 'X', startDate: '2027-07-04', endDate: '2027-06-29' }), /ends before it starts/);
+  const t = s.saveTrip({ name: 'Ardennes tour', startDate: '2027-06-29', endDate: '2027-07-04' });
+  s.setTripItems(t.id, [tent.id, stove.id, 'nope']);
+  s.addTripExtra(t.id, 'Sun cream\nPassport\n\n');
+  assert.deepStrictEqual([s._trip(t.id).items.length, s._trip(t.id).extras.map(x => x.text)], [2, ['Sun cream', 'Passport']]);
+  s.tickTrip(t.id, tent.id, 'packed', true);
+  s.tickTrip(t.id, s._trip(t.id).extras[0].id, 'back', true);       // back implies packed
+  assert.deepStrictEqual(s._trip(t.id).extras[0], Object.assign({}, s._trip(t.id).extras[0], { packed: true, back: true }));
+  s.setTripItems(t.id, [tent.id]);                                     // keeps the tent's tick
+  assert.strictEqual(s._trip(t.id).items[0].packed, true);
+  const t2 = s.saveTrip({ name: 'Next year', copyFrom: t.id });
+  assert.deepStrictEqual(s._trip(t2.id).items.map(i => [i.assetId, i.packed]), [[tent.id, false]]);
+  assert.strictEqual(s._trip(t2.id).extras.length, 2);
+  s.resetTrip(t.id);
+  assert.ok([...s._trip(t.id).items, ...s._trip(t.id).extras].every(r => !r.packed && !r.back));
+  s.deleteAsset(tent.id);                                              // a deleted item leaves the lists
+  assert.strictEqual(s._trip(t.id).items.length, 0);
+  const pv = require('../src/phoneview');
+  s.restoreAsset(tent.id); s.setTripItems(t.id, [tent.id, stove.id]);
+  const view = pv.buildView(s, {});
+  assert.deepStrictEqual(view.trips.find(x => x.id === t.id).items.map(i => i.id).sort(), [tent.id, stove.id].sort());
+  s.deleteTrip(t2.id);
+  assert.strictEqual(s.data.trips.length, 1);
+  // sale listing
+  const { buildListing } = require('../src/listing');
+  const drill = s.saveAsset({ name: 'Cordless drill', brand: 'Makita', model: 'DHP485', condition: 'Good', purchaseDate: '2025-03-14', supplier: 'Screwfix', serial: 'SECRET-SERIAL', purchasePrice: 129, notes: 'private note', warrantyExpiry: '2099-03-14' });
+  const bat = s.saveAsset({ name: '5Ah battery', brand: 'Makita' });
+  s.setParts(drill.id, [bat.id]);
+  s.addDocument(drill.id, 'r.pdf', Buffer.from('%PDF'), 'Receipt');
+  const l = buildListing(s, s.getAsset(drill.id));
+  assert.strictEqual(l.title, 'Makita Cordless drill DHP485 with 5Ah battery');
+  assert.ok(l.text.includes('Bought: March 2025 from Screwfix') && l.text.includes('- Makita 5Ah battery') && l.text.includes('Original receipt available.'));
+  assert.ok(!/SECRET-SERIAL|private note|129/.test(l.text));
+  const long = buildListing(s, s.saveAsset({ name: 'A'.repeat(120) }));
+  assert.ok(long.title.length <= 80);
+});

@@ -479,12 +479,13 @@
     if (!state.snap) return;
     $$('#nav button').forEach(b => b.classList.toggle('on', b.dataset.nav === (state.view === 'item' || state.view === 'bin' ? 'items' : state.view)));
     const v = $('#view');
-    const views = { dashboard: viewDashboard, items: viewItems, item: viewItem, reminders: viewReminders, phone: viewPhone, reports: viewReports, settings: viewSettings, vault: viewVault, policies: viewPolicies, bin: viewBin };
+    const views = { dashboard: viewDashboard, items: viewItems, item: viewItem, reminders: viewReminders, phone: viewPhone, reports: viewReports, settings: viewSettings, vault: viewVault, policies: viewPolicies, bin: viewBin, trips: viewTrips };
     v.innerHTML = (views[state.view] || viewDashboard)();
     if (state.view === 'phone') { loadCapture(); loadPhone(); const d = $('#wifiDetails'); if (d) d.ontoggle = () => { state.wifiOpen = d.open; }; }
     if (state.view === 'item') wireDrop();
     if (state.view === 'vault') wireVaultForm();
     if (state.view === 'reports') spendingCard();
+    if (state.view === 'trips' && $('#extraForm')) $('#extraForm').onsubmit = async (e) => { e.preventDefault(); const v = e.target.text.value; if (!v.trim()) return; await run(() => keep.addTripExtra(state.tripId, v)); await refresh(); };
     if (state.view === 'settings' && !state.bg) keep.bgGet().then(b => { state.bg = b; if (state.view === 'settings' && $('#bgOn')) $('#bgOn').checked = b.enabled; }).catch(() => {});
   }
 
@@ -772,7 +773,7 @@
       </tbody></table>` : '<div class="empty">No service history. Log MOTs, services, repairs, battery changes and inspections here. Set a "next due" date to get a reminder.</div>'}`;
     }
     return `<div class="head"><button class="btn" data-action="back">← Items</button><span class="spacer"></span>
-      ${itemVaultBtn(a)}<button class="btn" data-action="labelOne">QR label…</button><button class="btn" data-action="claimOne">Claim pack…</button><button class="btn" data-action="dup">Duplicate</button><button class="btn danger" data-action="del">Delete</button><button class="btn primary" data-action="edit">Edit</button></div>
+      ${itemVaultBtn(a)}<button class="btn" data-action="labelOne">QR label…</button>${INACTIVE.includes(a.status) || a.status === 'Borrowed' ? '' : '<button class="btn" data-action="sell">Sell…</button>'}<button class="btn" data-action="claimOne">Claim pack…</button><button class="btn" data-action="dup">Duplicate</button><button class="btn danger" data-action="del">Delete</button><button class="btn primary" data-action="edit">Edit</button></div>
     ${a.inVault ? '<div class="note" style="margin-bottom:14px">🔒 This item is in the vault. It\'s hidden, and left out of totals and reports, whenever the vault is locked.</div>' : ''}
     <div class="detail-head">
       ${cover(a) ? `<img class="cover" src="${img(a, cover(a))}" data-zoom="${img(a, cover(a))}" alt="">` : '<div class="cover" data-tab="photos">▣</div>'}
@@ -827,6 +828,69 @@
     el.innerHTML = `<h2>Spending by year</h2><p class="muted" style="margin-top:0">What you paid for the things in OpenSafe, by the year you bought them (borrowed items left out).</p>
       <div class="bars">${rows.map(r => `<div class="barrow" title="${esc(r.top.map(t => `${t.category}: ${money(t.total)}`).join(', '))}"><span class="lab">${esc(r.year === 'Unknown' ? 'Date not known' : r.year)} <span class="faint">(${r.count})</span></span><span class="track"><span class="fill" style="width:${(r.total / max * 100).toFixed(1)}%;display:block"></span></span><span class="v">${money0(r.total)}</span></div>
         <div class="meta" style="margin:-4px 0 8px 2px">${esc(r.top.map(t => `${t.category} ${money0(t.total)}`).join(' · '))}</div>`).join('')}</div>`;
+  }
+
+  // ---------- packing lists ----------
+  function viewTrips() {
+    const trips = (state.snap.data.trips || []).slice().sort((x, y) => (y.startDate || y.createdAt).localeCompare(x.startDate || x.createdAt));
+    const cur = trips.find(t => t.id === state.tripId) || trips[0];
+    if (!cur) return `<div class="head"><h1>Packing lists</h1><span class="spacer"></span><button class="btn primary" data-action="tripNew">+ New packing list</button></div>
+      <div class="card empty">Make a list for a trip (a bike tour, a camping weekend, a sailing trip) from the things in OpenSafe, plus anything else to take. Tick things off as you pack and again when you get home, here or on your phone, so nothing gets left behind.</div>`;
+    state.tripId = cur.id;
+    const rows = [...cur.items.map(i => ({ key: i.assetId, a: asset(i.assetId), packed: i.packed, back: i.back })).filter(r => r.a).sort((x, y) => (x.a.location || '').localeCompare(y.a.location || '') || x.a.name.localeCompare(y.a.name)), ...cur.extras.map(x => ({ key: x.id, text: x.text, packed: x.packed, back: x.back, extra: true }))];
+    const packed = rows.filter(r => r.packed).length, back = rows.filter(r => r.back).length;
+    const value = cur.items.reduce((t, i) => { const a = asset(i.assetId); return t + (a ? valueOf(a) : 0); }, 0);
+    return `<div class="head"><h1>Packing lists</h1><select id="tripSel" style="margin-left:12px;width:auto;max-width:360px">${trips.map(t => opt(t.id, t.name + (t.startDate ? ` · ${ukDate(t.startDate)}` : ''), cur.id)).join('')}</select><span class="spacer"></span><button class="btn" data-action="tripNew">+ New packing list</button></div>
+      <div class="card"><h2 style="display:flex;align-items:center;gap:8px">${esc(cur.name)}<span class="meta" style="font-weight:400">${cur.startDate ? ukDate(cur.startDate) : ''}${cur.endDate ? ' – ' + ukDate(cur.endDate) : ''}</span><span class="spacer"></span>
+        <button class="btn small" data-action="tripPick">Choose items…</button><button class="btn small" data-action="tripEdit">Rename / dates…</button><button class="btn small" data-action="tripReset">Untick all</button><button class="btn small danger" data-action="tripDel">Delete</button></h2>
+        <p class="muted" style="margin-top:0">${rows.length} thing${rows.length === 1 ? '' : 's'} · <b>${packed}</b> packed · <b>${back}</b> back home${value ? ` · items worth ${money0(value)}` : ''}. On the phone, load a new inventory file to take this list with you; ticks made on the phone stay on the phone.</p>
+        ${rows.length ? `<table class="list"><thead><tr><th>Thing</th><th>Where it's kept</th><th class="c">Packed</th><th class="c">Back home</th><th></th></tr></thead><tbody>
+        ${rows.map(r => `<tr><td>${r.extra ? esc(r.text) : `<a href="#" data-open="${r.a.id}"><b>${esc(r.a.name)}</b></a>${r.a.status !== 'Owned' && r.a.status !== 'Borrowed' ? ` <span class="pill warn">${esc(r.a.status)}</span>` : ''}`}</td><td class="meta">${r.extra ? '<span class="faint">not in OpenSafe</span>' : esc(r.a.location)}</td>
+          <td class="c"><input type="checkbox" class="tick" data-key="${r.key}" data-which="packed" ${r.packed ? 'checked' : ''}></td><td class="c"><input type="checkbox" class="tick" data-key="${r.key}" data-which="back" ${r.back ? 'checked' : ''}></td>
+          <td class="r">${r.extra ? `<button class="btn small" data-action="tripExtraRm" data-xid="${r.key}">Remove</button>` : ''}</td></tr>`).join('')}</tbody></table>` : '<div class="muted">Nothing on the list yet. Use <b>Choose items…</b>, or add other things below.</div>'}
+        <form id="extraForm" style="display:flex;gap:8px;margin-top:12px"><input name="text" placeholder="Something else to take, e.g. sun cream, passport, chargers (one per line works too)" style="flex:1"><button class="btn">Add</button></form></div>`;
+  }
+  const valueOf = (a) => a.status === 'Borrowed' ? 0 : value(a);
+  function tripForm(t) {
+    const others = (state.snap.data.trips || []).filter(x => !t || x.id !== t.id);
+    openModal(`<form class="dialog narrow" id="tripForm"><div class="dh"><h2>${t ? 'Packing list' : 'New packing list'}</h2></div>
+      <div class="db"><label class="f s3">Name<input name="name" maxlength="120" value="${esc(t ? t.name : '')}" placeholder="e.g. Ardennes tour"></label>
+        <label class="f">From<input name="startDate" type="date" value="${esc(t ? t.startDate : '')}"></label><label class="f">To<input name="endDate" type="date" value="${esc(t ? t.endDate : '')}"></label>
+        ${!t && others.length ? `<label class="f s3">Start from<select name="copyFrom">${opt('', 'An empty list', '')}${others.map(x => opt(x.id, 'A copy of ' + x.name, '')).join('')}</select></label>` : ''}
+        <div class="err" id="tripErr"></div></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Save</button></div></form>`);
+    $('#tripForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const v = Object.fromEntries(new FormData(e.target).entries());
+      if (t) v.id = t.id;
+      busy(e.target, true, 'Saving…');
+      try { const r = await keep.saveTrip(v); state.tripId = r.id; closeModal(); await refresh(); go('trips'); }
+      catch (ex) { $('#tripErr').textContent = ex.message; busy(e.target, false); }
+    };
+  }
+  function tripPicker(t) {
+    const chosen = new Set(t.items.map(i => i.assetId));
+    const list = state.snap.data.assets.filter(a => !INACTIVE.includes(a.status) && !a.inVault).sort((x, y) => (x.category || '').localeCompare(y.category || '') || x.name.localeCompare(y.name, 'en-GB'));
+    openModal(`<form class="dialog" id="tripPickForm"><div class="dh"><h2>Things to take: ${esc(t.name)}</h2></div>
+      <div class="db"><input type="search" id="tpQ" class="s3" placeholder="Search…">
+        <div class="s3 partlist">${list.map(a => `<label class="partrow" data-name="${esc((a.name + ' ' + a.category + ' ' + a.location + ' ' + a.brand).toLowerCase())}"><input type="checkbox" value="${a.id}" ${chosen.has(a.id) ? 'checked' : ''}> <span style="flex:1"><b>${esc(a.name)}</b> <span class="meta">${esc([a.category, a.location].filter(Boolean).join(' · '))}</span></span></label>`).join('')}</div></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Save</button></div></form>`);
+    $('#tpQ').oninput = (e) => { const q = e.target.value.trim().toLowerCase(); for (const r of document.querySelectorAll('#tripPickForm .partrow')) r.style.display = !q || r.dataset.name.includes(q) ? '' : 'none'; };
+    $('#tripPickForm').onsubmit = async (e) => { e.preventDefault(); await run(() => keep.setTripItems(t.id, [...e.target.querySelectorAll('input[type=checkbox]:checked')].map(i => i.value)), 'Saved'); closeModal(); await refresh(); };
+  }
+  // ---------- selling an item ----------
+  async function sellForm(a) {
+    const l = await run(() => keep.listing(a.id));
+    if (!l) return;
+    openModal(`<div class="dialog"><div class="dh"><h2>Sell ${esc(a.name)}</h2></div>
+      <div class="db"><p class="s3 muted" style="margin:0">A starting point for an advert on eBay, Facebook Marketplace or Gumtree, made from what OpenSafe knows. Edit it before you use it. Your notes, serial number and price paid aren't included.</p>
+        <label class="f s3">Title <span class="faint" id="ttlLen"></span><input id="lsTitle" maxlength="200" value="${esc(l.title)}"></label>
+        <label class="f s3">Description<textarea id="lsText" rows="14">${esc(l.text)}</textarea></label>
+        <div class="s3" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-action="lsCopyTitle">Copy title</button><button class="btn" data-action="lsCopyText">Copy description</button>${a.photos.some(p => !p.vault) ? `<button class="btn" data-action="lsPhotos">Save ${a.photos.filter(p => !p.vault).length} photo${a.photos.filter(p => !p.vault).length === 1 ? '' : 's'} to a folder…</button>` : ''}</div>
+        <p class="s3 faint" style="margin:0">When it's sold, edit the item and set its status to <b>Sold</b> (with the date, price and buyer) to keep a record.</p></div>
+      <div class="df"><button class="btn" data-action="close">Close</button></div></div>`);
+    const len = () => { const n = $('#lsTitle').value.length; $('#ttlLen').textContent = `${n} characters${n > 80 ? ' (eBay allows 80)' : ''}`; };
+    $('#lsTitle').oninput = len; len();
   }
 
   function viewBin() {
@@ -1330,6 +1394,16 @@
         case 'claimOne': claimForm([a.id]); break;
         case 'selClear': state.sel.clear(); render(); break;
         case 'ocr': readReceipt(a, act.dataset.file); break;
+        case 'sell': sellForm(a); break;
+        case 'lsCopyTitle': await run(() => keep.copyPlain($('#lsTitle').value), 'Title copied'); break;
+        case 'lsCopyText': await run(() => keep.copyPlain($('#lsText').value), 'Description copied'); break;
+        case 'lsPhotos': { const n = await run(() => keep.listingPhotos(a.id)); if (n) toast(`✓ ${n} photo${n === 1 ? '' : 's'} saved`); break; }
+        case 'tripNew': tripForm(null); break;
+        case 'tripEdit': tripForm(state.snap.data.trips.find(t => t.id === state.tripId)); break;
+        case 'tripPick': tripPicker(state.snap.data.trips.find(t => t.id === state.tripId)); break;
+        case 'tripReset': if (confirm('Untick everything on this list?')) { await run(() => keep.resetTrip(state.tripId)); await refresh(); } break;
+        case 'tripDel': if (confirm('Delete this packing list? The items themselves aren\'t changed.')) { await run(() => keep.deleteTrip(state.tripId), 'Deleted'); state.tripId = null; await refresh(); } break;
+        case 'tripExtraRm': await run(() => keep.removeTripExtra(state.tripId, act.dataset.xid)); await refresh(); break;
         case 'useDateHint': await run(() => keep.saveAsset({ id: a.id, purchaseDate: act.dataset.date }), 'Date bought set'); await refresh(); break;
         case 'dismissDateHint': await run(() => keep.dismissDateHint(a.id)); await refresh(); break;
         case 'ocrLabel': readLabel(a, act.dataset.file); break;
@@ -1380,6 +1454,8 @@
 
   let qTimer;
   document.addEventListener('change', async (e) => {
+    if (e.target.id === 'tripSel') { state.tripId = e.target.value; render(); return; }
+    if (e.target.classList && e.target.classList.contains('tick')) { try { await keep.tickTrip(state.tripId, e.target.dataset.key, e.target.dataset.which, e.target.checked); await refresh(); } catch (ex) { toast('⚠ ' + ex.message); } return; }
     if (e.target.id !== 'bgOn') return;
     try { const on = await keep.bgSet(e.target.checked); state.bg = Object.assign(state.bg || {}, { enabled: on }); toast(on ? '✓ Reminders will keep running when OpenSafe is closed' : 'Reminders now only show when OpenSafe is open'); }
     catch (ex) { e.target.checked = !e.target.checked; toast('⚠ ' + ex.message, 5000); }

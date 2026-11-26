@@ -415,6 +415,7 @@
     const q = $('invQ').value.trim().toLowerCase();
     $('grabChip').classList.toggle('on', grabOnly);
     $('grabChip').classList.toggle('hidden', !inv.items.some(a => a.grab));
+    $('tripsChip').classList.toggle('hidden', !(inv.trips && inv.trips.length));
     const list = inv.items.filter(a => (!grabOnly || a.grab) && (!q || [a.name, a.brand, a.model, a.serial, a.category, a.location, a.barcode, (a.details || {}).reg, (a.tags || []).join(' ')].join(' ').toLowerCase().includes(q)));
     if (grabOnly) list.sort((x, y) => (x.location || '~').localeCompare(y.location || '~') || x.name.localeCompare(y.name));
     $('invMeta').textContent = `${inv.count} items · copied from the PC on ${new Date(inv.exportedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
@@ -769,6 +770,64 @@
     showPlace(place);
   }
 
+  // ---------- packing lists (made on the PC; ticks stay on this phone) ----------
+  async function tripTicks() { return (await kvGet('tripTicks')) || {}; }
+  async function tripRows(t) {
+    const saved = (await tripTicks())[t.id] || {};
+    const tick = (r) => Object.assign({ packed: r.packed, back: r.back }, saved[r.id] || {});
+    return [...t.items.map(r => { const a = inv.items.find(x => x.id === r.id); return a ? Object.assign({ key: r.id, name: a.name, where: currentState(a.id).location || '' }, tick(r)) : null; }).filter(Boolean)
+      .sort((x, y) => x.where.localeCompare(y.where) || x.name.localeCompare(y.name)),
+      ...t.extras.map(r => Object.assign({ key: r.id, name: r.text, where: '', extra: true }, tick(r)))];
+  }
+  async function setTick(tripId, key, which, on) {
+    const all = await tripTicks();
+    const t = all[tripId] = all[tripId] || {};
+    const cur = t[key] || {};
+    cur[which] = on; if (which === 'back' && on) cur.packed = true;
+    t[key] = cur;
+    await kvSet('tripTicks', all);
+  }
+  function showTrips() {
+    const trips = (inv && inv.trips) || [];
+    sheet(`<h2>⛺ Packing lists</h2>${trips.length ? `<ul class="stocklist">${trips.map(t => `<li data-act="trip" data-id="${t.id}">${esc(t.name)}<small>${t.items.length + t.extras.length} things${t.startDate ? ' · ' + ukDate(t.startDate) : ''}</small></li>`).join('')}</ul>` : '<p class="muted">No packing lists in this inventory file. Make one on the PC, then save a new inventory file.</p>'}
+      <button class="btn" data-act="closeSheet">Close</button>`);
+  }
+  let tripMode = 'packed';
+  async function showTrip(id, mode) {
+    if (mode) tripMode = mode;
+    const t = inv.trips.find(x => x.id === id); if (!t) return;
+    const rows = await tripRows(t);
+    const done = rows.filter(r => r[tripMode]).length;
+    sheet(`<h2>⛺ ${esc(t.name)}</h2>
+      <div class="chips"><button class="chip mode ${tripMode === 'packed' ? 'on' : ''}" data-act="tripMode" data-id="${id}" data-mode="packed">Packing</button><button class="chip mode ${tripMode === 'back' ? 'on' : ''}" data-act="tripMode" data-id="${id}" data-mode="back">Coming home</button></div>
+      <p class="muted">${done} of ${rows.length} ${tripMode === 'packed' ? 'packed' : 'back home'}${done === rows.length && rows.length ? ' ✓ All done' : ''}</p>
+      <button class="btn primary" data-act="tripScan" data-id="${id}">📷 Scan labels to tick them</button>
+      <ul class="stocklist">${rows.map(r => `<li data-act="tripTick" data-id="${id}" data-key="${r.key}" class="${r[tripMode] ? 'ticked' : ''}"><span class="box">${r[tripMode] ? '☑' : '☐'}</span> ${esc(r.name)}${r.where ? `<small>${esc(r.where)}</small>` : r.extra ? '<small>not in OpenSafe</small>' : ''}</li>`).join('')}</ul>
+      <button class="btn" data-act="tripReset" data-id="${id}">Untick all on this phone</button>
+      <button class="btn" data-act="trips">Back</button>`);
+  }
+  async function tripScan(id) {
+    const t = inv.trips.find(x => x.id === id); if (!t) return;
+    closeSheet();
+    const which = tripMode;
+    try {
+      $('scanMsg').textContent = which === 'packed' ? 'Scan each thing as you pack it' : 'Scan each thing as you unpack it';
+      let rows = await tripRows(t);
+      $('scanCount').textContent = `${rows.filter(r => r[which]).length} of ${rows.length}`;
+      await scanMany(['qr_code'], (text) => {
+        const key = idFromLabel(text);
+        if (!key) return { text: 'That isn\'t an OpenSafe item label', warn: true };
+        const r = rows.find(x => x.key === key);
+        if (!r) { const a = inv.items.find(x => x.id === key); return { text: `⚠ ${a ? a.name : 'That item'} isn't on this list`, warn: true }; }
+        r[which] = true; if (which === 'back') r.packed = true;
+        setTick(id, key, which, true);
+        return { text: `✓ ${r.name}`, count: `${rows.filter(x => x[which]).length} of ${rows.length}` };
+      });
+    } catch (ex) { stopScan(); toast(ex.message, 5000); }
+    $('scanCloseBtn').textContent = 'Cancel';
+    showTrip(id);
+  }
+
   async function startStockCheck() {
     await loadUpdates();
     if (!(await autoOpen())) {
@@ -894,6 +953,12 @@
       case 'placeStock': stock = { loc: a.dataset.place, found: new Set(), unknown: new Set() }; runStockScan(); break;
       case 'placeShow': showPlace(a.dataset.place); break;
       case 'grabFilter': grabOnly = !grabOnly; renderInv(); break;
+      case 'trips': showTrips(); break;
+      case 'trip': showTrip(a.dataset.id, 'packed'); break;
+      case 'tripMode': showTrip(a.dataset.id, a.dataset.mode); break;
+      case 'tripScan': tripScan(a.dataset.id); break;
+      case 'tripTick': { const t = inv.trips.find(x => x.id === a.dataset.id); const r = (await tripRows(t)).find(x => x.key === a.dataset.key); if (r) await setTick(t.id, r.key, tripMode, !r[tripMode]); showTrip(t.id); break; }
+      case 'tripReset': if (confirm('Untick everything on this list on this phone?')) { const all = await tripTicks(); const t = inv.trips.find(x => x.id === a.dataset.id); all[t.id] = {}; for (const r of [...t.items, ...t.extras]) all[t.id][r.id] = { packed: false, back: false }; await kvSet('tripTicks', all); showTrip(t.id); } break;
       case 'stockCheck': startStockCheck(); break;
       case 'stockMore': runStockScan(); break;
       case 'stockMove': stockMoveAll(); break;

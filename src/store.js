@@ -136,6 +136,7 @@ function emptyData() {
       depreciation: {} // category -> percent lost per year
     },
     policies: [],
+    trips: [], // packing lists: [{ id, name, startDate, endDate, items: [{ assetId, packed, back }], extras: [{ id, text, packed, back }] }]
     people: [], // household members items can belong to ("who owns it")
     places: {}, // photos and videos of a room or place: { 'Home / Lounge': { id, files: [{ id, file, name, kind, addedAt }] } }
     bin: [], // deleted items, kept for BIN_DAYS: [{ asset, deletedAt }]
@@ -223,6 +224,7 @@ class Store {
     out.assets = Array.isArray(out.assets) ? out.assets.map(a => this._normaliseAsset(a, a, true)) : [];
     if (out.vault && typeof out.vault !== 'object') delete out.vault;
     out.settings.autoBackup = Object.assign(emptyData().settings.autoBackup, (d && d.settings && d.settings.autoBackup) || {});
+    out.trips = Array.isArray(out.trips) ? out.trips.filter(t => t && t.id) : [];
     out.people = Array.isArray(out.people) ? out.people.map(p => cleanString(p, 200)).filter(Boolean) : [];
     out.places = out.places && typeof out.places === 'object' && !Array.isArray(out.places) ? out.places : {};
     out.bin = Array.isArray(out.bin) ? out.bin.filter(b => b && b.asset && b.asset.id).map(b => ({ asset: this._normaliseAsset(b.asset, b.asset, true), deletedAt: b.deletedAt || nowIso() })) : [];
@@ -384,6 +386,7 @@ class Store {
     if (i < 0) return false;
     const [gone] = list.splice(i, 1);
     for (const a of this.allAssets()) if (a.partOf === id) a.partOf = '';
+    for (const t of this.data.trips || []) t.items = t.items.filter(i => i.assetId !== id);
     const bin = inVault ? (this.vault.bin = this.vault.bin || []) : this.data.bin;
     bin.push({ asset: gone, deletedAt: nowIso() });
     this.save();
@@ -484,6 +487,52 @@ class Store {
     if (!this.data.dismissedHints.includes(id)) this.data.dismissedHints.push(id);
     this.save();
   }
+
+  // ---------- packing lists ----------
+  _trip(id) { const t = this.data.trips.find(x => x.id === id); if (!t) throw new Error('Packing list not found'); return t; }
+  saveTrip(input) {
+    const existing = input.id ? this._trip(input.id) : null;
+    const name = cleanString(input.name, 120);
+    if (!name) throw new Error('Give the packing list a name, for example "Ardennes tour".');
+    const t = existing || { id: uid(), items: [], extras: [], createdAt: nowIso() };
+    t.name = name;
+    t.startDate = cleanDate(input.startDate !== undefined ? input.startDate : t.startDate);
+    t.endDate = cleanDate(input.endDate !== undefined ? input.endDate : t.endDate);
+    if (t.startDate && t.endDate && t.endDate < t.startDate) throw new Error('The trip ends before it starts.');
+    if (input.copyFrom) { const src = this._trip(input.copyFrom); t.items = src.items.map(i => ({ assetId: i.assetId, packed: false, back: false })); t.extras = src.extras.map(x => ({ id: uid(), text: x.text, packed: false, back: false })); }
+    if (!existing) this.data.trips.push(t);
+    this.save();
+    return t;
+  }
+  deleteTrip(id) { this.data.trips = this.data.trips.filter(t => t.id !== id); this.save(); }
+  setTripItems(id, ids) {
+    const t = this._trip(id);
+    const want = [...new Set((ids || []).map(String))].filter(x => this.getAsset(x) && !this.isVaultAsset(this.getAsset(x)));
+    t.items = want.map(a => t.items.find(i => i.assetId === a) || { assetId: a, packed: false, back: false });
+    this.save();
+    return t;
+  }
+  addTripExtra(id, text) {
+    const t = this._trip(id);
+    const lines = String(text || '').split(/\r?\n/).map(x => cleanString(x, 120)).filter(Boolean).slice(0, 100);
+    if (!lines.length) throw new Error('Type something to take.');
+    for (const l of lines) t.extras.push({ id: uid(), text: l, packed: false, back: false });
+    this.save();
+    return t;
+  }
+  removeTripExtra(id, xid) { const t = this._trip(id); t.extras = t.extras.filter(x => x.id !== xid); this.save(); return t; }
+  /** Tick or untick: which = 'packed' or 'back'; key = an item id or an extra's id. */
+  tickTrip(id, key, which, on) {
+    if (!['packed', 'back'].includes(which)) throw new Error('Unknown tick');
+    const t = this._trip(id);
+    const row = t.items.find(i => i.assetId === key) || t.extras.find(x => x.id === key);
+    if (!row) throw new Error('Not on this list');
+    row[which] = !!on;
+    if (which === 'back' && on) row.packed = true;
+    this.save();
+    return t;
+  }
+  resetTrip(id, which) { const t = this._trip(id); for (const r of [...t.items, ...t.extras]) { if (!which || which === 'packed') r.packed = false; r.back = false; } this.save(); return t; }
 
   // ---------- spending by year ----------
   /** What you paid, by the year bought (items you own or owned; not borrowed ones). */

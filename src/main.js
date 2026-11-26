@@ -14,6 +14,7 @@ const phoneview = require('./phoneview');
 const { buildLabelsHtml, buildPlaceLabelsHtml } = require('./labels');
 const csv = require('./csv');
 const recalls = require('./recalls');
+const { buildListing } = require('./listing');
 const { buildGrabListHtml } = require('./grablist');
 const updater = require('./updater');
 const firewall = require('./firewall');
@@ -353,6 +354,27 @@ function registerIpc() {
   h('policy:history', (id, v) => store.addPolicyHistory(String(id), v || {}));
   h('policy:historyRemove', (id, hid) => store.removePolicyHistory(String(id), String(hid)));
   h('hint:dismiss', (id) => store.dismissDateHint(String(id)));
+  h('trip:save', (v) => store.saveTrip(v || {}));
+  h('trip:delete', (id) => store.deleteTrip(String(id)));
+  h('trip:items', (id, ids) => store.setTripItems(String(id), Array.isArray(ids) ? ids : []));
+  h('trip:extra', (id, text) => store.addTripExtra(String(id), String(text || '')));
+  h('trip:extraRemove', (id, xid) => store.removeTripExtra(String(id), String(xid)));
+  h('trip:tick', (id, key, which, on) => store.tickTrip(String(id), String(key), String(which), !!on));
+  h('trip:reset', (id, which) => store.resetTrip(String(id), which ? String(which) : ''));
+  h('listing:get', (id) => { const a = store.getAsset(String(id)); if (!a) throw new Error('Item not found'); return buildListing(store, a); });
+  h('listing:photos', async (id) => {
+    const a = store.getAsset(String(id)); if (!a) throw new Error('Item not found');
+    const photos = a.photos.filter(p => !p.vault);
+    if (!photos.length) throw new Error('This item has no photos to save.');
+    const r = await dialog.showOpenDialog(win, { title: 'Choose a folder for the photos', properties: ['openDirectory', 'createDirectory'] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    const base = (a.name.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim() || 'item').slice(0, 60);
+    let n = 0;
+    for (const p of photos) { n++; fs.writeFileSync(path.join(r.filePaths[0], `${base} ${n}${path.extname(p.file).toLowerCase()}`), store.readAttachment(a.id, p.file)); }
+    shell.openPath(r.filePaths[0]);
+    return n;
+  });
+  h('clip:plain', (text) => { clipboard.writeText(String(text || '').slice(0, 20000)); return true; });
   h('bg:get', () => ({ enabled: bgEnabled(), platform: process.platform }));
   h('bg:set', (on) => setBackground(!!on));
   // Password attempts: after 5 wrong in a row, wait 30 s (doubling).
