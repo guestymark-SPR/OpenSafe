@@ -1,0 +1,333 @@
+'use strict';
+/* OpenSafe Capture: add items on a phone or tablet, export them as one .opensafe file,
+   import that file into OpenSafe on the PC. Everything is stored on this device
+   (IndexedDB) until exported. No server, no account. */
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const FORMAT = 'opensafe-export';
+  const FORMAT_VERSION = 1;
+  const DEFAULT_CATS = ['Vehicles', 'Electronics', 'Computers & Phones', 'Tools', 'Camping & Outdoor', 'Motorbike Gear', 'Marine', 'Furniture', 'Appliances', 'Jewellery & Watches', 'Sports & Hobbies', 'Clothing', 'Other'];
+  const DEFAULT_LOCS = ['Home', 'Garage', 'Car', 'Storage', 'Boat'];
+  const FIELDS = ['name', 'category', 'location', 'brand', 'model', 'serial', 'condition', 'purchasePrice', 'currentValue', 'purchaseDate', 'warrantyExpiry', 'supplier', 'notes', 'tags'];
+
+  // ---------- IndexedDB ----------
+  let dbp = null;
+  function db() {
+    if (!dbp) dbp = new Promise((resolve, reject) => {
+      const r = indexedDB.open('opensafe-capture', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('items', { keyPath: 'id' });
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+    return dbp;
+  }
+  async function tx(mode, fn) {
+    const d = await db();
+    return new Promise((resolve, reject) => {
+      const t = d.transaction('items', mode);
+      const store = t.objectStore('items');
+      let out;
+      Promise.resolve(fn(store)).then(v => { out = v; });
+      t.oncomplete = () => resolve(out);
+      t.onerror = () => reject(t.error);
+      t.onabort = () => reject(t.error || new Error('Storage error'));
+    });
+  }
+  const req = (r) => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  const allItems = () => tx('readonly', s => req(s.getAll()));
+  const putItem = (item) => tx('readwrite', s => req(s.put(item)));
+  const delItem = (id) => tx('readwrite', s => req(s.delete(id)));
+
+  const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = crypto.getRandomValues(new Uint8Array(1))[0] % 16; return (c === 'x' ? r : (r & 3 | 8)).toString(16); }));
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const gbp = (v) => { const n = Number(String(v || '').replace(/[£,\s]/g, '')); return v !== '' && Number.isFinite(n) ? new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(n) : ''; };
+
+  // ---------- UI helpers ----------
+  function toast(msg, ms = 2800) {
+    const t = $('toast'); t.textContent = msg; t.classList.remove('hidden');
+    clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add('hidden'), ms);
+  }
+  function sheet(html) { $('sheetBody').innerHTML = html; $('sheet').classList.remove('hidden'); }
+  function closeSheet() { $('sheet').classList.add('hidden'); $('sheetBody').innerHTML = ''; }
+  const urls = [];
+  function blobUrl(b) { const u = URL.createObjectURL(b); urls.push(u); return u; }
+  function freeUrls() { while (urls.length) URL.revokeObjectURL(urls.pop()); }
+
+  // ---------- images ----------
+  async function shrink(file, max = 2000) {
+    const isImg = /^image\//.test(file.type) || /\.(jpe?g|png|webp|heic|heif)$/i.test(file.name || '');
+    if (!isImg) return { blob: file, name: file.name || 'file', type: file.type || 'application/octet-stream' };
+    try {
+      const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+      const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+      c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+      if (bmp.close) bmp.close();
+      const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.85));
+      if (!blob) throw new Error('encode');
+      return { blob, name: (file.name || 'photo').replace(/\.[^.]+$/, '') + '.jpg', type: 'image/jpeg' };
+    } catch (_) {
+      return { blob: file, name: file.name || 'photo.jpg', type: file.type || 'image/jpeg' };
+    }
+  }
+
+  // ---------- state ----------
+  let items = [];
+  let editing = null; // item being edited (copy)
+  let deferredInstall = null;
+
+  function learnedLists() {
+    const cats = new Set(DEFAULT_CATS), locs = new Set(DEFAULT_LOCS);
+    for (const it of items) { if (it.category) cats.add(it.category); if (it.location) locs.add(it.location); }
+    const fill = (el, vals) => el.replaceChildren(...[...vals].map(v => { const o = document.createElement('option'); o.value = v; return o; }));
+    fill($('cats'), cats); fill($('locs'), locs);
+  }
+
+  // ---------- views ----------
+  function showHome() {
+    editing = null;
+    $('form').classList.add('hidden'); $('home').classList.remove('hidden');
+    $('fab').classList.remove('hidden'); $('backBtn').classList.add('hidden'); $('logo').classList.remove('hidden');
+    $('title').textContent = 'OpenSafe Capture';
+    $('subtitle').textContent = 'Items stay on this device until you export';
+    renderList();
+    window.scrollTo(0, 0);
+  }
+
+  async function renderList() {
+    items = (await allItems()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    freeUrls();
+    const pending = items.filter(i => !i.exportedAt);
+    $('pendingCount').textContent = `${pending.length} item${pending.length === 1 ? '' : 's'}`;
+    $('pendingText').textContent = pending.length ? 'ready to export' : (items.length ? 'everything has been exported' : 'ready to export');
+    $('exportBtn').disabled = !pending.length;
+    $('empty').classList.toggle('hidden', items.length > 0);
+    $('list').replaceChildren(...items.map(it => {
+      const d = document.createElement('div'); d.className = 'item'; d.dataset.id = it.id;
+      const thumb = it.photos[0] ? `<img src="${blobUrl(it.photos[0].blob)}" alt="">` : '<div class="ph">▣</div>';
+      const meta = [it.category, it.location, gbp(it.currentValue || it.purchasePrice)].filter(Boolean).join(' · ');
+      d.innerHTML = `${thumb}<div class="t"><div class="n">${esc(it.name)}</div><div class="m">${esc(meta) || '&nbsp;'}</div>
+        <div class="m">${it.photos.length} photo${it.photos.length === 1 ? '' : 's'}${it.receipts.length ? ' · ' + it.receipts.length + ' receipt' + (it.receipts.length > 1 ? 's' : '') : ''}</div></div>
+        ${it.exportedAt ? '<span class="pill done">Exported</span>' : '<span class="pill">New</span>'}`;
+      return d;
+    }));
+    learnedLists();
+  }
+
+  function showForm(item) {
+    editing = item ? JSON.parse(JSON.stringify({ ...item, photos: [], receipts: [] })) : { id: uid(), createdAt: new Date().toISOString(), exportedAt: null };
+    editing.photos = item ? item.photos.slice() : [];
+    editing.receipts = item ? item.receipts.slice() : [];
+    const f = $('form');
+    f.reset();
+    for (const k of FIELDS) if (f.elements[k]) f.elements[k].value = item ? (item[k] || '') : '';
+    $('formErr').classList.add('hidden');
+    $('deleteBtn').classList.toggle('hidden', !item);
+    $('saveBtn').textContent = item ? 'Save changes' : 'Save item';
+    $('home').classList.add('hidden'); f.classList.remove('hidden');
+    $('fab').classList.add('hidden'); $('backBtn').classList.remove('hidden'); $('logo').classList.add('hidden');
+    $('title').textContent = item ? 'Edit item' : 'New item';
+    $('subtitle').textContent = item && item.exportedAt ? 'Already exported: changes go in your next export' : 'Saved on this device';
+    renderPhotos(); renderReceipts();
+    window.scrollTo(0, 0);
+    if (!item) setTimeout(() => f.elements.name.focus(), 50);
+  }
+
+  function renderPhotos() {
+    $('thumbs').replaceChildren(...editing.photos.map((p, i) => {
+      const d = document.createElement('div'); d.className = 'thumb';
+      d.innerHTML = `<img src="${blobUrl(p.blob)}" alt="Photo ${i + 1}"><button type="button" class="x" aria-label="Remove photo">✕</button>`;
+      d.querySelector('button').onclick = () => { editing.photos.splice(i, 1); renderPhotos(); };
+      return d;
+    }));
+  }
+  function renderReceipts() {
+    $('receipts').replaceChildren(...editing.receipts.map((r, i) => {
+      const d = document.createElement('div');
+      d.innerHTML = `<span>🧾 ${esc(r.name)}</span><button type="button">Remove</button>`;
+      d.querySelector('button').onclick = () => { editing.receipts.splice(i, 1); renderReceipts(); };
+      return d;
+    }));
+  }
+
+  async function addPhotos(files) {
+    for (const f of files) { const s = await shrink(f); editing.photos.push({ id: uid(), name: s.name, type: s.type, blob: s.blob }); }
+    renderPhotos();
+  }
+  $('cam').onchange = (e) => { addPhotos([...e.target.files]); e.target.value = ''; };
+  $('gallery').onchange = (e) => { addPhotos([...e.target.files]); e.target.value = ''; };
+  $('receipt').onchange = async (e) => {
+    for (const f of [...e.target.files]) {
+      if (f.type === 'application/pdf' || /\.pdf$/i.test(f.name)) editing.receipts.push({ id: uid(), name: f.name, type: 'application/pdf', blob: f });
+      else { const s = await shrink(f, 2400); editing.receipts.push({ id: uid(), name: 'receipt-' + s.name, type: s.type, blob: s.blob }); }
+    }
+    e.target.value = '';
+    renderReceipts();
+  };
+
+  $('form').onsubmit = async (e) => {
+    e.preventDefault();
+    const f = $('form');
+    const name = f.elements.name.value.trim();
+    const err = $('formErr');
+    if (!name) { err.textContent = 'Give the item a name.'; err.classList.remove('hidden'); f.elements.name.focus(); return; }
+    for (const k of ['purchasePrice', 'currentValue']) {
+      const v = f.elements[k].value.trim();
+      if (v && !Number.isFinite(Number(v.replace(/[£,\s]/g, '')))) { err.textContent = 'Money amounts must be numbers, e.g. 249.99'; err.classList.remove('hidden'); return; }
+    }
+    const item = { ...editing };
+    for (const k of FIELDS) item[k] = (f.elements[k].value || '').trim();
+    item.updatedAt = new Date().toISOString();
+    item.exportedAt = null; // new or changed: include in the next export
+    try {
+      await putItem(item);
+    } catch (ex) {
+      err.textContent = 'Could not save on this device: ' + (ex && ex.message || ex) + '\nYour phone may be low on storage.'; err.classList.remove('hidden'); return;
+    }
+    toast(`✓ "${item.name}" saved`);
+    showHome();
+  };
+
+  // ---------- export ----------
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result).split(',')[1] || '');
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(blob);
+    });
+  }
+
+  async function buildExport(list) {
+    const out = { format: FORMAT, version: FORMAT_VERSION, app: 'OpenSafe Capture', exportedAt: new Date().toISOString(), device: navigator.userAgent.slice(0, 200), items: [] };
+    for (const it of list) {
+      const x = { id: it.id, createdAt: it.createdAt, updatedAt: it.updatedAt };
+      for (const k of FIELDS) x[k] = it[k] || '';
+      x.photos = [];
+      for (const p of it.photos) x.photos.push({ id: p.id, name: p.name, type: p.type, data: await blobToBase64(p.blob) });
+      x.documents = [];
+      for (const r of it.receipts) x.documents.push({ id: r.id, name: r.name, type: r.type, docType: 'Receipt', data: await blobToBase64(r.blob) });
+      out.items.push(x);
+    }
+    return out;
+  }
+
+  function stamp() {
+    const d = new Date(), p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+  }
+
+  async function doExport(all) {
+    const list = all ? items : items.filter(i => !i.exportedAt);
+    if (!list.length) { toast('Nothing to export'); return; }
+    const btn = $('exportBtn'); btn.disabled = true; btn.textContent = 'Preparing…';
+    let data;
+    try { data = JSON.stringify(await buildExport(list)); }
+    catch (ex) { toast('Export failed: ' + ex.message, 5000); btn.disabled = false; btn.textContent = 'Export to PC'; return; }
+    btn.textContent = 'Export to PC'; btn.disabled = false;
+    const base = `OpenSafe-${stamp()}`;
+    const mb = data.length < 1048576 ? Math.max(1, Math.round(data.length / 1024)) + ' KB' : (data.length / 1048576).toFixed(1) + ' MB';
+    pendingExport = { list, data, base };
+    const canShareFile = (name, type) => { try { return !!(navigator.canShare && navigator.canShare({ files: [new File(['x'], name, { type })] })); } catch (_) { return false; } };
+    shareName = canShareFile(base + '.opensafe', 'application/octet-stream') ? [base + '.opensafe', 'application/octet-stream']
+      : canShareFile(base + '.opensafe.txt', 'text/plain') ? [base + '.opensafe.txt', 'text/plain'] : null;
+    sheet(`<h2>Export ${list.length} item${list.length === 1 ? '' : 's'}</h2>
+      <p class="muted">One file with everything, photos included (${mb}).</p>
+      ${shareName ? '<button class="btn primary" data-act="share">Send to PC…</button><p class="muted" style="margin-top:-4px">Pick Quick Share, Bluetooth, email, Google Drive or OneDrive.</p>' : ''}
+      <button class="btn ${shareName ? '' : 'primary'}" data-act="download">Save to Downloads</button>
+      <p class="muted">Then on your PC, open OpenSafe and choose <b>Items → Import from phone</b>, or just double-click the file.</p>
+      <button class="btn" data-act="closeSheet">Cancel</button>`);
+  }
+  let pendingExport = null, shareName = null;
+
+  async function markExported(list) {
+    const now = new Date().toISOString();
+    for (const it of list) { it.exportedAt = now; await putItem(it); }
+  }
+  async function finishExport(how) {
+    const { list } = pendingExport;
+    await markExported(list);
+    pendingExport = null;
+    closeSheet();
+    renderList();
+    toast(how === 'share' ? '✓ Sent. Import the file in OpenSafe on your PC.' : '✓ Saved to Downloads. Copy it to your PC and import it in OpenSafe.', 4500);
+  }
+
+  async function shareExport() {
+    const { data } = pendingExport;
+    const file = new File([data], shareName[0], { type: shareName[1] });
+    try {
+      await navigator.share({ files: [file], title: 'OpenSafe export', text: 'OpenSafe items to import on the PC' });
+      await finishExport('share');
+    } catch (ex) {
+      if (ex && ex.name === 'AbortError') return; // user closed the share menu
+      toast('Sharing didn\'t work here. Use Save to Downloads instead.', 5000);
+    }
+  }
+  async function downloadExport() {
+    const { data, base } = pendingExport;
+    const blob = new Blob([data], { type: 'application/octet-stream' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = base + '.opensafe';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    await finishExport('download');
+  }
+
+  // ---------- events ----------
+  document.addEventListener('click', async (e) => {
+    const card = e.target.closest('.item');
+    if (card) { const it = items.find(i => i.id === card.dataset.id); if (it) showForm(it); return; }
+    if (e.target.id === 'sheet') { closeSheet(); return; }
+    const menuOpen = !$('menu').classList.contains('hidden');
+    if (menuOpen && !e.target.closest('#menu') && e.target.id !== 'menuBtn') $('menu').classList.add('hidden');
+    const a = e.target.closest('[data-act]');
+    if (!a) return;
+    $('menu').classList.add('hidden');
+    switch (a.dataset.act) {
+      case 'new': showForm(null); break;
+      case 'export': doExport(false); break;
+      case 'exportAll': doExport(true); break;
+      case 'share': shareExport(); break;
+      case 'download': downloadExport(); break;
+      case 'closeSheet': closeSheet(); break;
+      case 'delete':
+        if (confirm('Delete this item from this device?')) { await delItem(editing.id); toast('Deleted'); showHome(); }
+        break;
+      case 'clearExported': {
+        const done = items.filter(i => i.exportedAt);
+        if (!done.length) { toast('No exported items to remove'); break; }
+        if (confirm(`Remove ${done.length} exported item${done.length === 1 ? '' : 's'} from this device? Only do this once they're safely imported on your PC.`)) {
+          for (const it of done) await delItem(it.id);
+          toast('Removed'); renderList();
+        }
+        break;
+      }
+      case 'install':
+        if (deferredInstall) { deferredInstall.prompt(); deferredInstall = null; $('installCard').classList.add('hidden'); $('installMenu').classList.add('hidden'); }
+        else sheet(`<h2>Install OpenSafe Capture</h2><ol><li>In Chrome, tap <b>⋮</b> (top right).</li><li>Tap <b>Add to Home screen</b> or <b>Install app</b>.</li></ol><p class="muted">In Samsung Internet: tap <b>☰</b> → <b>Add page to</b> → <b>Home screen</b>.</p><button class="btn" data-act="closeSheet">OK</button>`);
+        break;
+      case 'about': {
+        let est = '';
+        try { const q = await navigator.storage.estimate(); est = `Using ${(q.usage / 1048576).toFixed(1)} MB on this device.`; } catch (_) {}
+        sheet(`<h2>About OpenSafe Capture</h2><p>Add items here, then export them to OpenSafe on your PC. Nothing leaves this device until you export it.</p><p class="muted">${esc(est)} ${items.length} item${items.length === 1 ? '' : 's'} stored.</p><button class="btn" data-act="closeSheet">OK</button>`);
+        break;
+      }
+    }
+  });
+  $('menuBtn').onclick = () => $('menu').classList.toggle('hidden');
+  $('backBtn').onclick = () => { if (!$('form').classList.contains('hidden') && confirm('Leave without saving?')) showHome(); };
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault(); deferredInstall = e;
+    $('installCard').classList.remove('hidden'); $('installMenu').classList.remove('hidden');
+  });
+  window.addEventListener('appinstalled', () => { $('installCard').classList.add('hidden'); $('installMenu').classList.add('hidden'); });
+
+  // Ask the browser not to clear our storage when space is low.
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+
+  showHome();
+})();

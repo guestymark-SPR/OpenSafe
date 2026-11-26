@@ -284,6 +284,82 @@ class Store {
     return asset;
   }
 
+  // ---------- import from OpenSafe Capture (phone/tablet app) ----------
+  _writeAttachment(asset, kind, p) {
+    const typeExt = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif', 'application/pdf': '.pdf' };
+    let name = safeFileName(p.name || 'file');
+    let ext = path.extname(name).toLowerCase();
+    const allowed = kind === 'photo' ? IMAGE_EXT : DOC_EXT;
+    if (!allowed.has(ext)) { ext = typeExt[p.type] || ''; name = name.replace(/\.[^.]*$/, '') + ext; }
+    if (!allowed.has(ext)) throw new Error(`${p.name || 'file'}: unsupported file type`);
+    const buf = Buffer.from(String(p.data || ''), 'base64');
+    if (!buf.length) throw new Error(`${p.name || 'file'}: empty`);
+    const id = uid();
+    const file = id + ext;
+    fs.mkdirSync(this._assetDir(asset.id), { recursive: true });
+    fs.writeFileSync(this.attachmentPath(asset.id, file), buf);
+    const rec = { id, file, name, addedAt: nowIso() };
+    if (p.id) rec.captureId = cleanString(p.id, 60);
+    if (kind === 'photo') asset.photos.push(rec);
+    else { rec.type = DOC_TYPES.includes(p.docType) ? p.docType : 'Receipt'; asset.documents.push(rec); }
+    return rec;
+  }
+
+  /**
+   * Import an export file made by OpenSafe Capture.
+   * - New items are added (keeping the phone's id, so re-importing never duplicates).
+   * - Items already imported: details edited on the PC are kept; empty details are
+   *   filled from the phone; photos/receipts not seen before are added.
+   */
+  importCapture(obj) {
+    if (!obj || obj.format !== 'opensafe-export' || !Array.isArray(obj.items)) {
+      throw new Error('This file isn\'t an OpenSafe export. Export it from OpenSafe Capture on your phone or tablet.');
+    }
+    if (Number(obj.version) > 1) throw new Error('This file was made by a newer version of OpenSafe Capture. Update OpenSafe on this PC and try again.');
+    const res = { added: 0, updated: 0, unchanged: 0, photos: 0, documents: 0, errors: [], names: [] };
+    for (const it of obj.items.slice(0, 10000)) {
+      try {
+        if (!it || typeof it !== 'object') continue;
+        const id = typeof it.id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(it.id) ? it.id.toLowerCase() : null;
+        let asset = id ? this.getAsset(id) : null;
+        const incoming = this._normaliseAsset(Object.assign({}, it, { id: undefined, source: 'phone' }), null);
+        let changed = false;
+        const isNew = !asset;
+        if (isNew) {
+          asset = incoming;
+          if (id) asset.id = id;
+          if (typeof it.createdAt === 'string' && !Number.isNaN(Date.parse(it.createdAt))) asset.createdAt = new Date(it.createdAt).toISOString();
+          asset.photos = []; asset.documents = []; asset.service = [];
+          this.data.assets.push(asset);
+          this._learnLists(asset);
+          res.added++; res.names.push(asset.name);
+        } else {
+          for (const f of [...STRING_FIELDS, ...MONEY_FIELDS]) {
+            const empty = asset[f] === '' || asset[f] === null || asset[f] === undefined;
+            const has = incoming[f] !== '' && incoming[f] !== null && incoming[f] !== undefined;
+            if (empty && has && !(f === 'name' && asset.name)) { asset[f] = incoming[f]; changed = true; }
+          }
+          if (!asset.tags.length && incoming.tags.length) { asset.tags = incoming.tags; changed = true; }
+        }
+        const seen = new Set([...asset.photos, ...asset.documents].map(x => x.captureId).filter(Boolean));
+        for (const p of Array.isArray(it.photos) ? it.photos.slice(0, 100) : []) {
+          if (p && p.id && seen.has(p.id)) continue;
+          try { this._writeAttachment(asset, 'photo', p); res.photos++; changed = true; } catch (e) { res.errors.push(`${asset.name}: ${e.message}`); }
+        }
+        for (const d of Array.isArray(it.documents) ? it.documents.slice(0, 100) : []) {
+          if (d && d.id && seen.has(d.id)) continue;
+          try { this._writeAttachment(asset, 'document', d); res.documents++; changed = true; } catch (e) { res.errors.push(`${asset.name}: ${e.message}`); }
+        }
+        if (changed) asset.updatedAt = nowIso();
+        if (!isNew) { if (changed) res.updated++; else res.unchanged++; }
+      } catch (e) {
+        res.errors.push(String(e.message || e));
+      }
+    }
+    this.save();
+    return res;
+  }
+
   // ---------- service log ----------
   saveService(assetId, entry) {
     const asset = this.getAsset(assetId);

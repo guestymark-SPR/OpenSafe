@@ -1,6 +1,6 @@
 # OpenSafe
 
-Free home inventory and asset manager for Windows. Record what you own: photos, receipts, serial numbers, warranties, insurance and service history. Add items from your Android phone over Wi-Fi.
+Free home inventory and asset manager for Windows. Record what you own: photos, receipts, serial numbers, warranties, insurance and service history. Add items from your phone or tablet with OpenSafe Capture.
 
 Everything stays on your PC. There's no account, no cloud and no subscription.
 
@@ -15,21 +15,26 @@ Everything stays on your PC. There's no account, no cloud and no subscription.
 - **Dashboard:** total value, amount paid, insured value, value by category, what's coming up, and gaps to fill (no serial number, no receipt, no insurer, no photo).
 - **Reports:** a printable PDF inventory for your insurer, with photos, and a CSV export for Excel.
 - **Backups:** a copy of your item list every day, kept for 30 days, plus a full backup (with photos and documents) to any folder or USB stick, and restore.
-- **Phone link:** add items from your Android phone, with photos taken by the phone's camera.
+- **OpenSafe Capture:** an offline phone and tablet app for adding items with photos, imported on the PC from one file.
 
-## Phone link
+## Adding items from your phone or tablet: OpenSafe Capture
 
-![Phone link](docs/phone-link.png) ![Phone page](docs/phone-page.png)
+OpenSafe Capture is a small app for your phone or tablet that works offline. You add items with photos, details and receipts, then export them all as one `.opensafe` file to import on the PC. It needs no Wi-Fi link, firewall changes or account, and nothing leaves the device until you export.
 
-1. In OpenSafe, open **Phone** and switch the link on. The first time, Windows Firewall asks whether OpenSafe can use the network. Tick **Private networks** and choose **Allow**.
-2. Put your phone on the same Wi-Fi as the PC.
-3. Scan the QR code with the phone's camera and open the link. The phone is now paired.
-4. In Chrome, open the ⋮ menu and choose **Add to Home screen** to get an icon.
-5. Take photos, fill in the details and tap **Save to PC**. The item appears on the PC straight away.
+1. On your phone, open **https://guestymark-spr.github.io/OpenSafe/** in Chrome, or scan the QR code on OpenSafe's **Phone** screen. Tap **Install** (or ⋮ → **Add to Home screen**).
+2. Add items. They're saved on the device.
+3. Tap **Export to PC**. Send the file with Quick Share, Bluetooth, email, Google Drive or OneDrive, or save it to Downloads and copy it over USB.
+4. On the PC, click **Import from phone…**, double-click the `.opensafe` file, or drag it into the OpenSafe window.
 
-How it works: OpenSafe runs a small web server on your home network (port 47820, or the next free port up to 47829). It is off until you switch it on. Every request needs the secret pairing code from the QR code. **New pairing code** unpairs every phone. Phone photos are shrunk to 2000 px before they're sent.
+Importing the same file twice is safe. Items already imported are skipped, details you edited on the PC are kept, and only new photos or receipts are added.
 
-Limits: the PC must be on, with OpenSafe open, and on the same network as the phone. If your router gives the PC a new IP address, scan the QR code again. To avoid this, reserve an IP address for the PC in your router settings. The connection is plain HTTP on your local network, so only use the link on a network you trust, such as your home Wi-Fi, not public Wi-Fi.
+The app is an installable web app (PWA) served from the `mobile/` folder through GitHub Pages. It stores items in the browser's IndexedDB on the device.
+
+## Wi-Fi link (advanced)
+
+![Phone link](docs/phone-link.png)
+
+OpenSafe can also run a small web server on your home network, so a phone on the same Wi-Fi can add items straight to the PC. It's off until you switch it on under **Phone → Wi-Fi link**, and it needs the pairing code from the QR code. Some routers and phone browsers block this kind of connection. The Phone screen has a **Fix Windows Firewall** button and a connection log to help you sort it out.
 
 ## Install
 
@@ -72,7 +77,8 @@ src/store.js        Data store (JSON file + attachments folder, daily backups)
 src/phoneServer.js  Wi-Fi phone link (token-protected local web server)
 src/report.js       Insurance/inventory PDF layout
 src/renderer/       Desktop UI (plain HTML/CSS/JS)
-src/phone/          Phone page served to your Android phone
+src/phone/          Phone page for the Wi-Fi link
+mobile/             OpenSafe Capture phone/tablet app (published to GitHub Pages)
 test/               Unit tests and a screenshot smoke test
 ```
 

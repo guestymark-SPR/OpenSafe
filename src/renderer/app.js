@@ -69,7 +69,7 @@
     const v = $('#view');
     const views = { dashboard: viewDashboard, items: viewItems, item: viewItem, reminders: viewReminders, phone: viewPhone, reports: viewReports, settings: viewSettings };
     v.innerHTML = (views[state.view] || viewDashboard)();
-    if (state.view === 'phone') loadPhone();
+    if (state.view === 'phone') { loadCapture(); loadPhone(); const d = $('#wifiDetails'); if (d) d.ontoggle = () => { state.wifiOpen = d.open; }; }
     if (state.view === 'item') wireDrop();
   }
 
@@ -173,7 +173,7 @@
       <span class="seg"><button data-layout="table" class="${f.layout === 'table' ? 'on' : ''}">List</button><button data-layout="grid" class="${f.layout === 'grid' ? 'on' : ''}">Photos</button></span>
     </div>
     ${f.gap ? `<div style="margin:-4px 0 12px"><span class="pill warn">Showing items with ${gapNames[f.gap]}</span> <button class="btn small" data-action="clearGap">Clear</button></div>` : ''}`;
-    const head = `<div class="head"><h1>Items</h1><span class="sub">${list.length} shown · ${money0(total)}</span><span class="spacer"></span><button class="btn primary" data-action="new">+ Add item</button></div>`;
+    const head = `<div class="head"><h1>Items</h1><span class="sub">${list.length} shown · ${money0(total)}</span><span class="spacer"></span><button class="btn" data-action="importPick">Import from phone…</button><button class="btn primary" data-action="new">+ Add item</button></div>`;
     if (!list.length) return head + toolbar + `<div class="card empty">${d.assets.length ? 'No items match these filters.' : 'No items yet. Add one here or from your phone.'}</div>`;
     if (f.layout === 'grid') {
       return head + toolbar + `<div class="cards">${list.map(a => `<div class="icard" data-open="${a.id}">
@@ -251,23 +251,49 @@
   }
 
   function viewPhone() {
-    return `<div class="head"><h1>Add items from your phone</h1></div>
+    return `<div class="head"><h1>Add items from your phone or tablet</h1></div>
     <div class="grid g2">
-      <div class="card"><h2>Phone link</h2>
-        <label class="switch"><input type="checkbox" id="phoneOn"> Allow my phone to add items over Wi-Fi</label>
-        <div id="phoneBody" style="margin-top:16px" class="muted">Loading…</div>
+      <div class="card"><h2>1. Put OpenSafe Capture on your phone</h2>
+        <div style="display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap">
+          <div class="qr" id="capQr" style="width:220px"><div class="muted">Loading…</div></div>
+          <ol class="steps" style="flex:1;min-width:220px">
+            <li>Scan this code with your phone's camera and open the link in <b>Chrome</b>.</li>
+            <li>Tap <b>Install</b> (or ⋮ → <b>Add to Home screen</b>). It gets its own icon and works without internet or Wi-Fi.</li>
+            <li>Add items: photos, details and receipts. They're kept on the phone.</li>
+          </ol>
+        </div>
+        <p class="muted" style="margin-bottom:0">Works on phones and tablets. Do the same on each device you use.</p>
       </div>
-      <div class="card"><h2>How it works</h2>
+      <div class="card"><h2>2. Bring the items into this PC</h2>
         <ol class="steps">
-          <li>Switch the phone link on. The first time, Windows may ask whether OpenSafe can use the network: tick <b>Private networks</b> and choose <b>Allow</b>.</li>
-          <li>Make sure your phone is on the <b>same Wi-Fi</b> as this PC.</li>
-          <li>Point your phone's camera at the QR code and open the link. The phone is now paired.</li>
-          <li>In Chrome on the phone, use the ⋮ menu and choose <b>Add to Home screen</b> to get an OpenSafe icon.</li>
-          <li>Take photos, fill in the details and tap <b>Save to PC</b>. The item appears here straight away.</li>
+          <li>In OpenSafe Capture, tap <b>Export to PC</b>. It makes one <b>.opensafe</b> file with everything, photos included.</li>
+          <li>Send the file to this PC however suits you: <b>Quick Share</b>, Bluetooth, email, Google Drive, OneDrive, or a USB cable.</li>
+          <li>Then either click <b>Import from phone</b> below, double-click the file, or drag it into this window.</li>
         </ol>
-        <p class="note">This PC must be on, with OpenSafe open, while you add items. If your router gives the PC a new address, scan the QR code again. Only phones that have scanned the code can add items. Use <b>New pairing code</b> to unpair every phone.</p>
+        <button class="btn primary" data-action="importPick">Import from phone…</button>
+        <p class="muted">Importing the same file twice is safe: items already here are skipped, and only new photos are added.</p>
       </div>
-    </div>`;
+    </div>
+    <details class="card" id="wifiDetails" style="margin-top:16px"${state.wifiOpen ? ' open' : ''}>
+      <summary style="cursor:pointer"><b>Wi-Fi link (advanced)</b> <span class="muted">: add items straight to this PC over your home Wi-Fi</span></summary>
+      <div class="grid g2" style="margin-top:14px">
+        <div><label class="switch"><input type="checkbox" id="phoneOn"> Allow my phone to add items over Wi-Fi</label>
+          <div id="phoneBody" style="margin-top:16px" class="muted">Loading…</div></div>
+        <div><ol class="steps">
+          <li>Switch the link on and make sure your phone is on the <b>same Wi-Fi</b> as this PC.</li>
+          <li>Scan the QR code on the left and open the link.</li>
+          <li>Take photos, fill in the details and tap <b>Save to PC</b>.</li>
+        </ol>
+        <p class="note">This PC must be on, with OpenSafe open. Some routers and phone browsers block this kind of connection. If it won't connect, use OpenSafe Capture above instead.</p></div>
+      </div>
+    </details>`;
+  }
+
+  function loadCapture() {
+    keep.captureInfo().then(c => {
+      const el = $('#capQr'); if (!el) return;
+      el.innerHTML = `<img src="${c.qr}" alt="QR code for OpenSafe Capture"><div class="u">${esc(c.url)}</div>`;
+    }).catch(() => {});
   }
 
   let phoneTimer = null;
@@ -453,7 +479,14 @@
 
   // ---------- events ----------
   document.addEventListener('dragover', (e) => e.preventDefault());
-  document.addEventListener('drop', (e) => e.preventDefault());
+  document.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    if (e.target.closest && e.target.closest('#drop')) return; // item photo/document drop zone handles its own files
+    const files = [...(e.dataTransfer ? e.dataTransfer.files : [])].filter(f => /\.(opensafe|txt|json)$/i.test(f.name));
+    if (!files.length) return;
+    try { await keep.importFiles(files); } catch (err) { toast('⚠ ' + err.message, 5000); }
+    await refresh();
+  });
 
   document.addEventListener('click', async (e) => {
     const zoom = e.target.closest('[data-zoom]');
@@ -494,6 +527,7 @@
           try { await run(() => keep.fixFirewall(), '✓ Firewall fixed. Try your phone again.'); } catch (_) {}
           loadPhone(); break;
         }
+        case 'importPick': { await run(() => keep.importPick()); await refresh(); break; }
         case 'phoneReset': await run(() => keep.phoneReset()); loadPhone(); break;
         case 'report': { const p = await run(() => keep.exportReport({ includePhotos: $('#rPhotos').checked, includeInactive: $('#rInactive').checked })); if (p) toast('Report saved'); break; }
         case 'csv': { const p = await run(() => keep.exportCsv()); if (p) toast('CSV saved'); break; }

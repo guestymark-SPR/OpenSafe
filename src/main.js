@@ -30,7 +30,11 @@ let phone = null;
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
+  app.on('second-instance', (_e, argv) => {
+    if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
+    const f = exportFileFromArgs(argv);
+    if (f && store) importFromPath(f);
+  });
   app.whenReady().then(init);
 }
 
@@ -68,12 +72,46 @@ async function init() {
   createWindow();
   registerIpc();
 
+  // Opened by double-clicking a .opensafe file
+  const startFile = exportFileFromArgs(process.argv);
+  if (startFile) win.webContents.once('did-finish-load', () => setTimeout(() => importFromPath(startFile), 600));
+
   if (store.data.settings.phoneLinkEnabled) {
     startPhone().catch(() => { /* shown as stopped in the Phone screen */ });
   }
 
   setTimeout(remindOnStartup, 4000);
   updater.init((st) => { if (win && !win.isDestroyed()) win.webContents.send('update:status', st); });
+}
+
+const CAPTURE_URL = 'https://guestymark-spr.github.io/OpenSafe/';
+
+function exportFileFromArgs(argv) {
+  return (argv || []).slice(1).find(a => /\.opensafe(\.txt)?$/i.test(a) && fs.existsSync(a)) || null;
+}
+
+async function importFromPath(file) {
+  let res;
+  try {
+    const st = fs.statSync(file);
+    if (st.size > 1024 * 1024 * 1024) throw new Error('The file is over 1 GB.');
+    let parsed;
+    try { parsed = JSON.parse(fs.readFileSync(file, 'utf8')); }
+    catch (_) { throw new Error('This file isn\'t an OpenSafe export, or it was damaged while being copied.'); }
+    res = store.importCapture(parsed);
+  } catch (e) {
+    if (win) dialog.showMessageBox(win, { type: 'error', title: 'Import', message: 'Couldn\'t import that file', detail: e.message });
+    throw e;
+  }
+  notifyChanged();
+  const lines = [];
+  if (res.added) lines.push(`${res.added} new item${res.added === 1 ? '' : 's'} added.`);
+  if (res.updated) lines.push(`${res.updated} item${res.updated === 1 ? '' : 's'} already here got new photos or details.`);
+  if (res.unchanged) lines.push(`${res.unchanged} item${res.unchanged === 1 ? ' was' : 's were'} already imported, so ${res.unchanged === 1 ? 'it was' : 'they were'} skipped.`);
+  lines.push(`${res.photos} photo${res.photos === 1 ? '' : 's'} and ${res.documents} receipt${res.documents === 1 ? '' : 's'} saved.`);
+  if (res.errors.length) lines.push('', 'Not imported:', ...res.errors.slice(0, 10));
+  if (win) dialog.showMessageBox(win, { type: res.errors.length ? 'warning' : 'info', title: 'Import', message: res.added ? 'Items imported from your phone' : 'Import finished', detail: lines.join('\n') });
+  return res;
 }
 
 function createWindow() {
@@ -266,6 +304,29 @@ function registerIpc() {
     return r.filePaths[0];
   });
   h('data:openFolder', () => shell.openPath(DATA_DIR));
+  h('import:pick', async () => {
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Import items from OpenSafe Capture',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'OpenSafe export', extensions: ['opensafe', 'txt', 'json'] }]
+    });
+    if (r.canceled) return null;
+    const totals = { added: 0, updated: 0, unchanged: 0 };
+    for (const f of r.filePaths) {
+      try { const x = await importFromPath(f); totals.added += x.added; totals.updated += x.updated; totals.unchanged += x.unchanged; } catch (_) { /* dialog already shown */ }
+    }
+    return totals;
+  });
+  h('import:paths', async (paths) => {
+    const totals = { added: 0, updated: 0, unchanged: 0 };
+    for (const f of (Array.isArray(paths) ? paths : []).slice(0, 20).map(String)) {
+      if (!/\.(opensafe|txt|json)$/i.test(f)) continue;
+      try { const x = await importFromPath(f); totals.added += x.added; totals.updated += x.updated; totals.unchanged += x.unchanged; } catch (_) {}
+    }
+    return totals;
+  });
+  h('capture:info', async () => ({ url: CAPTURE_URL, qr: await QRCode.toDataURL(CAPTURE_URL, { margin: 1, width: 360, errorCorrectionLevel: 'M' }) }));
+  h('open:external', (which) => { if (which === 'capture') shell.openExternal(CAPTURE_URL); return true; });
 
   h('update:status', () => updater.getStatus());
   h('update:check', () => updater.checkNow());

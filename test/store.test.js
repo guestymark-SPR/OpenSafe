@@ -140,3 +140,37 @@ test('phone server logs plain and https connection attempts', async () => {
   await ps.stop();
   assert.strictEqual(ps.attempts[0].ip, '192.168.1.50');
 });
+
+test('import from OpenSafe Capture: add, re-import, edits and bad files', () => {
+  const s = tmpStore();
+  const png = Buffer.from('89504e470d0a1a0a', 'hex').toString('base64');
+  const id = '11111111-2222-4333-8444-555555555555';
+  const file = { format: 'opensafe-export', version: 1, items: [{
+    id, createdAt: '2026-11-20T10:00:00.000Z', name: 'Tent', category: 'Camping & Outdoor', location: 'Loft', purchasePrice: '£420.50', tags: 'camping, summer',
+    photos: [{ id: 'p1', name: 'tent.jpg', type: 'image/jpeg', data: png }],
+    documents: [{ id: 'd1', name: 'receipt', type: 'application/pdf', docType: 'Receipt', data: Buffer.from('%PDF').toString('base64') }]
+  }] };
+  const r1 = s.importCapture(file);
+  assert.deepStrictEqual([r1.added, r1.updated, r1.unchanged, r1.photos, r1.documents, r1.errors.length], [1, 0, 0, 1, 1, 0]);
+  const a = s.getAsset(id);
+  assert.ok(a && a.source === 'phone' && a.purchasePrice === 420.5 && a.location === 'Loft');
+  assert.strictEqual(a.documents[0].name, 'receipt.pdf');
+  assert.ok(s.data.locations.includes('Loft'));
+  // same file again: nothing duplicated
+  const r2 = s.importCapture(file);
+  assert.deepStrictEqual([r2.added, r2.unchanged, r2.photos], [0, 1, 0]);
+  assert.strictEqual(s.data.assets.length, 1);
+  // PC edit is kept; empty field filled; new photo added
+  s.saveAsset({ id, name: 'Family tent', location: 'Garage' });
+  file.items[0].name = 'Tent (phone edit)'; file.items[0].serial = 'SN-9'; file.items[0].location = 'Loft';
+  file.items[0].photos.push({ id: 'p2', name: 'tent2.jpg', type: 'image/jpeg', data: png });
+  const r3 = s.importCapture(file);
+  assert.deepStrictEqual([r3.updated, r3.photos], [1, 1]);
+  const b = s.getAsset(id);
+  assert.deepStrictEqual([b.name, b.location, b.serial, b.photos.length], ['Family tent', 'Garage', 'SN-9', 2]);
+  // bad input
+  assert.throws(() => s.importCapture({ hello: 1 }), /isn't an OpenSafe export/);
+  assert.throws(() => s.importCapture({ format: 'opensafe-export', version: 2, items: [] }), /newer version/);
+  const r4 = s.importCapture({ format: 'opensafe-export', version: 1, items: [{ name: 'Bad file', photos: [{ name: 'x.exe', type: 'application/x-msdownload', data: png }] }] });
+  assert.strictEqual(r4.added, 1); assert.strictEqual(r4.errors.length, 1);
+});

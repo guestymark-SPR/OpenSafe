@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1d4d4f">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob: data:; style-src 'self'; script-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+<title>OpenSafe Capture</title>
+</head>
+<body>
+<header class="bar">
+  <button id="backBtn" class="iconbtn hidden" aria-label="Back">←</button>
+  <img src="icons/icon-192.png" alt="" class="logo" id="logo">
+  <div class="titles"><h1 id="title">OpenSafe Capture</h1><div id="subtitle" class="sub">Items stay on this device until you export</div></div>
+  <button id="menuBtn" class="iconbtn" aria-label="Menu">⋮</button>
+</header>
+<div id="menu" class="menu hidden" role="menu">
+  <button data-act="exportAll" role="menuitem">Export all items again</button>
+  <button data-act="clearExported" role="menuitem">Remove exported items</button>
+  <button data-act="install" role="menuitem" id="installMenu" class="hidden">Install app</button>
+  <button data-act="about" role="menuitem">About</button>
+</div>
+
+<main>
+  <!-- HOME -->
+  <section id="home">
+    <div id="installCard" class="card install hidden">
+      <b>Install OpenSafe Capture</b>
+      <p>Add it to your home screen so it opens like an app and works without internet.</p>
+      <button class="btn primary" data-act="install">Install</button>
+    </div>
+    <div class="card exportcard">
+      <div><b id="pendingCount">0 items</b> <span class="muted" id="pendingText">ready to export</span></div>
+      <button class="btn primary" id="exportBtn" data-act="export">Export to PC</button>
+    </div>
+    <div id="list" class="list"></div>
+    <div id="empty" class="empty hidden">
+      <div class="emptyicon">📦</div>
+      <p><b>No items yet.</b></p>
+      <p class="muted">Tap <b>+ Add item</b>, take photos and fill in what you know. When you're done, tap <b>Export to PC</b> and import the file in OpenSafe on your PC.</p>
+    </div>
+  </section>
+
+  <!-- FORM -->
+  <form id="form" class="hidden" autocomplete="off" novalidate>
+    <section class="card">
+      <h2>Photos</h2>
+      <div id="thumbs" class="thumbs"></div>
+      <div class="row2">
+        <label class="btn primary">📷 Take photo<input type="file" id="cam" accept="image/*" capture="environment" hidden></label>
+        <label class="btn">🖼️ From gallery<input type="file" id="gallery" accept="image/*" multiple hidden></label>
+      </div>
+    </section>
+    <section class="card">
+      <h2>Item</h2>
+      <label>Name <span class="req">*</span><input name="name" maxlength="200" placeholder="e.g. Cordless drill"></label>
+      <div class="row2">
+        <label>Category<input name="category" list="cats" maxlength="60"></label>
+        <label>Location<input name="location" list="locs" maxlength="60"></label>
+      </div>
+      <div class="row2">
+        <label>Brand<input name="brand" maxlength="200"></label>
+        <label>Model<input name="model" maxlength="200"></label>
+      </div>
+      <label>Serial number<input name="serial" maxlength="200" autocapitalize="characters"></label>
+      <label>Condition<select name="condition"><option value="">—</option><option>New</option><option>Excellent</option><option>Good</option><option>Fair</option><option>Poor</option></select></label>
+    </section>
+    <section class="card">
+      <h2>Value</h2>
+      <div class="row2">
+        <label>Price paid (£)<input name="purchasePrice" inputmode="decimal" placeholder="0.00"></label>
+        <label>Value now (£)<input name="currentValue" inputmode="decimal" placeholder="0.00"></label>
+      </div>
+      <div class="row2">
+        <label>Bought on<input name="purchaseDate" type="date"></label>
+        <label>Warranty until<input name="warrantyExpiry" type="date"></label>
+      </div>
+      <label>Bought from<input name="supplier" maxlength="200"></label>
+    </section>
+    <section class="card">
+      <h2>Receipts</h2>
+      <div id="receipts" class="filelist"></div>
+      <label class="btn">🧾 Add receipt (photo or PDF)<input type="file" id="receipt" accept="image/*,application/pdf" multiple hidden></label>
+    </section>
+    <section class="card">
+      <label>Notes<textarea name="notes" rows="3" maxlength="5000"></textarea></label>
+      <label>Tags<input name="tags" placeholder="comma separated"></label>
+    </section>
+    <div id="formErr" class="error hidden" role="alert"></div>
+    <div class="formbar">
+      <button type="button" class="btn danger hidden" id="deleteBtn" data-act="delete">Delete</button>
+      <button type="submit" class="btn primary big" id="saveBtn">Save item</button>
+    </div>
+  </form>
+</main>
+
+<button id="fab" class="fab" data-act="new">+ Add item</button>
+<div id="toast" class="toast hidden" role="status"></div>
+<div id="sheet" class="sheetwrap hidden"><div class="sheet" id="sheetBody"></div></div>
+<datalist id="cats"></datalist>
+<datalist id="locs"></datalist>
+<script src="app.js"></script>
+</body>
+</html>
