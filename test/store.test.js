@@ -249,3 +249,28 @@ test('receipt parsing: shop, UK dates and totals', () => {
   assert.strictEqual(d.date, '2025-05-12');
   assert.deepStrictEqual(parseReceipt('').total, null);
 });
+
+test('phone inventory file: encrypted, vault excluded unless asked; labels sheet', async () => {
+  const pv = require('../src/phoneview');
+  const { buildLabelsHtml } = require('../src/labels');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ospv-'));
+  const s = new Store(dir); s.load();
+  const a = s.saveAsset({ name: 'Telescope', serial: 'T-1', details: { kind: 'vehicle', reg: 'X1' } });
+  s.addPhoto(a.id, 't.png', Buffer.from('png'));
+  await s.enableEncryption('password123');
+  await s.setupVault('1234');
+  const v = s.saveAsset({ name: 'Diamond ring' });
+  s.moveItemToVault(v.id, true);
+  const view = pv.buildView(s, { makeThumb: () => 'data:image/jpeg;base64,AAA' });
+  assert.deepStrictEqual(view.items.map(i => i.name), ['Telescope']);
+  assert.strictEqual(view.items[0].thumb, 'data:image/jpeg;base64,AAA');
+  assert.strictEqual(pv.buildView(s, { includeVault: true }).items.length, 2);
+  assert.throws(() => pv.encryptView(view, '123'), /6 characters/);
+  const text = pv.encryptView(view, 'phone pass');
+  assert.ok(!text.includes('Telescope'));
+  assert.strictEqual(pv.decryptView(text, 'phone pass').items[0].serial, 'T-1');
+  assert.throws(() => pv.decryptView(text, 'wrong pass'));
+  const html = await buildLabelsHtml(s, [a.id, a.id, a.id], { skip: 19 });
+  assert.strictEqual((html.match(/class="sheet"/g) || []).length, 2); // 19 skipped + 3 labels = 22 > 21
+  assert.strictEqual((html.match(/<img src="data:image\/png/g) || []).length, 3);
+});

@@ -176,6 +176,42 @@
     };
   }
 
+  function labelsForm(ids) {
+    openModal(`<form class="dialog narrow" id="labForm"><div class="dh"><h2>QR labels</h2></div>
+      <div class="db"><p class="s3 muted" style="margin:0">A4 sheet of 21 labels (63.5 × 38.1 mm, the same as Avery L7160 and similar sheets) for <b>${ids.length} item${ids.length === 1 ? '' : 's'}</b>. Scanning a label with your phone opens that item in OpenSafe Capture.</p>
+        <label class="f">Labels already used on the sheet<input name="skip" type="number" min="0" max="20" value="0"></label>
+        <div class="err" id="labErr"></div></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Save labels PDF…</button></div></form>`);
+    $('#labForm').onsubmit = async (e) => {
+      e.preventDefault();
+      busy(e.target, true, 'Making labels…');
+      try { const p = await keep.labels(ids, { skip: Number(e.target.skip.value) || 0 }); if (p) { closeModal(); toast('✓ Labels saved. Print at 100% (no "fit to page").', 5000); } else busy(e.target, false); }
+      catch (ex) { $('#labErr').textContent = ex.message; busy(e.target, false); }
+    };
+  }
+
+  async function barcodeLookup(a) {
+    toast('Looking up the barcode…');
+    let r;
+    try { r = await keep.barcodeLookup(a.barcode); } catch (ex) { toast('⚠ ' + ex.message, 6000); return; }
+    if (!r) { toast('That barcode isn\'t in the free product database.', 5000); return; }
+    const row = (key, label, val, cur) => val ? `<label class="switch s3" style="font-weight:500;display:flex;gap:10px"><input type="checkbox" name="${key}" ${cur ? '' : 'checked'}> <span style="flex:1">${label}: <b>${esc(val)}</b>${cur ? ` <span class="muted">(currently ${esc(cur)})</span>` : ''}</span></label>` : '';
+    openModal(`<form class="dialog narrow" id="bcForm"><div class="dh"><h2>Product found</h2></div>
+      <div class="db"><p class="s3 muted" style="margin:0">From ${esc(r.source)}, a free product database. Tick what to copy into this item.</p>
+        ${row('name', 'Name', r.title, a.name)}${row('brand', 'Brand', r.brand, a.brand)}${row('model', 'Model', r.model, a.model)}
+        ${r.category ? `<p class="s3 faint" style="margin:0">Their category: ${esc(r.category)}</p>` : ''}</div>
+      <div class="df"><button type="button" class="btn" data-action="close">Close</button><button class="btn primary" type="submit">Copy to item</button></div></form>`);
+    $('#bcForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const f = e.target, patch = { id: a.id };
+      if (f.name && f.name.checked) patch.name = r.title;
+      if (f.brand && f.brand.checked) patch.brand = r.brand;
+      if (f.model && f.model.checked) patch.model = r.model;
+      if (Object.keys(patch).length > 1) await run(() => keep.saveAsset(patch), 'Copied');
+      closeModal(); await refresh();
+    };
+  }
+
   async function readReceipt(a, file) {
     openModal(`<div class="dialog narrow"><div class="dh"><h2>Reading receipt…</h2></div><div class="db"><p class="s3 muted" style="margin:0">Reading the text on this PC (nothing is uploaded). This takes a few seconds the first time.</p></div></div>`);
     let r;
@@ -446,7 +482,7 @@
     const ids = list.map(a => a.id);
     for (const id of [...state.sel]) if (!state.snap.data.assets.some(a => a.id === id)) state.sel.delete(id);
     const allOn = ids.length && ids.every(id => state.sel.has(id));
-    const selBar = state.sel.size ? `<div class="selbar"><b>${state.sel.size} selected</b><button class="btn primary small" data-action="claimSel">Claim pack…</button><button class="btn small" data-action="selClear">Clear selection</button></div>` : '';
+    const selBar = state.sel.size ? `<div class="selbar"><b>${state.sel.size} selected</b><button class="btn primary small" data-action="claimSel">Claim pack…</button><button class="btn small" data-action="labelsSel">QR labels…</button><button class="btn small" data-action="selClear">Clear selection</button></div>` : '';
     return head + toolbar + selBar + `<table class="list"><thead><tr><th style="width:34px"><input type="checkbox" class="selall" title="Select all shown" ${allOn ? 'checked' : ''}></th><th style="width:60px"></th><th>Item</th><th>Category</th><th>Location</th><th>Serial no.</th><th>Bought</th><th class="r">Value now</th><th></th></tr></thead><tbody>
       ${list.map(a => `<tr data-open="${a.id}"><td><input type="checkbox" class="selbox" data-id="${a.id}" ${state.sel.has(a.id) ? 'checked' : ''} aria-label="Select ${esc(a.name)}"></td><td>${thumb(a)}</td>
         <td><div class="name">${esc(a.name)}</div><div class="meta">${esc([a.brand, a.model].filter(Boolean).join(' '))}</div></td>
@@ -486,7 +522,7 @@
           ? kv('Insured by', `<a href="#" data-nav="policies">${esc(pol.insurer)}</a>${pol.type ? ' · ' + esc(pol.type) : ''}`) + kv('Policy number', esc(pol.policyNumber)) + kv('Insured value', a.insuredValue !== null ? money(a.insuredValue) : '')
           : kv('Insurer', esc(a.insurer)) + kv('Policy number', esc(a.policyNumber)) + kv('Insured value', a.insuredValue !== null ? money(a.insuredValue) : ''); })()}
         ${kv('Tags', a.tags.map(x => `<span class="pill">${esc(x)}</span>`).join(''))}${kv('Added', ukDate(a.createdAt.slice(0, 10)) + (a.source === 'phone' ? ' from phone' : ''))}${kv('Last changed', ukDate(a.updatedAt.slice(0, 10)))}
-      ${a.barcode ? kv('Barcode', `<span class="mono">${esc(a.barcode)}</span>`) : ''}
+      ${a.barcode ? kv('Barcode', `<span class="mono">${esc(a.barcode)}</span> <button class="btn small" data-action="bcLookup">Look up</button>`) : ''}
       ${a.status === 'Lent out' ? kv('Lent to', esc(a.lentTo)) + kv('Lent on', a.lentDate ? ukDate(a.lentDate) : '') + kv('Due back', a.dueBack ? ukDate(a.dueBack) : '') : ''}
       ${a.status === 'Sold' ? kv('Sold on', a.soldDate ? ukDate(a.soldDate) : '') + kv('Sold for', a.soldPrice !== null && a.soldPrice !== undefined ? money(a.soldPrice) : '') + kv('Sold to', esc(a.soldTo)) : ''}
       </div>${a.notes ? `<div class="notes">${esc(a.notes)}</div>` : ''}</div>
@@ -563,6 +599,13 @@
         <button class="btn primary" data-action="importPick">Import from phone…</button>
         <p class="muted">Importing the same file twice is safe: items already here are skipped, and only new photos are added.</p>
       </div>
+      <div class="card" style="grid-column:1/-1"><h2>3. See your inventory on your phone</h2>
+        <p class="muted">Save a read-only copy of your items (with small photos) for OpenSafe Capture. Open it there with <b>My inventory → Load file</b>, then search your things, or scan an item's QR label to see its details. The file is encrypted with a passphrase you choose here, which you'll type on the phone.</p>
+        <div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">
+          <label class="f" style="min-width:260px">Passphrase (at least 6 characters)<input id="pvPass" type="password" autocomplete="new-password"></label>
+          ${state.snap.security.vault.unlocked ? '<label class="switch" style="font-weight:500"><input type="checkbox" id="pvVault"> Include vault items</label>' : ''}
+          <button class="btn primary" data-action="phoneView">Save inventory for phone…</button></div>
+        <p class="faint" style="margin-bottom:0">Send the file to your phone the same way as before (Quick Share, email, OneDrive, USB). Make a new one whenever you want the phone up to date. For QR labels, select items in <b>Items</b> and choose <b>QR labels…</b>.</p></div>
     </div>
     <details class="card" id="wifiDetails" style="margin-top:16px"${state.wifiOpen ? ' open' : ''}>
       <summary style="cursor:pointer"><b>Wi-Fi link (advanced)</b> <span class="muted">: add items straight to this PC over your home Wi-Fi</span></summary>
@@ -947,6 +990,15 @@
         }
         case 'theme': await keep.setTheme(act.dataset.theme); await refresh(); break;
         case 'claimSel': claimForm([...state.sel]); break;
+        case 'labelsSel': labelsForm([...state.sel]); break;
+        case 'bcLookup': barcodeLookup(a); break;
+        case 'phoneView': {
+          const pass = $('#pvPass').value;
+          if (pass.length < 6) { toast('Use a passphrase of at least 6 characters'); break; }
+          act.disabled = true; act.textContent = 'Preparing…';
+          try { const r = await run(() => keep.phoneView(pass, $('#pvVault') && $('#pvVault').checked)); if (r) toast(`✓ Saved ${r.count} items (${r.kb} KB). Send that file to your phone.`, 5000); } catch (_) {}
+          act.disabled = false; act.textContent = 'Save inventory for phone…'; $('#pvPass').value = ''; break;
+        }
         case 'claimOne': claimForm([a.id]); break;
         case 'selClear': state.sel.clear(); render(); break;
         case 'ocr': readReceipt(a, act.dataset.file); break;

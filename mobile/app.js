@@ -8,14 +8,18 @@
   const FORMAT_VERSION = 1;
   const DEFAULT_CATS = ['Vehicles', 'Electronics', 'Computers & Phones', 'Tools', 'Camping & Outdoor', 'Motorbike Gear', 'Marine', 'Furniture', 'Appliances', 'Jewellery & Watches', 'Sports & Hobbies', 'Clothing', 'Other'];
   const DEFAULT_LOCS = ['Home', 'Garage', 'Car', 'Storage', 'Boat'];
-  const FIELDS = ['name', 'category', 'location', 'brand', 'model', 'serial', 'condition', 'purchasePrice', 'currentValue', 'purchaseDate', 'warrantyExpiry', 'supplier', 'notes', 'tags'];
+  const FIELDS = ['name', 'category', 'location', 'brand', 'model', 'serial', 'barcode', 'condition', 'purchasePrice', 'currentValue', 'purchaseDate', 'warrantyExpiry', 'supplier', 'notes', 'tags'];
 
   // ---------- IndexedDB ----------
   let dbp = null;
   function db() {
     if (!dbp) dbp = new Promise((resolve, reject) => {
-      const r = indexedDB.open('opensafe-capture', 1);
-      r.onupgradeneeded = () => r.result.createObjectStore('items', { keyPath: 'id' });
+      const r = indexedDB.open('opensafe-capture', 2);
+      r.onupgradeneeded = () => {
+        const d = r.result;
+        if (!d.objectStoreNames.contains('items')) d.createObjectStore('items', { keyPath: 'id' });
+        if (!d.objectStoreNames.contains('kv')) d.createObjectStore('kv'); // the encrypted inventory file from the PC
+      };
       r.onsuccess = () => resolve(r.result);
       r.onerror = () => reject(r.error);
     });
@@ -37,6 +41,9 @@
   const allItems = () => tx('readonly', s => req(s.getAll()));
   const putItem = (item) => tx('readwrite', s => req(s.put(item)));
   const delItem = (id) => tx('readwrite', s => req(s.delete(id)));
+
+  async function kvGet(k) { const d = await db(); return new Promise((res, rej) => { const r = d.transaction('kv').objectStore('kv').get(k); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+  async function kvSet(k, v) { const d = await db(); return new Promise((res, rej) => { const t = d.transaction('kv', 'readwrite'); if (v === undefined) t.objectStore('kv').delete(k); else t.objectStore('kv').put(v, k); t.oncomplete = () => res(); t.onerror = () => rej(t.error); }); }
 
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = crypto.getRandomValues(new Uint8Array(1))[0] % 16; return (c === 'x' ? r : (r & 3 | 8)).toString(16); }));
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -87,6 +94,8 @@
   // ---------- views ----------
   function showHome() {
     editing = null;
+    $('tabs').classList.remove('hidden');
+    if (tab === 'inv') { showInv(); return; }
     $('form').classList.add('hidden'); $('home').classList.remove('hidden');
     $('fab').classList.remove('hidden'); $('backBtn').classList.add('hidden'); $('logo').classList.remove('hidden');
     $('title').textContent = 'OpenSafe Capture';
@@ -125,7 +134,7 @@
     $('formErr').classList.add('hidden');
     $('deleteBtn').classList.toggle('hidden', !item);
     $('saveBtn').textContent = item ? 'Save changes' : 'Save item';
-    $('home').classList.add('hidden'); f.classList.remove('hidden');
+    $('home').classList.add('hidden'); $('inv').classList.add('hidden'); $('tabs').classList.add('hidden'); f.classList.remove('hidden');
     $('fab').classList.add('hidden'); $('backBtn').classList.remove('hidden'); $('logo').classList.add('hidden');
     $('title').textContent = item ? 'Edit item' : 'New item';
     $('subtitle').textContent = item && item.exportedAt ? 'Already exported: changes go in your next export' : 'Saved on this device';
@@ -275,8 +284,143 @@
     await finishExport('download');
   }
 
+  // ---------- inventory from the PC (read-only, encrypted with a passphrase) ----------
+  let tab = 'home';
+  let inv = null;          // decrypted inventory, kept only in memory
+  let pendingItem = null;  // item id from a scanned QR label link
+
+  async function decryptInventory(text, pass) {
+    const f = JSON.parse(text);
+    if (f.format !== 'opensafe-view') throw new Error('This isn\'t an OpenSafe inventory file.');
+    const b = (s) => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass.normalize('NFKC')), 'PBKDF2', false, ['deriveKey']);
+    const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt: b(f.salt), iterations: f.kdf.iterations }, base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+    let plain;
+    try { plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b(f.iv) }, key, b(f.data)); }
+    catch (_) { throw new Error('That passphrase isn\'t right.'); }
+    return JSON.parse(new TextDecoder().decode(plain));
+  }
+
+  function setTab(t) {
+    tab = t;
+    for (const b of document.querySelectorAll('#tabs button')) b.classList.toggle('on', b.dataset.tab === t);
+    if (t === 'inv') showInv(); else { $('inv').classList.add('hidden'); $('home').classList.remove('hidden'); $('fab').classList.remove('hidden'); $('title').textContent = 'OpenSafe Capture'; $('subtitle').textContent = 'Items stay on this device until you export'; renderList(); }
+  }
+
+  async function showInv() {
+    $('home').classList.add('hidden'); $('form').classList.add('hidden'); $('fab').classList.add('hidden');
+    $('inv').classList.remove('hidden');
+    $('title').textContent = 'My inventory';
+    const file = await kvGet('inventory');
+    $('invNone').classList.toggle('hidden', !!file);
+    $('invUnlock').classList.toggle('hidden', !file || !!inv);
+    $('invOpen').classList.toggle('hidden', !inv);
+    $('subtitle').textContent = inv ? 'Read-only copy from your PC' : 'Copy of your PC inventory';
+    if (file && !inv) {
+      $('invInfo').textContent = `Loaded ${file.loadedAt ? new Date(file.loadedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}. Enter the passphrase you chose on the PC.`;
+      setTimeout(() => $('invUnlock').pass.focus(), 50);
+    }
+    if (inv) renderInv();
+  }
+
+  function renderInv() {
+    const q = $('invQ').value.trim().toLowerCase();
+    const list = inv.items.filter(a => !q || [a.name, a.brand, a.model, a.serial, a.category, a.location, a.barcode, (a.details || {}).reg, (a.tags || []).join(' ')].join(' ').toLowerCase().includes(q));
+    $('invMeta').textContent = `${inv.count} items · copied from the PC on ${new Date(inv.exportedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+    $('invList').replaceChildren(...list.map(a => {
+      const d = document.createElement('div'); d.className = 'item'; d.dataset.inv = a.id;
+      const meta = [a.category, a.location, gbp(a.currentValue ?? a.purchasePrice ?? '')].filter(Boolean).join(' · ');
+      d.innerHTML = `${a.thumb ? `<img src="${a.thumb}" alt="">` : '<div class="ph">▣</div>'}<div class="t"><div class="n">${esc(a.name)}</div><div class="m">${esc(meta) || '&nbsp;'}</div><div class="m">${esc([a.brand, a.model].filter(Boolean).join(' '))}</div></div>${a.inVault ? '<span class="pill">🔒</span>' : ''}`;
+      return d;
+    }));
+    if (!list.length) $('invList').innerHTML = '<div class="empty muted">No matches.</div>';
+  }
+
+  function showInvItem(id) {
+    const a = inv && inv.items.find(x => x.id === id);
+    if (!a) { toast('That item isn\'t in the inventory on this phone. Send a newer copy from the PC.', 4500); return; }
+    const d = a.details || {};
+    const ukd = (s) => s ? new Date(s + 'T00:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '';
+    const rows = [['Category', a.category], ['Location', a.location], ['Status', a.status !== 'Owned' ? a.status : ''], ['Brand', a.brand], ['Model', a.model], ['Serial number', a.serial], ['Barcode', a.barcode],
+      ['Bought on', ukd(a.purchaseDate)], ['Bought from', a.supplier], ['Price paid', gbp(a.purchasePrice ?? '')], ['Value now', gbp(a.currentValue ?? '')], ['Warranty until', ukd(a.warrantyExpiry)],
+      ['Insurer', a.insurer], ['Policy number', a.policyNumber], ['Lent to', a.lentTo], ['Due back', ukd(a.dueBack)],
+      ['Registration', d.reg], ['VIN / frame no.', d.vin], ['Mileage', d.mileage], ['MOT due', ukd(d.motDue)], ['Road tax due', ukd(d.taxDue)], ['Hull ID', d.hin], ['Engine hours', d.engineHours], ['Mooring', d.mooring]]
+      .filter(([, v]) => v);
+    sheet(`<div class="detail">${a.thumb ? `<img class="big" src="${a.thumb}" alt="">` : ''}<h2 style="margin-top:12px">${esc(a.name)}</h2>
+      <div class="kv">${rows.map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${esc(v)}</div></div>`).join('')}</div>
+      ${a.notes ? `<p style="white-space:pre-wrap">${esc(a.notes)}</p>` : ''}
+      <p class="muted small">${a.photos} photo${a.photos === 1 ? '' : 's'} and ${a.documents} document${a.documents === 1 ? '' : 's'} on the PC. To change anything, edit it in OpenSafe on the PC.</p>
+      <button class="btn" data-act="closeSheet">Close</button></div>`);
+  }
+
+  $('invFile').onchange = async (e) => {
+    const f = e.target.files[0]; e.target.value = '';
+    if (!f) return;
+    const text = await f.text();
+    try { const j = JSON.parse(text); if (j.format !== 'opensafe-view') throw new Error(); }
+    catch (_) { toast('That isn\'t an OpenSafe inventory file. Choose the .opensafe-view file from the PC.', 5000); return; }
+    await kvSet('inventory', { text, loadedAt: new Date().toISOString() });
+    inv = null;
+    showInv();
+  };
+  $('invUnlock').onsubmit = async (e) => {
+    e.preventDefault();
+    const err = $('invErr'); err.classList.add('hidden');
+    const btn = e.target.querySelector('button'); btn.disabled = true; btn.textContent = 'Opening…';
+    try {
+      const file = await kvGet('inventory');
+      inv = await decryptInventory(file.text, e.target.pass.value);
+      e.target.reset();
+      showInv();
+      if (pendingItem) { const id = pendingItem; pendingItem = null; showInvItem(id); }
+    } catch (ex) { err.textContent = ex.message; err.classList.remove('hidden'); }
+    btn.disabled = false; btn.textContent = 'Open';
+  };
+  $('invQ').oninput = () => renderInv();
+
+  function openFromHash() {
+    const m = location.hash.match(/item=([0-9a-f-]{36})/i);
+    if (!m) return;
+    history.replaceState(null, '', location.pathname);
+    const id = m[1].toLowerCase();
+    setTab('inv');
+    if (inv) showInvItem(id); else { pendingItem = id; toast('Open your inventory to see this item'); }
+  }
+  window.addEventListener('hashchange', openFromHash);
+
+  // ---------- camera scanning (barcodes and QR labels) ----------
+  let scanStream = null, scanTimer = null;
+  async function scan(formats) {
+    if (!('BarcodeDetector' in window)) throw new Error('This browser can\'t scan codes. Use Chrome on Android, or type the number in.');
+    const supported = await BarcodeDetector.getSupportedFormats();
+    const want = formats.filter(f => supported.includes(f));
+    if (!want.length) throw new Error('This phone can\'t scan that kind of code.');
+    const detector = new BarcodeDetector({ formats: want });
+    scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+    const v = $('scanVideo'); v.srcObject = scanStream; await v.play();
+    $('scanner').classList.remove('hidden');
+    return new Promise((resolve) => {
+      scan.cancel = () => { stopScan(); resolve(null); };
+      const tick = async () => {
+        try { const found = await detector.detect(v); if (found.length) { stopScan(); if (navigator.vibrate) navigator.vibrate(60); resolve(found[0].rawValue); return; } } catch (_) {}
+        scanTimer = setTimeout(tick, 250);
+      };
+      tick();
+    });
+  }
+  function stopScan() {
+    clearTimeout(scanTimer);
+    if (scanStream) scanStream.getTracks().forEach(t => t.stop());
+    scanStream = null;
+    $('scanner').classList.add('hidden');
+  }
+
   // ---------- events ----------
   document.addEventListener('click', async (e) => {
+    const tabBtn = e.target.closest('#tabs button');
+    if (tabBtn) { setTab(tabBtn.dataset.tab); return; }
+    const invCard = e.target.closest('[data-inv]');
+    if (invCard) { showInvItem(invCard.dataset.inv); return; }
     const card = e.target.closest('.item');
     if (card) { const it = items.find(i => i.id === card.dataset.id); if (it) showForm(it); return; }
     if (e.target.id === 'sheet') { closeSheet(); return; }
@@ -292,6 +436,27 @@
       case 'share': shareExport(); break;
       case 'download': downloadExport(); break;
       case 'closeSheet': closeSheet(); break;
+      case 'scanClose': if (scan.cancel) scan.cancel(); break;
+      case 'scanBarcode':
+        try {
+          $('scanMsg').textContent = 'Point the camera at the barcode';
+          const code = await scan(['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf']);
+          if (code) { $('form').elements.barcode.value = code; toast('Barcode added. OpenSafe on the PC can look up the product.'); }
+        } catch (ex) { stopScan(); toast(ex.message, 5000); }
+        break;
+      case 'scanLabel':
+        try {
+          $('scanMsg').textContent = 'Point the camera at an OpenSafe label';
+          const text = await scan(['qr_code']);
+          if (!text) break;
+          const m = String(text).match(/item=([0-9a-f-]{36})/i);
+          if (m) showInvItem(m[1].toLowerCase()); else toast('That QR code isn\'t an OpenSafe label.');
+        } catch (ex) { stopScan(); toast(ex.message, 5000); }
+        break;
+      case 'lockInv': inv = null; toast('Inventory locked'); if (tab === 'inv') showInv(); break;
+      case 'forgetInv':
+        if (confirm('Remove the inventory copy from this phone? Your items on the PC aren\'t affected.')) { await kvSet('inventory', undefined); inv = null; toast('Removed'); if (tab === 'inv') showInv(); }
+        break;
       case 'delete':
         if (confirm('Delete this item from this device?')) { await delItem(editing.id); toast('Deleted'); showHome(); }
         break;
@@ -329,5 +494,13 @@
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 
+  // Lock the inventory again when the app has been in the background for 5 minutes
+  let hiddenAt = 0;
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { hiddenAt = Date.now(); if (scan.cancel) scan.cancel(); }
+    else if (inv && Date.now() - hiddenAt > 5 * 60 * 1000) { inv = null; if (tab === 'inv') showInv(); }
+  });
+
   showHome();
+  openFromHash();
 })();

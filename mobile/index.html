@@ -20,12 +20,39 @@
 </header>
 <div id="menu" class="menu hidden" role="menu">
   <button data-act="exportAll" role="menuitem">Export all items again</button>
+  <button data-act="lockInv" role="menuitem">Lock inventory</button>
+  <button data-act="forgetInv" role="menuitem">Remove inventory from this phone</button>
   <button data-act="clearExported" role="menuitem">Remove exported items</button>
   <button data-act="install" role="menuitem" id="installMenu" class="hidden">Install app</button>
   <button data-act="about" role="menuitem">About</button>
 </div>
 
+<nav class="tabs" id="tabs">
+  <button data-tab="home" class="on">Add &amp; export</button>
+  <button data-tab="inv">My inventory</button>
+</nav>
 <main>
+  <!-- INVENTORY (read-only copy from the PC) -->
+  <section id="inv" class="hidden">
+    <div id="invNone" class="card hidden">
+      <h2>Your inventory from the PC</h2>
+      <p class="muted">In OpenSafe on your PC, go to <b>Import Files → See your inventory on your phone</b> and save the file with a passphrase. Send it to this phone, then load it here.</p>
+      <label class="btn primary">📂 Load inventory file<input type="file" id="invFile" hidden></label>
+    </div>
+    <form id="invUnlock" class="card hidden" autocomplete="off">
+      <h2>🔒 Inventory locked</h2>
+      <p class="muted" id="invInfo"></p>
+      <label>Passphrase<input type="password" name="pass" autocomplete="current-password"></label>
+      <div id="invErr" class="error hidden"></div>
+      <button class="btn primary" type="submit">Open</button>
+    </form>
+    <div id="invOpen" class="hidden">
+      <div class="invbar"><input type="search" id="invQ" placeholder="Search your things…"><button class="btn" data-act="scanLabel">📷 Scan label</button></div>
+      <div class="muted small" id="invMeta"></div>
+      <div id="invList" class="list"></div>
+    </div>
+  </section>
+
   <!-- HOME -->
   <section id="home">
     <div id="installCard" class="card install hidden">
@@ -67,6 +94,7 @@
         <label>Model<input name="model" maxlength="200"></label>
       </div>
       <label>Serial number<input name="serial" maxlength="200" autocapitalize="characters"></label>
+      <label>Barcode<span class="withbtn"><input name="barcode" inputmode="numeric" maxlength="32"><button type="button" class="btn" data-act="scanBarcode">📷 Scan</button></span></label>
       <label>Condition<select name="condition"><option value="">—</option><option>New</option><option>Excellent</option><option>Good</option><option>Fair</option><option>Poor</option></select></label>
     </section>
     <section class="card">
@@ -101,6 +129,7 @@
 <button id="fab" class="fab" data-act="new">+ Add item</button>
 <div id="toast" class="toast hidden" role="status"></div>
 <div id="sheet" class="sheetwrap hidden"><div class="sheet" id="sheetBody"></div></div>
+<div id="scanner" class="scanner hidden"><video id="scanVideo" playsinline muted></video><div class="scanframe"></div><div class="scanmsg" id="scanMsg">Point the camera at the code</div><button class="btn" data-act="scanClose">Cancel</button></div>
 <datalist id="cats"></datalist>
 <datalist id="locs"></datalist>
 <script src="app.js"></script>

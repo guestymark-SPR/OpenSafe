@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol, Notification, Menu, clipboard, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, Notification, Menu, clipboard, nativeTheme, nativeImage, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -10,6 +10,8 @@ const { PhoneServer } = require('./phoneServer');
 const { buildReportHtml } = require('./report');
 const { buildClaimPack } = require('./claim');
 const ocr = require('./ocr');
+const phoneview = require('./phoneview');
+const { buildLabelsHtml } = require('./labels');
 const updater = require('./updater');
 const firewall = require('./firewall');
 
@@ -448,6 +450,69 @@ function registerIpc() {
     if (notIncluded.length) dialog.showMessageBox(win, { type: 'warning', title: 'Claim pack', message: 'Claim pack saved, but some files weren\'t included', detail: notIncluded.join('\n') + '\n\nUnlock the vault first to include vault files.' });
     shell.openPath(r.filePath);
     return { path: r.filePath, appended: pack.pdfs.length - failed.length, notIncluded };
+  });
+
+  // ---- phone: read-only inventory, QR labels, barcode lookup ----
+  h('export:phoneView', async (passphrase, includeVault) => {
+    const makeThumb = (buf) => {
+      const img = nativeImage.createFromBuffer(buf);
+      if (img.isEmpty()) return null;
+      const { width, height } = img.getSize();
+      const small = width > height ? img.resize({ width: Math.min(360, width), quality: 'good' }) : img.resize({ height: Math.min(360, height), quality: 'good' });
+      return 'data:image/jpeg;base64,' + small.toJPEG(72).toString('base64');
+    };
+    const view = phoneview.buildView(store, { includeVault: !!includeVault && store.vaultUnlocked(), makeThumb });
+    const text = phoneview.encryptView(view, String(passphrase || ''));
+    const r = await dialog.showSaveDialog(win, {
+      title: 'Save inventory for your phone',
+      defaultPath: path.join(app.getPath('documents'), `OpenSafe-inventory-${new Date().toISOString().slice(0, 10)}.opensafe-view`),
+      filters: [{ name: 'OpenSafe inventory', extensions: ['opensafe-view'] }]
+    });
+    if (r.canceled || !r.filePath) return null;
+    fs.writeFileSync(r.filePath, text, 'utf8');
+    shell.showItemInFolder(r.filePath);
+    return { path: r.filePath, count: view.count, kb: Math.round(text.length / 1024) };
+  });
+
+  h('export:labels', async (ids, opts) => {
+    if (!Array.isArray(ids) || !ids.length) throw new Error('Choose at least one item.');
+    const html = await buildLabelsHtml(store, ids.map(String), opts || {});
+    const r = await dialog.showSaveDialog(win, {
+      title: 'Save QR labels',
+      defaultPath: path.join(app.getPath('documents'), `OpenSafe-labels-${new Date().toISOString().slice(0, 10)}.pdf`),
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    });
+    if (r.canceled || !r.filePath) return null;
+    fs.mkdirSync(OPEN_DIR, { recursive: true });
+    const tmp = path.join(OPEN_DIR, `labels-${Date.now()}.html`);
+    fs.writeFileSync(tmp, html, 'utf8');
+    const pw = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, javascript: false } });
+    try {
+      await pw.loadFile(tmp);
+      fs.writeFileSync(r.filePath, await pw.webContents.printToPDF({ pageSize: 'A4', printBackground: true, margins: { marginType: 'none' }, preferCSSPageSize: true }));
+    } finally { pw.destroy(); fs.rm(tmp, () => {}); }
+    shell.openPath(r.filePath);
+    return r.filePath;
+  });
+
+  h('barcode:lookup', async (code) => {
+    const upc = String(code || '').replace(/\D/g, '');
+    if (upc.length < 8 || upc.length > 14) throw new Error('That doesn\'t look like a product barcode (8 to 14 digits).');
+    let res;
+    try { res = await net.fetch(`https://api.upcitemdb.com/prod/trial/lookup?upc=${upc}`, { headers: { Accept: 'application/json' } }); }
+    catch (_) { throw new Error('Couldn\'t reach the product database. Check your internet connection.'); }
+    let body = null; try { body = await res.json(); } catch (_) {}
+    const errCode = body && body.code;
+    if (res.status === 429) {
+      if (errCode === 'EXCEED_LIMIT') throw new Error('The free product database allows 100 lookups a day, and that limit has been reached. Try again tomorrow.');
+      throw new Error('Too many lookups in a short time (the free database allows about 6 a minute). Wait a minute and try again.');
+    }
+    if (errCode === 'INVALID_UPC') throw new Error('The product database says that isn\'t a valid barcode number.');
+    if (res.status >= 500) throw new Error('The product database isn\'t working right now. Try again later.');
+    const it = body && Array.isArray(body.items) && body.items[0];
+    if (!res.ok || !it) return null;
+    const clip = (v, n) => String(v || '').trim().slice(0, n);
+    return { title: clip(it.title, 200), brand: clip(it.brand, 64), model: clip(it.model, 64), category: clip(it.category, 200), source: 'UPCitemdb' };
   });
 
   h('ocr:receipt', async (assetId, file) => {
