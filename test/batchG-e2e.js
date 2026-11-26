@@ -37,13 +37,13 @@ let started = false;
 app.on('browser-window-created', (_e, win) => {
   if (started) return; started = true;
   win.webContents.once('did-finish-load', async () => {
-    const js = (code) => win.webContents.executeJavaScript(code);
+    const js = (code) => win.webContents.executeJavaScript(code).catch(() => { throw new Error('Step failed: ' + code.slice(0, 140)); });
     const shot = async (name) => { await wait(600); fs.writeFileSync(path.join(OUT, name + '.png'), (await win.webContents.capturePage()).toPNG()); };
     const prefs = () => JSON.parse(fs.readFileSync(path.join(dir, 'prefs.json'), 'utf8'));
     const R = {};
     try {
       win.setSize(1320, 900); await wait(1200);
-      await js(`{ const f = document.querySelector('#lockForm, form'); f.querySelector('input[type=password]').value = 'a good long password'; f.requestSubmit(); }`); await wait(2500);
+      await js(`{ const f = document.getElementById('unlockForm'); f.querySelector('input[type=password]').value = 'a good long password'; f.requestSubmit(); }`); await wait(2500);
       // premium history
       await js(`document.querySelector('[data-nav=policies]').click()`); await wait(400);
       await js(`document.querySelector('[data-action=polRenew]').click()`); await wait(300);

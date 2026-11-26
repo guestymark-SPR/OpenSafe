@@ -65,9 +65,7 @@
     const b = $('#remBadge'); b.textContent = rem; b.classList.toggle('hidden', !rem);
     const sec = state.snap.security;
     $('#lockBtn').classList.toggle('hidden', !sec.encrypted);
-    $('#vaultNav').classList.toggle('hidden', !sec.vault.exists);
     $('#vaultState').textContent = sec.vault.exists ? (sec.vault.unlocked ? 'open' : 'locked') : '';
-    if (state.view === 'vault' && !sec.vault.exists) state.view = 'settings';
     render();
   }
 
@@ -355,9 +353,13 @@
   // ---------- vault screen ----------
   function viewVault() {
     const sec = state.snap.security;
+    if (!sec.vault.exists) return `<div class="head"><h1>Vault</h1></div>
+      <div class="card" style="max-width:640px"><h2>${icon('lock')}A second lock for sensitive things</h2>
+        <p class="muted">The vault keeps chosen items and single files (ID scans, logbooks, valuables) behind a separate PIN, on top of OpenSafe's password. Vault items stay hidden from lists, reports and the phone until you open the vault.</p>
+        ${sec.encrypted ? '<button class="btn primary" data-action="vaultSetup">Set up the vault…</button>' : '<p class="note">Turn on password protection first, in <a href="#" data-nav="settings">Settings</a>. The vault needs it.</p>'}</div>`;
     if (!sec.vault.unlocked) {
       return `<div class="head"><h1>Vault</h1></div>
-      <div class="card pinbox"><h2>🔒 The vault is locked</h2>
+      <div class="card pinbox"><h2>${icon('lock')}The vault is locked</h2>
         <p class="muted">Enter your vault PIN to see the items and files you keep in it.</p>
         <form id="vaultForm" style="display:grid;gap:12px"><input name="pin" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="PIN" aria-label="Vault PIN">
         <div class="err" id="vaultErr"></div>
@@ -367,14 +369,14 @@
     const items = state.snap.data.assets.filter(a => a.inVault);
     const files = [];
     for (const a of state.snap.data.assets) if (!a.inVault) for (const r of [...a.photos, ...a.documents]) if (r.vaultFile) files.push({ a, r });
-    return `<div class="head"><h1>Vault</h1><span class="sub">open</span><span class="spacer"></span><button class="btn" data-action="vaultLock">🔒 Lock vault</button></div>
+    return `<div class="head"><h1>Vault</h1><span class="sub">open</span><span class="spacer"></span><button class="btn" data-action="vaultLock">${icon('lock')}Lock vault</button></div>
       <p class="muted" style="margin-top:-8px">Vault items and files have their own encryption key. They're hidden, and left out of totals and reports, whenever the vault is locked. It locks when you close or lock OpenSafe.</p>
       <div class="card" style="margin-bottom:16px"><h2>Items in the vault (${items.length})</h2>
         ${items.length ? `<div class="rows">${items.map(a => `<div class="rowi" data-open="${a.id}">${thumb(a)}<div style="flex:1"><div class="name">${esc(a.name)}</div><div class="meta">${esc([a.category, a.location].filter(Boolean).join(' · '))}</div></div><span class="meta">${value(a) ? money(value(a)) : ''}</span></div>`).join('')}</div>`
-          : '<div class="muted">None yet. Open an item and choose <b>🔒 Move to vault</b>.</div>'}</div>
+          : '<div class="muted">None yet. Open an item and choose <b>More → Move to the vault</b>.</div>'}</div>
       <div class="card"><h2>Single files in the vault (${files.length})</h2>
         ${files.length ? `<div class="rows">${files.map(({ a, r }) => `<div class="rowi" data-open="${a.id}" data-opentab="${a.photos.includes(r) ? 'photos' : 'docs'}"><span style="flex:1"><b>${esc(r.name)}</b> <span class="meta">in ${esc(a.name)}</span></span><span class="pill vault">🔒</span></div>`).join('')}</div>`
-          : '<div class="muted">None yet. On an item\'s Photos or Documents tab, choose <b>🔒 To vault</b> on a file, such as an ID scan, a logbook or a receipt.</div>'}</div>`;
+          : '<div class="muted">None yet. On an item\'s Photos or Documents tab, choose <b>To vault</b> on a file, such as an ID scan, a logbook or a receipt.</div>'}</div>`;
   }
 
   // ---------- security modals ----------
@@ -431,7 +433,7 @@
     const v = sec.vault;
     return `<div class="card"><h2>Password protection</h2>
       <p><span class="pill good">On</span> Your items, photos, receipts and daily backups are encrypted.</p>
-      <div class="secrow"><span>Lock OpenSafe now</span><button class="btn small" data-action="lockApp">🔒 Lock</button></div>
+      <div class="secrow"><span>Lock OpenSafe now</span><button class="btn small" data-action="lockApp">${icon('lock')}Lock</button></div>
       <div class="secrow"><span>Change password</span><button class="btn small" data-action="secChangePw">Change…</button></div>
       <div class="secrow"><span>Make a new recovery key <span class="faint">(the old one stops working)</span></span><button class="btn small" data-action="secNewRk">New key…</button></div>
       <div class="secrow"><span>Turn off password protection</span><button class="btn small danger" data-action="secDisable">Turn off…</button></div>
@@ -472,14 +474,15 @@
     const p = cover(a);
     return p ? `<img class="${cls}" src="${img(a, p)}" alt="" loading="lazy">` : `<div class="${cls} ph">▣</div>`;
   }
-  const vaultPill = (a) => a.inVault ? '<span class="pill vault">🔒 Vault</span>' : '';
+  const vaultPill = (a) => a.inVault ? `<span class="pill vault">${icon('lock')}Vault</span>` : '';
 
   // ---------- render ----------
   function render() {
     if (!state.snap) return;
-    $$('#nav button').forEach(b => b.classList.toggle('on', b.dataset.nav === (state.view === 'item' || state.view === 'bin' ? 'items' : state.view)));
+    const navView = state.view === 'item' || state.view === 'bin' ? 'items' : state.view;
+    $$('.side [data-nav]').forEach(b => b.classList.toggle('on', b.dataset.nav === navView));
     const v = $('#view');
-    const views = { dashboard: viewDashboard, items: viewItems, item: viewItem, reminders: viewReminders, phone: viewPhone, reports: viewReports, settings: viewSettings, vault: viewVault, policies: viewPolicies, bin: viewBin, trips: viewTrips };
+    const views = { dashboard: viewDashboard, items: viewItems, item: viewItem, reminders: viewReminders, phone: viewPhone, reports: viewReports, settings: viewSettings, vault: viewVault, policies: viewPolicies, bin: viewBin, trips: viewTrips, places: viewPlaces, data: viewData };
     v.innerHTML = (views[state.view] || viewDashboard)();
     if (state.view === 'phone') { loadCapture(); loadPhone(); const d = $('#wifiDetails'); if (d) d.ontoggle = () => { state.wifiOpen = d.open; }; }
     if (state.view === 'item') wireDrop();
@@ -506,45 +509,40 @@
     const locs = Object.entries(s.byLocation || {}).filter(([p]) => p !== 'No location').sort((a, b) => a[0].localeCompare(b[0], 'en-GB'));
     const recent = assets.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 6);
     const rem = state.snap.reminders.slice(0, 6);
-    return `<div class="head"><h1>Dashboard</h1><span class="sub">${s.count} active item${s.count === 1 ? '' : 's'}</span></div>
+    const gapsN = { serial: s.noSerial, receipt: s.noReceipt, insurer: s.uninsured, photo: assets.filter(a => !INACTIVE.includes(a.status) && a.status !== 'Borrowed' && !a.photos.length).length };
+    const topLocs = locs.filter(([p]) => p.split(' / ').length <= 2).slice(0, 8);
+    return `<div class="head"><h1>Home</h1><span class="sub">${s.count} item${s.count === 1 ? '' : 's'}</span></div>
     <div class="grid g4" style="margin-bottom:16px">
-      <div class="card stat"><div class="lbl">Value now</div><div class="num">${money0(s.currentTotal)}</div><div class="foot">${s.estimatedCount ? `${s.estimatedCount} estimated from the yearly drop; others use price paid if no value is set` : 'Uses price paid where no value is set'}</div></div>
-      <div class="card stat"><div class="lbl">Total paid</div><div class="num">${money0(s.purchaseTotal)}</div><div class="foot">Active items only</div></div>
-      <div class="card stat"><div class="lbl">Insured value recorded</div><div class="num">${money0(s.insuredTotal)}</div><div class="foot">${s.uninsured} item${s.uninsured === 1 ? '' : 's'} with no insurer</div></div>
-      <div class="card stat"><div class="lbl">Items</div><div class="num">${s.count}</div><div class="foot">${s.totalCount - s.count - (s.borrowedCount || 0)} sold, given away or lost${s.borrowedCount ? ` · ${s.borrowedCount} borrowed, not counted` : ''}</div></div>
+      <div class="card stat"><div class="lbl">Value now</div><div class="num">${money0(s.currentTotal)}</div><div class="foot">${s.estimatedCount ? `${s.estimatedCount} estimated; price paid where no value is set` : 'Price paid where no value is set'}</div></div>
+      <div class="card stat"><div class="lbl">Total paid</div><div class="num">${money0(s.purchaseTotal)}</div><div class="foot">For the things you have now</div></div>
+      <div class="card stat"><div class="lbl">Insured value</div><div class="num">${money0(s.insuredTotal)}</div><div class="foot">${s.uninsured ? `${s.uninsured} item${s.uninsured === 1 ? '' : 's'} with no insurer` : 'Everything has an insurer'}</div></div>
+      <div class="card stat"><div class="lbl">Items</div><div class="num">${s.count}</div><div class="foot">${s.totalCount - s.count - (s.borrowedCount || 0)} sold, given away or lost${s.borrowedCount ? ` · ${s.borrowedCount} borrowed` : ''}</div></div>
     </div>
-    <div class="grid g3">
-      <div class="card"><h2>Value by category</h2>
-        <div class="bars">${cats.map(([c, d]) => `
-          <div class="barrow" data-action="filterCat" data-cat="${esc(c)}" title="${esc(c)}: ${money(d.value)} across ${d.count} item${d.count === 1 ? '' : 's'}">
-            <span class="lab">${esc(c)} <span class="faint">(${d.count})</span></span>
-            <span class="track"><span class="fill" style="width:${(d.value / max * 100).toFixed(1)}%;display:block"></span></span>
-            <span class="v">${money0(d.value)}</span></div>`).join('')}
-        </div>
-      </div>
-      <div class="grid" style="align-content:start">
-        ${locs.length ? `<div class="card"><h2>Where things are</h2><div class="loctree">${locs.map(([p, d]) => `<div class="rowi" data-action="filterLoc" data-loc="${esc(p)}" title="Show items in ${esc(p)}"><span style="flex:1">${esc(locLabel(p))}${((state.snap.data.places || {})[p] || { files: [] }).files.length ? ' <span title="Photos and videos of this place">🎥</span>' : ''}</span><span class="meta nowrap">${d.count} · ${money0(d.value)}</span></div>`).join('')}</div></div>` : ''}
-        <div class="card"><h2>Coming up</h2>
+    <div class="dash">
+      <div class="dash-main">
+        <div class="card"><h2>${icon('bell')}Coming up<span class="spacer"></span><a href="#" class="meta" data-nav="reminders" style="font-weight:500">All reminders</a></h2>
           ${rem.length ? `<div class="rows">${rem.map(r => `<div class="rowi" ${r.policyId ? 'data-nav="policies"' : `data-open="${r.assetId}"`}>
               <span class="pill ${r.daysLeft < 0 ? 'bad' : 'warn'}">${esc(r.kind)}</span>
               <span style="flex:1">${esc(r.assetName)}</span><span class="meta nowrap">${dueText(r.daysLeft)}</span></div>`).join('')}</div>`
-            : '<div class="muted">Nothing due in the next ' + state.snap.data.settings.reminderDays + ' days.</div>'}
-        </div>
-        <div class="card"><h2>Gaps to fill</h2>
-          <div class="gap"><span>No serial number</span><button class="btn small" data-action="gap" data-gap="serial">${s.noSerial}</button></div>
-          <div class="gap"><span>No receipt attached</span><button class="btn small" data-action="gap" data-gap="receipt">${s.noReceipt}</button></div>
-          <div class="gap"><span>No insurer recorded</span><button class="btn small" data-action="gap" data-gap="insurer">${s.uninsured}</button></div>
-          <div class="gap"><span>No photo</span><button class="btn small" data-action="gap" data-gap="photo">${assets.filter(a => !INACTIVE.includes(a.status) && a.status !== 'Borrowed' && !a.photos.length).length}</button></div>
-        </div>
+            : '<div class="muted">Nothing due in the next ' + state.snap.data.settings.reminderDays + ' days.</div>'}</div>
+        <div class="card"><h2>${icon('chart')}Value by category</h2>
+          <div class="bars">${cats.map(([c, d]) => `
+            <div class="barrow" data-action="filterCat" data-cat="${esc(c)}" title="${esc(c)}: ${money(d.value)} across ${d.count} item${d.count === 1 ? '' : 's'}">
+              <span class="lab">${esc(c)} <span class="faint">(${d.count})</span></span>
+              <span class="track"><span class="fill" style="width:${(d.value / max * 100).toFixed(1)}%;display:block"></span></span>
+              <span class="v">${money0(d.value)}</span></div>`).join('')}</div></div>
+        <div class="card"><h2>${icon('box')}Recently added<span class="spacer"></span><a href="#" class="meta" data-nav="items" style="font-weight:500">All items</a></h2>
+          <div class="rows">${recent.map(a => `<div class="rowi" data-open="${a.id}">${thumb(a)}
+            <div style="flex:1;min-width:0"><div class="name">${esc(a.name)}</div><div class="meta">${esc([a.category, a.location].filter(Boolean).join(' · '))}</div></div>
+            ${a.source === 'phone' ? '<span class="pill acc">from phone</span>' : ''}<span class="meta nowrap">${ukDate(a.createdAt.slice(0, 10))}</span></div>`).join('')}</div></div>
+        ${recallsCard()}
       </div>
-    </div>
-    ${Object.keys(s.byOwner || {}).length ? `<div class="card" style="margin-top:16px"><h2>Who owns what</h2><div class="rows">${Object.entries(s.byOwner).sort((x, y) => y[1].value - x[1].value).map(([p, v]) => `<div class="rowi" data-action="filterOwner" data-owner="${esc(p)}"><span style="flex:1">${esc(p)}</span><span class="meta">${v.count} · ${money0(v.value)}</span></div>`).join('')}</div><div class="faint" style="margin-top:6px">Items with no owner set count as yours.</div></div>` : ''}
-    ${recallsCard()}
-    <div class="card" style="margin-top:16px"><h2>Recently added</h2>
-      <div class="rows">${recent.map(a => `<div class="rowi" data-open="${a.id}">${thumb(a)}
-        <div style="flex:1"><div class="name">${esc(a.name)}</div><div class="meta">${esc([a.category, a.location].filter(Boolean).join(' · '))}</div></div>
-        ${a.source === 'phone' ? '<span class="pill acc">from phone</span>' : ''}
-        <span class="meta nowrap">${ukDate(a.createdAt.slice(0, 10))}</span></div>`).join('')}</div>
+      <div class="dash-side">
+        <div class="card"><h2>${icon('check')}Gaps to fill</h2>
+          ${[['serial', 'No serial number'], ['receipt', 'No receipt'], ['insurer', 'No insurer'], ['photo', 'No photo']].map(([k, l]) => `<div class="gap" ${gapsN[k] ? `data-action="gap" data-gap="${k}" style="cursor:pointer"` : ''}><span>${l}</span><span class="pill ${gapsN[k] ? 'warn' : 'good'}">${gapsN[k] || icon('check')}</span></div>`).join('')}</div>
+        ${topLocs.length ? `<div class="card"><h2>${icon('pin')}Places<span class="spacer"></span><a href="#" class="meta" data-nav="places" style="font-weight:500">All places</a></h2><div class="rows">${topLocs.map(([p, d]) => `<div class="rowi" data-action="goPlace" data-place="${esc(p)}"><span style="flex:1">${esc(locLabel(p))}</span><span class="meta nowrap">${d.count} · ${money0(d.value)}</span></div>`).join('')}</div></div>` : ''}
+        ${Object.keys(s.byOwner || {}).length ? `<div class="card"><h2>${icon('users')}Who owns what</h2><div class="rows">${Object.entries(s.byOwner).sort((x, y) => y[1].value - x[1].value).map(([p, v]) => `<div class="rowi" data-action="filterOwner" data-owner="${esc(p)}"><span style="flex:1">${esc(p)}</span><span class="meta">${v.count} · ${money0(v.value)}</span></div>`).join('')}</div><div class="faint" style="margin-top:6px">Items with no owner count as yours.</div></div>` : ''}
+      </div>
     </div>`;
   }
 
@@ -563,6 +561,7 @@
       if (f.gap === 'photo' && a.photos.length) return false;
       if (f.gap && f.gap !== 'grab' && a.status === 'Borrowed') return false; // gaps are about your own things
       if (f.gap === 'grab' && !a.grab) return false;
+      if (f.gap === 'noloc' && a.location) return false;
       if (q) {
         const d = a.details || {};
         const hay = [a.name, a.brand, a.model, a.serial, a.barcode, a.category, a.location, a.notes, a.supplier, a.tags.join(' '), a.lentTo, a.lentContact, a.soldTo, a.insurer, a.policyNumber,
@@ -587,7 +586,7 @@
     const f = state.f, d = state.snap.data;
     const list = filtered();
     const total = list.reduce((t, a) => t + (a.status === 'Borrowed' ? 0 : value(a)), 0); // borrowed things aren't yours
-    const gapNames = { serial: 'no serial number', receipt: 'no receipt', insurer: 'no insurer', photo: 'no photo' };
+    const gapNames = { serial: 'no serial number', receipt: 'no receipt', insurer: 'no insurer', photo: 'no photo', noloc: 'no location set' };
     const toolbar = `<div class="toolbar">
       <input type="search" id="q" placeholder="Search name, serial, barcode, reg, who has it, notes…" value="${esc(f.q)}">
       <select data-f="category">${opt('', 'All categories', f.category)}${d.categories.map(c => opt(c, c, f.category)).join('')}</select>
@@ -599,7 +598,7 @@
       <span class="seg"><button data-layout="table" class="${f.layout === 'table' ? 'on' : ''}">List</button><button data-layout="grid" class="${f.layout === 'grid' ? 'on' : ''}">Photos</button></span>
     </div>
     ${f.gap ? `<div style="margin:-4px 0 12px"><span class="pill warn">${f.gap === 'grab' ? 'Showing the grab list' : `Showing items with ${gapNames[f.gap]}`}</span> <button class="btn small" data-action="clearGap">Clear</button></div>` : ''}`;
-    const head = `<div class="head"><h1>Items</h1><span class="sub">${list.length} shown · ${money0(total)}</span><span class="spacer"></span><button class="btn" data-action="findDupes" title="Find items entered twice">Duplicates…</button>${(state.snap.data.bin || []).length ? `<button class="btn" data-nav="bin">🗑 Deleted items (${state.snap.data.bin.length})</button>` : ''}<button class="btn" data-action="importPick">Import from phone…</button><button class="btn primary" data-action="new">+ Add item</button></div>`;
+    const head = `<div class="head"><h1>Items</h1><span class="sub">${list.length} shown · ${money0(total)}</span><span class="spacer"></span><button class="btn" data-action="findDupes" title="Find items entered twice">${icon('duplicate')}Duplicates…</button>${(state.snap.data.bin || []).length ? `<button class="btn" data-nav="bin">${icon('trash')}Deleted items (${state.snap.data.bin.length})</button>` : ''}<button class="btn primary" data-action="new">${icon('plus')}Add item</button></div>`;
     if (!list.length) return head + toolbar + `<div class="card empty">${d.assets.length ? 'No items match these filters.' : 'No items yet. Add one here or from your phone.'}</div>`;
     if (f.layout === 'grid') {
       return head + toolbar + `<div class="cards">${list.map(a => `<div class="icard" data-open="${a.id}">
@@ -610,7 +609,8 @@
     for (const id of [...state.sel]) if (!state.snap.data.assets.some(a => a.id === id)) state.sel.delete(id);
     const allOn = ids.length && ids.every(id => state.sel.has(id));
     const selBar = state.sel.size ? `<div class="selbar"><b>${state.sel.size} selected</b><button class="btn primary small" data-action="bulkSel">Change…</button><button class="btn small" data-action="claimSel">Claim pack…</button><button class="btn small" data-action="labelsSel">QR labels…</button><button class="btn small danger" data-action="deleteSel">Delete…</button><button class="btn small" data-action="selClear">Clear selection</button></div>` : '';
-    return head + toolbar + placeCard(f.location) + selBar + `<table class="list"><thead><tr><th style="width:34px"><input type="checkbox" class="selall" title="Select all shown" ${allOn ? 'checked' : ''}></th><th style="width:60px"></th><th>Item</th><th>Category</th><th>Location</th><th>Serial no.</th><th>Bought</th><th class="r">Value now</th><th></th></tr></thead><tbody>
+    const placeLink = f.location ? `<div class="meta" style="margin:-6px 0 12px">Showing items in <b>${esc(f.location)}</b> and anything inside it · <a href="#" data-action="goPlace" data-place="${esc(f.location)}">Photos, videos and label for this place</a></div>` : '';
+    return head + toolbar + placeLink + selBar + `<table class="list"><thead><tr><th style="width:34px"><input type="checkbox" class="selall" title="Select all shown" ${allOn ? 'checked' : ''}></th><th style="width:60px"></th><th>Item</th><th>Category</th><th>Location</th><th>Serial no.</th><th>Bought</th><th class="r">Value now</th><th></th></tr></thead><tbody>
       ${list.map(a => `<tr data-open="${a.id}"><td><input type="checkbox" class="selbox" data-id="${a.id}" ${state.sel.has(a.id) ? 'checked' : ''} aria-label="Select ${esc(a.name)}"></td><td>${thumb(a)}</td>
         <td><div class="name">${esc(a.name)}${partsOf(a.id).length ? ` <span class="pill">Set of ${partsOf(a.id).length + 1}</span>` : ''}</div><div class="meta">${esc([a.brand, a.model].filter(Boolean).join(' '))}${a.partOf && asset(a.partOf) ? `${a.brand || a.model ? ' · ' : ''}Part of ${esc(asset(a.partOf).name)}` : ''}</div></td>
         <td>${esc(a.category)}</td><td>${esc(a.location)}</td><td class="mono">${esc(a.serial) || '<span class="faint">—</span>'}</td>
@@ -623,7 +623,7 @@
     const sec = state.snap.security;
     if (!sec.vault.exists) return '';
     if (a.inVault) return '<button class="btn" data-action="vaultOut">Move out of vault</button>';
-    return `<button class="btn" data-action="vaultIn">🔒 Move to vault</button>`;
+    return `<button class="btn" data-action="vaultIn">${icon('lock')}Move to vault</button>`;
   }
   function fileVaultBtn(a, r, isDoc) {
     const sec = state.snap.security;
@@ -639,7 +639,7 @@
       return `<div class="card" style="margin-top:14px"><h2>Part of a set</h2>${main ? `<div class="rows"><div class="rowi" data-open="${main.id}">${thumb(main)}<span style="flex:1"><b>${esc(main.name)}</b></span><span class="meta">${partsOf(main.id).length + 1} items in the set</span></div></div>` : '<div class="muted">The main item is in the locked vault.</div>'}</div>`;
     }
     const parts = partsOf(a.id);
-    if (!parts.length) return `<div class="card" style="margin-top:14px;display:flex;align-items:center;gap:12px"><span class="muted" style="flex:1">Group the things that go with this item, such as batteries and a charger, or a tender and outboard. Claim packs then include them all.</span><button class="btn small" data-action="pickParts">Add parts…</button></div>`;
+    if (!parts.length) return `<div class="card sidecard"><div class="dsec-h">Set</div><p class="muted">Group what goes with it, like batteries and a charger. Claim packs include them all.</p><button class="btn small" data-action="pickParts">${icon('plus')}Add parts…</button></div>`;
     const total = parts.reduce((t, x) => t + value(x), value(a));
     return `<div class="card" style="margin-top:14px"><h2 style="display:flex;align-items:center">Parts in this set (${parts.length})<span class="spacer"></span><span class="meta" style="font-weight:500;margin-right:10px">Whole set: ${money(total)}</span><button class="btn small" data-action="pickParts">Change parts…</button></h2>
       <div class="rows">${parts.map(x => `<div class="rowi" data-open="${x.id}">${thumb(x)}<span style="flex:1"><b>${esc(x.name)}</b> <span class="meta">${esc([x.brand, x.model].filter(Boolean).join(' '))}</span>${x.serial ? ` <span class="mono meta">${esc(x.serial)}</span>` : ''}</span><span class="meta">${value(x) ? money(value(x)) : ''}</span></div>`).join('')}</div></div>`;
@@ -647,7 +647,7 @@
   function valueCard(a) {
     const h = (a.valueHistory || []).map((v, i) => Object.assign({ i }, v)).sort((x, y) => y.date.localeCompare(x.date) || y.i - x.i); // newest first; same day: latest added first
     const paid = a.purchasePrice !== null && a.purchasePrice !== undefined && a.purchaseDate ? { date: a.purchaseDate, value: a.purchasePrice } : null;
-    if (!h.length) return `<div class="card" style="margin-top:14px;display:flex;align-items:center;gap:12px"><span class="muted" style="flex:1">Value history: none yet. Each time you change the value it's recorded here with the date. You can also add a valuation, for example from a jeweller or dealer.</span><button class="btn small" data-action="addValuation">Add valuation…</button></div>`;
+    if (!h.length) return `<div class="card sidecard"><div class="dsec-h">Value history</div><p class="muted">Each change of value is recorded here with the date. Add a valuation from a jeweller or dealer.</p><button class="btn small" data-action="addValuation">${icon('plus')}Add valuation…</button></div>`;
     return `<div class="card" style="margin-top:14px"><h2 style="display:flex;align-items:center">Value history<span class="spacer"></span><button class="btn small" data-action="addValuation">Add valuation…</button></h2>
       <table class="list"><thead><tr><th>Date</th><th class="r">Value</th><th class="r">Change</th><th>Note</th><th></th></tr></thead><tbody>
       ${h.map((v, i) => { const prev = h[i + 1] || paid; const ch = prev ? v.value - prev.value : null; return `<tr><td class="nowrap">${ukDate(v.date)}</td><td class="r nowrap">${money(v.value)}</td><td class="r nowrap ${ch < 0 ? 'neg' : ''}">${ch === null || ch === 0 ? '' : (ch > 0 ? '+' : '−') + money(Math.abs(ch))}</td><td>${esc(v.note)}</td><td class="r"><button class="btn small danger" data-action="rmValuation" data-vid="${v.id}">Delete</button></td></tr>`; }).join('')}
@@ -725,33 +725,41 @@
     const tabs = [['overview', 'Details'], ['photos', `Photos (${a.photos.length})`], ['docs', `Documents (${a.documents.length})`], ['service', `Service log (${a.service.length})`]];
     let body = '';
     if (t === 'overview') {
-      body = `<div class="card"><div class="kv">
-        ${kv('Category', esc(a.category))}${kv('Location', esc(a.location))}${kv('Status', esc(a.status))}
-        ${kv('Brand', esc(a.brand))}${kv('Model', esc(a.model))}${kv('Serial number', a.serial ? `<span class="mono">${esc(a.serial)}</span>` : '')}
-        ${kv('Bought on', a.purchaseDate ? ukDate(a.purchaseDate) : '')}${kv('Bought from', esc(a.supplier))}${kv('Condition', esc(a.condition))}
-        ${kv('Price paid', a.purchasePrice !== null ? money(a.purchasePrice) + (a.foreignCurrency && a.foreignPrice !== null ? ` <span class="faint">(${esc(a.fxRate ? fxText(a) : fxMoney(a.foreignCurrency, a.foreignPrice))})</span>` : '') : a.foreignCurrency && a.foreignPrice !== null ? esc(fxMoney(a.foreignCurrency, a.foreignPrice)) : '')}${kv('Value now', a.currentValue !== null ? money(a.currentValue) : estimate(a) !== null ? `≈ ${money(estimate(a))} <span class="faint">estimated (${esc(a.category)}: ${state.snap.data.settings.depreciation[a.category]}% a year)</span>` : '')}${kv('Warranty until', a.warrantyExpiry ? ukDate(a.warrantyExpiry) + ' ' + warrantyPill(a) : '')}
-        ${(() => { const pol = (state.snap.data.policies || []).find(p => p.id === a.policyId); return pol
-          ? kv('Insured by', `<a href="#" data-nav="policies">${esc(pol.insurer)}</a>${pol.type ? ' · ' + esc(pol.type) : ''}`) + kv('Policy number', esc(pol.policyNumber)) + kv('Insured value', a.insuredValue !== null ? money(a.insuredValue) : '')
-          : kv('Insurer', esc(a.insurer)) + kv('Policy number', esc(a.policyNumber)) + kv('Insured value', a.insuredValue !== null ? money(a.insuredValue) : ''); })()}
-        ${kv('Tags', a.tags.map(x => `<span class="pill">${esc(x)}</span>`).join(''))}${kv('Added', ukDate(a.createdAt.slice(0, 10)) + (a.source === 'phone' ? ' from phone' : ''))}${kv('Last changed', ukDate(a.updatedAt.slice(0, 10)))}
-      ${a.webLink ? kv('Web page', `<a href="#" data-action="openLink" title="${esc(a.webLink)}">${esc((() => { try { const u = new URL(a.webLink); return u.hostname.replace(/^www\./, '') + (u.pathname.length > 1 ? u.pathname.slice(0, 28) + (u.pathname.length > 28 ? '…' : '') : ''); } catch (_) { return a.webLink; } })())}</a> <button class="btn small" data-action="openLink">Open</button>`) : ''}
-      ${a.barcode ? kv('Barcode', `<span class="mono">${esc(a.barcode)}</span> <button class="btn small" data-action="bcLookup">Look up</button>`) : ''}
-      ${a.owner ? kv('Owner', esc(a.owner)) : ''}
-      ${a.status === 'Borrowed' ? kv('Belongs to', esc(a.borrowedFrom)) + kv('Their contact', esc(a.borrowedContact)) + kv('Give back by', a.returnBy ? ukDate(a.returnBy) : '') : ''}
-      ${a.status === 'Lent out' ? kv('Lent to', esc(a.lentTo)) + kv('Contact', esc(a.lentContact)) + kv('Lent on', a.lentDate ? ukDate(a.lentDate) : '') + kv('Due back', a.dueBack ? ukDate(a.dueBack) : '') : ''}
-      ${a.status === 'Sold' ? kv('Sold on', a.soldDate ? ukDate(a.soldDate) : '') + kv('Sold for', a.soldPrice !== null && a.soldPrice !== undefined ? money(a.soldPrice) : '') + kv('Sold to', esc(a.soldTo)) : ''}
-      </div>${a.notes ? `<div class="notes">${esc(a.notes)}</div>` : ''}</div>
-      ${(() => { if (a.purchaseDate || (state.snap.data.dismissedHints || []).includes(a.id)) return ''; const d = a.photos.map(p => p.takenAt).filter(Boolean).sort()[0]; return d ? `<div class="card" style="margin-top:14px;display:flex;align-items:center;gap:12px;background:var(--surface2)"><span style="flex:1">📷 The first photo of this item was taken on <b>${ukDate(d)}</b>. Use that as the date bought? It's only a guess: check it if you can.</span><button class="btn small primary" data-action="useDateHint" data-date="${d}">Use ${ukDate(d)}</button><button class="btn small" data-action="dismissDateHint">No thanks</button></div>` : ''; })()}
-      ${setCard(a)}
-      ${valueCard(a)}
-      ${a.details && a.details.kind ? `<div class="card" style="margin-top:14px"><h2>${a.details.kind === 'boat' ? 'Boat details' : 'Vehicle details'}</h2><div class="kv">
-        ${DETAIL_UI[a.details.kind].map(([k, label, type]) => kv(label, a.details[k] ? (type === 'date' ? ukDate(a.details[k]) + dueSoon(a.details[k]) : `<span class="${/vin|hin|engineNo|reg|sso|mmsi/.test(k) ? 'mono' : ''}">${esc(a.details[k])}</span>`) : '')).join('')}
-      </div></div>` : ''}`;
+      // Only filled-in details are shown, in sections; the important missing ones are listed once.
+      const row = (k, v) => v ? `<div><div class="k">${k}</div><div class="v">${v}</div></div>` : '';
+      const section = (title, html) => html.trim() ? `<div class="dsec"><div class="dsec-h">${title}</div><div class="kv">${html}</div></div>` : '';
+      const pol = (state.snap.data.policies || []).find(p => p.id === a.policyId);
+      const web = a.webLink ? `<a href="#" data-action="openLink" title="${esc(a.webLink)}">${esc((() => { try { const u = new URL(a.webLink); return u.hostname.replace(/^www\./, '') + (u.pathname.length > 1 ? u.pathname.slice(0, 24) + (u.pathname.length > 24 ? '…' : '') : ''); } catch (_) { return a.webLink; } })())}</a>` : '';
+      const item = row('Category', esc(a.category)) + row('Brand', esc(a.brand)) + row('Model', esc(a.model)) + row('Serial number', a.serial ? `<span class="mono">${esc(a.serial)}</span>` : '')
+        + row('Barcode', a.barcode ? `<span class="mono">${esc(a.barcode)}</span> <button class="btn small ghost" data-action="bcLookup">Look up</button>` : '') + row('Condition', esc(a.condition)) + row('Owner', esc(a.owner)) + row('Web page', web)
+        + row('Tags', a.tags.map(x => `<span class="pill">${esc(x)}</span>`).join(''));
+      const paid = a.purchasePrice !== null ? money(a.purchasePrice) + (a.foreignCurrency && a.foreignPrice !== null ? ` <span class="faint">(${esc(a.fxRate ? fxText(a) : fxMoney(a.foreignCurrency, a.foreignPrice))})</span>` : '') : a.foreignCurrency && a.foreignPrice !== null ? esc(fxMoney(a.foreignCurrency, a.foreignPrice)) : '';
+      const nowV = a.currentValue !== null ? money(a.currentValue) : estimate(a) !== null ? `≈ ${money(estimate(a))} <span class="faint">estimated, ${state.snap.data.settings.depreciation[a.category]}% a year</span>` : '';
+      const purchase = row('Bought on', a.purchaseDate ? ukDate(a.purchaseDate) : '') + row('Bought from', esc(a.supplier)) + row('Price paid', paid) + row('Value now', nowV) + row('Warranty until', a.warrantyExpiry ? ukDate(a.warrantyExpiry) + ' ' + warrantyPill(a) : '');
+      const insurance = pol ? row('Insured by', `<a href="#" data-nav="policies">${esc(pol.insurer)}</a>${pol.type ? ' · ' + esc(pol.type) : ''}`) + row('Policy number', esc(pol.policyNumber)) + row('Insured value', a.insuredValue !== null ? money(a.insuredValue) : '')
+        : row('Insurer', esc(a.insurer)) + row('Policy number', esc(a.policyNumber)) + row('Insured value', a.insuredValue !== null ? money(a.insuredValue) : '');
+      const statusRows = a.status === 'Borrowed' ? row('Belongs to', esc(a.borrowedFrom)) + row('Their contact', esc(a.borrowedContact)) + row('Give back by', a.returnBy ? ukDate(a.returnBy) + dueSoon(a.returnBy) : '')
+        : a.status === 'Lent out' ? row('Lent to', esc(a.lentTo)) + row('Contact', esc(a.lentContact)) + row('Lent on', a.lentDate ? ukDate(a.lentDate) : '') + row('Due back', a.dueBack ? ukDate(a.dueBack) + dueSoon(a.dueBack) : '')
+        : a.status === 'Sold' ? row('Sold on', a.soldDate ? ukDate(a.soldDate) : '') + row('Sold for', a.soldPrice !== null && a.soldPrice !== undefined ? money(a.soldPrice) : '') + row('Sold to', esc(a.soldTo)) : '';
+      const veh = a.details && a.details.kind ? DETAIL_UI[a.details.kind].map(([k, label, type]) => row(label, a.details[k] ? (type === 'date' ? ukDate(a.details[k]) + dueSoon(a.details[k]) : `<span class="${/vin|hin|engineNo|reg|sso|mmsi/.test(k) ? 'mono' : ''}">${esc(a.details[k])}</span>`) : '')).join('') : '';
+      const missing = [[!a.serial, 'serial number'], [!a.purchaseDate, 'date bought'], [a.purchasePrice === null, 'price paid'], [!a.photos.length, 'photo'], [!a.documents.some(d => d.type === 'Receipt'), 'receipt'], [!a.policyId && !a.insurer, 'insurer']].filter(x => x[0]).map(x => x[1]);
+      const hint = (() => { if (a.purchaseDate || (state.snap.data.dismissedHints || []).includes(a.id)) return ''; const d = a.photos.map(p => p.takenAt).filter(Boolean).sort()[0]; return d ? `<div class="card hintcard">${icon('camera')}<span style="flex:1">The first photo was taken on <b>${ukDate(d)}</b>. Use that as the date bought? It's only a guess.</span><button class="btn small primary" data-action="useDateHint" data-date="${d}">Use ${ukDate(d)}</button><button class="btn small ghost" data-action="dismissDateHint">No thanks</button></div>` : ''; })();
+      body = `${hint}<div class="itemgrid"><div>
+        <div class="card dcard">${section(a.status === 'Owned' ? 'Item' : esc(a.status), statusRows) + section('Item', item) + section('Purchase and value', purchase) + section('Insurance', insurance) + section(a.details && a.details.kind === 'boat' ? 'Boat' : 'Vehicle', veh)}
+          ${a.notes ? `<div class="dsec"><div class="dsec-h">Notes</div><div class="notes" style="margin:0;padding:0;border:0">${esc(a.notes)}</div></div>` : ''}
+          ${missing.length ? `<div class="missing">Missing: ${missing.join(', ')} · <a href="#" data-action="${missing.includes('photo') && missing.length === 1 ? 'pick' : 'edit'}" ${missing.includes('photo') && missing.length === 1 ? 'data-kind="photo"' : ''}>Add details</a></div>` : ''}</div>
+        ${[setCard(a), valueCard(a)].filter(x => !x.includes('sidecard')).join('')}</div>
+        <div class="sidecol">
+          <div class="card"><div class="dsec-h">Where it is</div><div class="big">${a.location ? `<a href="#" data-action="goPlace" data-place="${esc(a.location)}">${esc(a.location)}</a>` : '<span class="faint">No location set</span>'}</div>
+            <div class="dsec-h" style="margin-top:14px">Status</div><div>${esc(a.status)}${a.status === 'Lent out' && a.lentTo ? ` to ${esc(a.lentTo)}` : ''}</div>
+            <div class="faint" style="margin-top:14px;font-size:12px">Added ${ukDate(a.createdAt.slice(0, 10))}${a.source === 'phone' ? ' from the phone' : ''} · changed ${ukDate(a.updatedAt.slice(0, 10))}</div></div>
+          ${[setCard(a), valueCard(a)].filter(x => x.includes('sidecard')).join('')}
+        </div></div>`;
     } else if (t === 'photos') {
       body = `<div class="drop" id="drop">Drag photos here, or <button class="btn small" data-action="pick" data-kind="photo">Choose photos…</button></div>
-      ${a.photos.length ? `<div class="gallery">${a.photos.map((p, i) => p.locked ? `<div class="ph-tile locked" data-nav="vault"><div>🔒<br>Vault photo<br><small>Unlock the vault to see it</small></div></div>` : `<div class="ph-tile">
+      ${a.photos.length ? `<div class="gallery">${a.photos.map((p, i) => p.locked ? `<div class="ph-tile locked" data-nav="vault"><div>${icon('lock')}<br>Vault photo<br><small>Unlock the vault to see it</small></div></div>` : `<div class="ph-tile">
         <img src="${img(a, p)}" alt="${esc(p.name)}" data-zoom="${img(a, p)}">
-        ${i === 0 ? '<span class="pill acc coverflag">Cover</span>' : ''}${p.vaultFile ? '<span class="pill vault coverflag" style="left:auto;right:6px">🔒 Vault</span>' : ''}
+        ${i === 0 ? '<span class="pill acc coverflag">Cover</span>' : ''}${p.vaultFile ? `<span class="pill vault coverflag" style="left:auto;right:6px">${icon('lock')}Vault</span>` : ''}
         <div class="acts">${i ? `<button data-action="cover" data-att="${p.id}">Make cover</button>` : ''}<button data-action="ocr" data-file="${esc(p.file)}" title="Read a photo of a receipt">Read receipt</button><button data-action="ocrLabel" data-file="${esc(p.file)}" title="Read the serial and model number from a photo of the label">Read label</button>${fileVaultBtn(a, p)}<button data-action="rmAtt" data-att="${p.id}">Delete</button></div></div>`).join('')}</div>`
         : '<div class="empty">No photos yet. Photos of the item, its serial plate and its box all help with insurance claims.</div>'}`;
     } else if (t === 'docs') {
@@ -759,8 +767,8 @@
         <select id="docType" style="width:auto;min-width:120px;margin:0 6px">${state.snap.lists.docTypes.map(x => opt(x, x, 'Receipt')).join('')}</select>
         or <button class="btn small" data-action="pick" data-kind="document">Choose files…</button></div>
       ${a.documents.length ? `<table class="list"><thead><tr><th>Name</th><th>Type</th><th>Added</th><th></th></tr></thead><tbody>
-        ${a.documents.map(d => d.locked ? `<tr><td colspan="3">🔒 <b>Vault file</b> <span class="muted">(unlock the vault to see its name and open it)</span></td><td class="r"><button class="btn small" data-nav="vault">Unlock vault</button></td></tr>`
-        : `<tr><td data-action="openDoc" data-file="${esc(d.file)}" data-name="${esc(d.name)}"><b>${esc(d.name)}</b> ${d.vaultFile ? '<span class="pill vault">🔒 Vault</span>' : ''}</td><td><span class="pill ${d.type === 'Receipt' ? 'good' : ''}">${esc(d.type)}</span></td>
+        ${a.documents.map(d => d.locked ? `<tr><td colspan="3">${icon('lock')} <b>Vault file</b> <span class="muted">(unlock the vault to see its name and open it)</span></td><td class="r"><button class="btn small" data-nav="vault">Unlock vault</button></td></tr>`
+        : `<tr><td data-action="openDoc" data-file="${esc(d.file)}" data-name="${esc(d.name)}"><b>${esc(d.name)}</b> ${d.vaultFile ? `<span class="pill vault">${icon('lock')}Vault</span>` : ''}</td><td><span class="pill ${d.type === 'Receipt' ? 'good' : ''}">${esc(d.type)}</span></td>
         <td>${ukDate(d.addedAt.slice(0, 10))}</td><td class="r nowrap"><button class="btn small" data-action="openDoc" data-file="${esc(d.file)}" data-name="${esc(d.name)}">Open</button> ${/\.(jpe?g|png|webp|gif)$/i.test(d.file) ? `<button class="btn small" data-action="ocr" data-file="${esc(d.file)}">Read receipt</button> <button class="btn small" data-action="ocrLabel" data-file="${esc(d.file)}">Read label</button> ` : ''}${fileVaultBtn(a, d, true)}<button class="btn small danger" data-action="rmAtt" data-att="${d.id}">Delete</button></td></tr>`).join('')}
       </tbody></table>` : '<div class="empty">No documents yet.</div>'}`;
     } else if (t === 'service') {
@@ -772,14 +780,23 @@
         <td class="r"><button class="btn small danger" data-action="rmService" data-sid="${s.id}">Delete</button></td></tr>`).join('')}
       </tbody></table>` : '<div class="empty">No service history. Log MOTs, services, repairs, battery changes and inspections here. Set a "next due" date to get a reminder.</div>'}`;
     }
-    return `<div class="head"><button class="btn" data-action="back">← Items</button><span class="spacer"></span>
-      ${itemVaultBtn(a)}<button class="btn" data-action="labelOne">QR label…</button>${INACTIVE.includes(a.status) || a.status === 'Borrowed' ? '' : '<button class="btn" data-action="sell">Sell…</button>'}<button class="btn" data-action="claimOne">Claim pack…</button><button class="btn" data-action="dup">Duplicate</button><button class="btn danger" data-action="del">Delete</button><button class="btn primary" data-action="edit">Edit</button></div>
-    ${a.inVault ? '<div class="note" style="margin-bottom:14px">🔒 This item is in the vault. It\'s hidden, and left out of totals and reports, whenever the vault is locked.</div>' : ''}
+    const vaultItem = state.snap.security.vault.exists ? (a.inVault ? `<button data-action="vaultOut">${icon('unlock')}Move out of the vault</button>` : `<button data-action="vaultIn">${icon('lock')}Move to the vault</button>`) : '';
+    return `<div class="head"><button class="btn ghost" data-action="back">${icon('back')}Items</button><span class="spacer"></span>
+      <button class="btn" data-action="newService" data-tab-go="service" title="Add a service or repair entry">${icon('wrench')}Log service</button>
+      <span class="menuwrap"><button class="btn" data-action="moreMenu">${icon('more')}More</button>
+        <div class="menu hidden">
+          <button data-action="dup">${icon('duplicate')}Duplicate</button>
+          <button data-action="labelOne">${icon('qr')}Print QR label…</button>
+          <button data-action="claimOne">${icon('clipboard')}Insurance claim pack…</button>
+          ${INACTIVE.includes(a.status) || a.status === 'Borrowed' ? '' : `<button data-action="sell">${icon('sell')}Sell…</button>`}
+          ${vaultItem}<hr><button class="danger" data-action="del">${icon('trash')}Delete</button></div></span>
+      <button class="btn primary" data-action="edit">${icon('edit')}Edit</button></div>
+    ${a.inVault ? `<div class="note" style="margin-bottom:14px">${icon('lock')} This item is in the vault. It's hidden, and left out of totals and reports, whenever the vault is locked.</div>` : ''}
     <div class="detail-head">
-      ${cover(a) ? `<img class="cover" src="${img(a, cover(a))}" data-zoom="${img(a, cover(a))}" alt="">` : '<div class="cover" data-tab="photos">▣</div>'}
-      <div><h1>${esc(a.name)}</h1><div class="muted">${esc([a.brand, a.model].filter(Boolean).join(' '))}</div>
-      <div style="margin-top:10px;font-size:22px;font-weight:650">${value(a) ? money(value(a)) : ''}</div>
-      <div style="margin-top:6px">${recallsFor(a.id).length ? '<span class="pill bad" data-action="showRecalls" style="cursor:pointer">⚠ Possible product recall</span>' : ''}${a.grab ? '<span class="pill bad">🚨 Grab list</span>' : ''}${a.status !== 'Owned' ? `<span class="pill">${esc(a.status)}</span>` : ''}${warrantyPill(a)}${a.insurer ? '<span class="pill good">Insured</span>' : ''}</div></div>
+      ${cover(a) ? `<img class="cover" src="${img(a, cover(a))}" data-zoom="${img(a, cover(a))}" alt="">` : `<div class="cover" data-tab="photos" title="Add photos">${icon('camera')}</div>`}
+      <div style="flex:1;min-width:0"><h1>${esc(a.name)}</h1><div class="muted">${esc([[a.brand, a.model].filter(Boolean).join(' '), a.category].filter(Boolean).join(' · '))}</div>
+        <div style="margin-top:10px">${recallsFor(a.id).length ? `<span class="pill bad" data-action="showRecalls" style="cursor:pointer">${icon('alert')}Possible product recall</span>` : ''}${a.grab ? `<span class="pill bad">${icon('fire')}Grab list</span>` : ''}${a.status !== 'Owned' ? `<span class="pill warn">${esc(a.status)}</span>` : ''}${warrantyPill(a)}${a.policyId || a.insurer ? `<span class="pill good">${icon('shield')}Insured</span>` : ''}</div></div>
+      <div class="valuebox">${value(a) ? `<div class="lbl">${a.currentValue !== null ? 'Value now' : estimate(a) !== null ? 'Estimated value' : 'Price paid'}</div><div class="num">${money(value(a))}</div>` : '<div class="lbl">No value yet</div>'}${a.purchasePrice !== null && a.currentValue !== null ? `<div class="faint">Paid ${money(a.purchasePrice)}</div>` : ''}</div>
     </div>
     <div class="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${t === k ? 'on' : ''}">${l}</button>`).join('')}</div>${body}`;
   }
@@ -788,10 +805,10 @@
     if (!place) return '';
     const e = (state.snap.data.places || {})[place];
     const files = e ? e.files : [];
-    return `<div class="card" style="margin-bottom:14px"><h2 style="display:flex;align-items:center">🎥 Photos and videos of ${esc(place)}<span class="spacer"></span><button class="btn small" data-action="placeAdd">Add photos or videos…</button></h2>
-      ${files.length ? `<div class="rows">${files.map(x => `<div class="rowi"><span style="font-size:20px">${x.kind === 'video' ? '🎥' : '🖼️'}</span><span style="flex:1"><b>${esc(x.name)}</b> <span class="meta">${ukDate(x.addedAt.slice(0, 10))}</span></span>
-        <button class="btn small" data-action="placeOpen" data-file="${esc(x.file)}" data-name="${esc(x.name)}">${x.kind === 'video' ? 'Play' : 'Open'}</button><button class="btn small danger" data-action="placeRm" data-fid="${x.id}">Delete</button></div>`).join('')}</div>`
-      : '<div class="muted">A slow video of each room, opening cupboards and drawers, is good evidence of what you own for an insurance claim. Videos up to 1 GB; they\'re stored like your other files (encrypted if password protection is on).</div>'}</div>`;
+    return `<div class="card"><h2 style="display:flex;align-items:center">${icon('video')}Photos and videos<span class="spacer"></span><button class="btn small" data-action="placeAdd" data-place="${esc(place)}">${icon('plus')}Add photos or videos…</button></h2>
+      ${files.length ? `<div class="rows">${files.map(x => `<div class="rowi">${icon(x.kind === 'video' ? 'video' : 'image')}<span style="flex:1"><b>${esc(x.name)}</b> <span class="meta">${ukDate(x.addedAt.slice(0, 10))}</span></span>
+        <button class="btn small" data-action="placeOpen" data-place="${esc(place)}" data-file="${esc(x.file)}" data-name="${esc(x.name)}">${x.kind === 'video' ? 'Play' : 'Open'}</button><button class="btn small danger" data-action="placeRm" data-place="${esc(place)}" data-fid="${x.id}">Delete</button></div>`).join('')}</div>`
+      : '<div class="muted">A slow video of each room, opening cupboards and drawers, is good evidence for an insurance claim. Videos up to 1 GB, stored like your other files (encrypted if password protection is on).</div>'}</div>`;
   }
 
   const recallsFor = (id) => ((state.snap.data.recalls || {}).matches || []).filter(m => m.assetId === id);
@@ -803,7 +820,7 @@
   function recallsCard() {
     const r = state.snap.data.recalls;
     const busyNow = state.recallBusy;
-    return `<div class="card" style="margin-top:16px"><h2 style="display:flex;align-items:center">Product recalls<span class="spacer"></span><button class="btn small" data-action="checkRecalls" ${busyNow ? 'disabled' : ''}>${busyNow ? `Checking… ${busyNow}` : 'Check for recalls'}</button></h2>
+    return `<div class="card"><h2 style="display:flex;align-items:center">${icon('recall')}Product recalls<span class="spacer"></span><button class="btn small" data-action="checkRecalls" ${busyNow ? 'disabled' : ''}>${busyNow ? `Checking… ${busyNow}` : 'Check for recalls'}</button></h2>
       ${r ? (r.matches.length ? `<p class="muted" style="margin-top:0">Possible matches from the UK's product safety alerts, reports and recalls. Check each one against your item's exact model and batch.</p>${recallRows(r.matches)}`
         : `<div class="muted">No matches found for the ${r.checked} item${r.checked === 1 ? '' : 's'} checked on ${ukDate(r.checkedAt.slice(0, 10))}.</div>`) + (r.skipped ? `<div class="faint" style="margin-top:6px">${r.skipped} item${r.skipped === 1 ? '' : 's'} weren't checked because they have no model number.</div>` : '')
         : '<div class="muted">Checks the items that have a model number against the UK government\'s product safety alerts, reports and recalls (GOV.UK). Only the model numbers and brands are sent.</div>'}</div>`;
@@ -897,7 +914,7 @@
     const b = state.snap.data.bin || [];
     return `<div class="head"><button class="btn" data-nav="items">← Items</button><h1 style="margin-left:8px">Deleted items</h1><span class="sub">Kept for 30 days, then deleted for good</span><span class="spacer"></span>${b.length ? '<button class="btn danger" data-action="binEmpty">Empty Deleted items</button>' : ''}</div>
       ${b.length ? `<table class="list"><thead><tr><th>Item</th><th>Category</th><th>Location</th><th>Deleted</th><th>Deleted for good in</th><th></th></tr></thead><tbody>
-      ${b.map(x => `<tr><td><b>${esc(x.name)}</b> ${x.inVault ? '<span class="pill vault">🔒 Vault</span>' : ''}<div class="meta">${x.photos} photo${x.photos === 1 ? '' : 's'}, ${x.documents} document${x.documents === 1 ? '' : 's'}</div></td><td>${esc(x.category)}</td><td>${esc(x.location)}</td>
+      ${b.map(x => `<tr><td><b>${esc(x.name)}</b> ${x.inVault ? `<span class="pill vault">${icon('lock')}Vault</span>` : ''}<div class="meta">${x.photos} photo${x.photos === 1 ? '' : 's'}, ${x.documents} document${x.documents === 1 ? '' : 's'}</div></td><td>${esc(x.category)}</td><td>${esc(x.location)}</td>
         <td class="nowrap">${ukDate(x.deletedAt.slice(0, 10))}</td><td class="nowrap">${x.daysLeft ? `${x.daysLeft} day${x.daysLeft === 1 ? '' : 's'}` : 'Today'}</td>
         <td class="r nowrap"><button class="btn small primary" data-action="binRestore" data-id="${x.id}">Restore</button> <button class="btn small danger" data-action="binPurge" data-id="${x.id}">Delete for good</button></td></tr>`).join('')}</tbody></table>`
       : '<div class="empty">Nothing here. Deleted items stay here for 30 days so you can restore them.</div>'}
@@ -915,38 +932,33 @@
   }
 
   function viewPhone() {
-    return `<div class="head"><h1>Add items from your phone or tablet</h1></div>
-    <div class="grid g2">
-      <div class="card"><h2>1. Put OpenSafe Capture on your phone</h2>
-        <div style="display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap">
-          <div class="qr" id="capQr" style="width:220px"><div class="muted">Loading…</div></div>
-          <ol class="steps" style="flex:1;min-width:220px">
-            <li>Scan this code with your phone's camera and open the link in <b>Chrome</b>.</li>
-            <li>Tap <b>Install</b> (or ⋮ → <b>Add to Home screen</b>). It gets its own icon and works without internet or Wi-Fi.</li>
-            <li>Add items: photos, details and receipts. They're kept on the phone.</li>
+    return `<div class="head"><h1>Phone app</h1></div>
+    <p class="lead">OpenSafe Capture runs on your phone or tablet, with no internet needed. Use it to add items with photos, update things by scanning their QR labels, and carry a copy of your inventory.</p>
+    <div class="tiles">
+      <div class="card tile"><h2>${icon('phone')}Install OpenSafe Capture</h2>
+        <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
+          <div class="qr" id="capQr" style="width:190px"><div class="muted">Loading…</div></div>
+          <ol class="steps" style="flex:1;min-width:180px">
+            <li>Scan the code with your phone's camera and open it in <b>Chrome</b>.</li>
+            <li>Tap <b>Install</b> (or ⋮ → <b>Add to Home screen</b>).</li>
+            <li>Do the same on each phone or tablet you use.</li>
           </ol>
-        </div>
-        <p class="muted" style="margin-bottom:0">Works on phones and tablets. Do the same on each device you use.</p>
-      </div>
-      <div class="card"><h2>2. Bring the items into this PC</h2>
+        </div></div>
+      <div class="card tile"><h2>${icon('download')}Bring in items from the phone</h2>
         <ol class="steps">
-          <li>In OpenSafe Capture, tap <b>Export to PC</b>. It makes one <b>.opensafe</b> file with everything, photos included.</li>
-          <li>Send the file to this PC however suits you: <b>Quick Share</b>, Bluetooth, email, Google Drive, OneDrive, or a USB cable.</li>
-          <li>Then either click <b>Import from phone</b> below, double-click the file, or drag it into this window.</li>
+          <li>In Capture, tap <b>Export to PC</b>. It makes one <b>.opensafe</b> file, photos included.</li>
+          <li>Send it to this PC: Quick Share, email, OneDrive or a USB cable.</li>
+          <li>Click below, double-click the file, or drag it into this window.</li>
         </ol>
-        <button class="btn primary" data-action="importPick">Import from phone…</button>
-        <p class="muted">Importing the same file twice is safe: items already here are skipped, and only new photos are added.</p>
-      </div>
-      <div class="card" style="grid-column:1/-1"><h2>Import from a spreadsheet</h2>
-        <p class="muted">Bring in a list you already keep in Excel, Google Sheets or Numbers. Save it as CSV first: in Excel use <b>File → Save As</b> and choose <b>CSV UTF-8 (Comma delimited)</b>; in Google Sheets use <b>File → Download → Comma-separated values</b>. You'll choose which column is which before anything is added.</p>
-        <button class="btn" data-action="csvPick">Choose CSV file…</button></div>
-      <div class="card" style="grid-column:1/-1"><h2>3. See your inventory on your phone</h2>
-        <p class="muted">Save a read-only copy of your items (with small photos) for OpenSafe Capture. Open it there with <b>My inventory → Load file</b>, then search your things, or scan an item's QR label to see its details. The file is encrypted with a passphrase you choose here, which you'll type on the phone.</p>
+        <div class="acts"><button class="btn primary" data-action="importPick">${icon('download')}Import from phone…</button></div>
+        <p class="faint" style="margin:10px 0 0">Importing the same file twice is safe: nothing is added twice.</p></div>
+      <div class="card tile" style="grid-column:1/-1"><h2>${icon('upload')}Send your inventory to the phone</h2>
+        <p class="muted">A read-only, encrypted copy of your items with small photos, packing lists and the grab list, to search on the phone or open by scanning a QR label. You'll enter the passphrase once on the phone.</p>
         <div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">
           <label class="f" style="min-width:260px">Passphrase (at least 6 characters)<input id="pvPass" type="password" autocomplete="new-password"></label>
           ${state.snap.security.vault.unlocked ? '<label class="switch" style="font-weight:500"><input type="checkbox" id="pvVault"> Include vault items</label>' : ''}
-          <button class="btn primary" data-action="phoneView">Save inventory for phone…</button></div>
-        <p class="faint" style="margin-bottom:0">Send the file to your phone the same way as before (Quick Share, email, OneDrive, USB). Make a new one whenever you want the phone up to date. For QR labels, select items in <b>Items</b> and choose <b>QR labels…</b>.</p></div>
+          <button class="btn primary" data-action="phoneView">${icon('upload')}Save inventory for phone…</button></div>
+        <p class="faint" style="margin:10px 0 0">Send the file to your phone the same way as above, then open it in Capture under <b>My inventory → Load file</b>. Save a new one whenever you want the phone up to date.</p></div>
     </div>
     <details class="card" id="wifiDetails" style="margin-top:16px"${state.wifiOpen ? ' open' : ''}>
       <summary style="cursor:pointer"><b>Wi-Fi link (advanced)</b> <span class="muted">: add items straight to this PC over your home Wi-Fi</span></summary>
@@ -958,7 +970,7 @@
           <li>Scan the QR code on the left and open the link.</li>
           <li>Take photos, fill in the details and tap <b>Save to PC</b>.</li>
         </ol>
-        <p class="note">This PC must be on, with OpenSafe open. Some routers and phone browsers block this kind of connection. If it won't connect, use OpenSafe Capture above instead.</p></div>
+        <p class="note">This PC must be on, with OpenSafe open. Some routers and phone browsers block this kind of connection. If it won't connect, use OpenSafe Capture instead.</p></div>
       </div>
     </details>`;
   }
@@ -1005,68 +1017,136 @@
   }
 
   function viewReports() {
-    return `<div class="head"><h1>Reports</h1></div>
-    <div class="grid g2">
-      <div class="card"><h2>Insurance / inventory report (PDF)</h2>
-        <p class="muted">A printable list of everything you own, with photos, serial numbers, prices, values and whether you have a receipt. Useful for your insurer, a claim, or a moving company.</p>
-        <div class="row" style="display:flex;gap:10px;flex-wrap:wrap"><label class="f" style="flex:1;min-width:160px">Group by<select id="rGroup">${opt('category', 'Category', 'category')}${opt('location', 'Room / location', 'category')}</select></label>
-        ${(state.snap.data.people || []).length ? `<label class="f" style="flex:1;min-width:160px">Owner<select id="rOwner">${opt('', 'Everyone', '')}${state.snap.data.people.map(p => opt(p, p, '')).join('')}</select></label>` : ''}<label class="f" style="flex:2;min-width:200px">Only this place<select id="rPlace">${opt('', 'Everywhere', '')}${locPaths().map(c => opt(c, locLabel(c), '')).join('')}</select></label></div>
-        <p><label class="switch" style="font-weight:500"><input type="checkbox" id="rPhotos" checked> Include a photo of each item</label></p>
-        <p><label class="switch" style="font-weight:500"><input type="checkbox" id="rInactive"> Include sold, disposed and lost items</label></p>
-        <button class="btn primary" data-action="report">Save PDF…</button></div>
-      ${state.snap.security.vault.exists ? `<div class="note" style="grid-column:1/-1">🔒 Vault items are only included while the vault is open. It's ${state.snap.security.vault.unlocked ? '<b>open</b> now, so they will be included' : '<b>locked</b> now, so they will be left out'}. Reports and spreadsheets are saved unencrypted, so keep them somewhere safe.</div>` : ''}
-      <div class="card" id="spendCard"><h2>Spending by year</h2><div class="muted">Working it out…</div></div>
-      <div class="card"><h2>📦 Labels for boxes, shelves and rooms</h2>
-        <p class="muted">Stick one on a box, shelf or door. Scanning it in OpenSafe Capture shows what's there, lets you scan items to put them there, or starts a stock check. Same A4 sheets as item labels (Avery L7160).</p>
-        <div class="partlist" style="max-height:180px">${locPaths().map(p => `<label class="partrow"><input type="checkbox" class="plab" value="${esc(p)}"> <span>${esc(p)}</span></label>`).join('') || '<div class="muted">No locations yet.</div>'}</div>
-        <div style="display:flex;gap:10px;margin-top:8px"><label class="f" style="flex:1">Labels each<select id="plCopies">${[1, 2, 3, 4].map(n => opt(String(n), String(n), '1')).join('')}</select></label><label class="f" style="flex:1">Already used on the sheet<input id="plSkip" type="number" min="0" max="20" value="0"></label></div>
-        <p><button class="btn primary" data-action="placeLabels">Save labels PDF…</button></p></div>
-      <div class="card"><h2>🚨 Grab list (PDF)</h2>
-        <p class="muted">One page of the things to save first in a fire or flood, sorted by room, with a photo of each. ${state.snap.data.assets.filter(x => x.grab).length ? `<b>${state.snap.data.assets.filter(x => x.grab).length}</b> item${state.snap.data.assets.filter(x => x.grab).length === 1 ? ' is' : 's are'} on it.` : 'Nothing is on it yet: tick <b>On the grab list</b> when editing an item, or use <b>Change…</b> on several items.'}</p>
-        <p>${state.snap.data.assets.some(x => x.grab) ? '<button class="btn primary" data-action="grabPdf">Save PDF…</button> <button class="btn" data-action="gap" data-gap="grab">Show the items</button>' : ''}</p></div>
-      <div class="card"><h2>Spreadsheet (CSV)</h2>
-        <p class="muted">Every item and all its fields, for Excel or Google Sheets.</p>
-        <button class="btn primary" data-action="csv">Export CSV…</button></div>
+    const grab = state.snap.data.assets.filter(x => x.grab && !INACTIVE.includes(x.status)).length;
+    return `<div class="head"><h1>Reports &amp; printing</h1></div>
+    <p class="lead">Everything OpenSafe can print or save as a PDF.${state.snap.security.vault.exists ? ` Vault items are only included while the vault is open (it's ${state.snap.security.vault.unlocked ? 'open' : 'locked'} now).` : ''} PDFs are saved unencrypted, so keep them somewhere safe.</p>
+    <div class="tiles">
+      <div class="card tile" style="grid-column:1/-1"><h2>${icon('file')}Inventory report</h2>
+        <p class="muted">Everything you own, with photos, serial numbers, prices, values and whether you have a receipt. For your insurer, a claim or a removal company.</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
+          <label class="f" style="flex:1;min-width:150px">Group by<select id="rGroup">${opt('category', 'Category', 'category')}${opt('location', 'Room / location', 'category')}</select></label>
+          ${(state.snap.data.people || []).length ? `<label class="f" style="flex:1;min-width:150px">Owner<select id="rOwner">${opt('', 'Everyone', '')}${state.snap.data.people.map(p => opt(p, p, '')).join('')}</select></label>` : ''}
+          <label class="f" style="flex:2;min-width:200px">Only this place<select id="rPlace">${opt('', 'Everywhere', '')}${locPaths().map(c => opt(c, locLabel(c), '')).join('')}</select></label>
+          <button class="btn primary" data-action="report">${icon('download')}Save PDF…</button></div>
+        <div style="display:flex;gap:22px;margin-top:12px;flex-wrap:wrap"><label class="switch" style="font-weight:500"><input type="checkbox" id="rPhotos" checked> A photo of each item</label>
+          <label class="switch" style="font-weight:500"><input type="checkbox" id="rInactive"> Include sold, given away and lost items</label></div></div>
+      <div class="card tile"><h2>${icon('fire')}Grab list</h2>
+        <p class="muted">One page of the things to save first in a fire or flood, by room, with photos. ${grab ? `<b>${grab}</b> item${grab === 1 ? ' is' : 's are'} on it.` : 'Nothing is on it yet: tick <b>On the grab list</b> when editing an item.'}</p>
+        <div class="acts">${grab ? `<button class="btn primary" data-action="grabPdf">${icon('download')}Save PDF…</button><button class="btn" data-action="gap" data-gap="grab">Show the items</button>` : ''}</div></div>
+      <div class="card tile"><h2>${icon('qr')}QR labels for items</h2>
+        <p class="muted">A4 sheets of 21 labels (Avery L7160). Scanning one in OpenSafe Capture opens that item. Tick items in <b>Items</b> and choose <b>QR labels…</b>, or use the item's <b>More</b> menu.</p>
+        <div class="acts"><button class="btn" data-nav="items">Go to Items</button></div></div>
+      <div class="card tile"><h2>${icon('pin')}Labels for boxes, shelves and rooms</h2>
+        <p class="muted">Scanning one on the phone shows what's in that place, and lets you put items in it or check it.</p>
+        <div class="acts"><button class="btn" data-action="placeLabelsMany">${icon('printer')}Print place labels…</button></div></div>
+      <div class="card tile"><h2>${icon('clipboard')}Insurance claim pack</h2>
+        <p class="muted">A PDF for your insurer with photos, serial numbers, receipts and values. Open an item and choose <b>More → Claim pack</b>, or tick several items in <b>Items</b>.</p>
+        <div class="acts"><button class="btn" data-nav="items">Go to Items</button></div></div>
+      <div class="card" id="spendCard" style="grid-column:1/-1"><h2>${icon('chart')}Spending by year</h2><div class="muted">Working it out…</div></div>
     </div>`;
+  }
+
+  // ---------- Import & backup ----------
+  function viewData() {
+    return `<div class="head"><h1>Import &amp; backup</h1></div>
+    <div class="section-title">Bring items in</div>
+    <div class="tiles">
+      <div class="card tile"><h2>${icon('sheet')}From a spreadsheet</h2>
+        <p class="muted">A list you keep in Excel, Google Sheets or Numbers. Save it as CSV first (Excel: <b>File → Save As → CSV UTF-8</b>). You choose which column is which before anything is added.</p>
+        <div class="acts"><button class="btn primary" data-action="csvPick">${icon('upload')}Choose CSV file…</button></div></div>
+      <div class="card tile"><h2>${icon('phone')}From your phone</h2>
+        <p class="muted">Items exported from OpenSafe Capture (an <b>.opensafe</b> file).</p>
+        <div class="acts"><button class="btn primary" data-action="importPick">${icon('download')}Import from phone…</button><button class="btn" data-nav="phone">Phone app help</button></div></div>
+    </div>
+    <div class="section-title">Take a copy out</div>
+    <div class="tiles">
+      <div class="card tile"><h2>${icon('sheet')}Spreadsheet (CSV)</h2>
+        <p class="muted">Every item and its details, for Excel or Google Sheets. It can be imported back into OpenSafe.</p>
+        <div class="acts"><button class="btn" data-action="csv">${icon('download')}Export CSV…</button></div></div>
+    </div>
+    <div class="section-title">Backups</div>
+    <div class="tiles">
+      <div class="card tile"><h2>${icon('database')}Full backup</h2>
+        <p class="muted">Everything, with photos and documents, copied to a folder: ideally a USB stick or your OneDrive. OpenSafe also keeps a copy of your list each day for 30 days in its data folder.</p>
+        <div class="acts"><button class="btn primary" data-action="backup">Back up to a folder…</button><button class="btn" data-action="restore">Restore from a backup…</button></div>
+        <p class="faint" style="margin:12px 0 0">Data folder: <span class="mono">${esc(state.snap.dataDir)}</span> <button class="btn small ghost" data-action="openData">Open</button></p></div>
+      ${autoBackupCard()}
+    </div>`;
+  }
+
+  // ---------- Places ----------
+  function viewPlaces() {
+    const paths = locPaths();
+    const by = state.snap.summary.byLocation || {};
+    const live = state.snap.data.assets.filter(a => !INACTIVE.includes(a.status));
+    const noLoc = live.filter(a => !a.location).length;
+    if (!paths.length) return `<div class="head"><h1>Places</h1></div>
+      <div class="card empty" style="max-width:720px;margin:0 auto">Places are the rooms, cupboards, shelves and boxes where your things are kept. Give an item a location to start. Use <b>/</b> for places inside places, for example <i>Home / Garage / Shelf 2</i>.</div>`;
+    const cur = paths.includes(state.place) ? state.place : (paths.filter(p => !p.includes(' / ')).sort((x, y) => ((by[y] || {}).count || 0) - ((by[x] || {}).count || 0))[0] || paths[0]);
+    state.place = cur;
+    const here = live.filter(a => inLoc(a.location, cur)).sort((x, y) => (x.location || '').localeCompare(y.location || '') || x.name.localeCompare(y.name, 'en-GB'));
+    const d = by[cur] || { count: here.length, value: 0 };
+    const parts = cur.split(' / ');
+    return `<div class="head"><h1>Places</h1><span class="sub">${paths.length} place${paths.length === 1 ? '' : 's'}</span><span class="spacer"></span><button class="btn" data-action="placeLabelsMany">${icon('printer')}Print place labels…</button></div>
+    <div class="places">
+      <div class="card ptree">${paths.map(p => { const dp = by[p] || { count: 0 }; const n = p.split(' / ').length - 1; return `<div class="prow ${p === cur ? 'on' : ''} ${dp.count ? '' : 'empty'}" data-action="placeSel" data-place="${esc(p)}" style="padding-left:${10 + n * 18}px">${n ? '<span class="tree-l"></span>' : icon('pin')}<span class="n">${esc(p.split(' / ').pop())}</span>${((state.snap.data.places || {})[p] || { files: [] }).files.length ? icon('video') : ''}<span class="c">${dp.count}</span></div>`; }).join('')}
+        ${noLoc ? `<div class="prow" data-action="gap" data-gap="noloc" style="margin-top:6px;border-top:1px solid var(--line2)"><span class="n faint">No location set</span><span class="c">${noLoc}</span></div>` : ''}</div>
+      <div>
+        <div class="card" style="margin-bottom:16px"><div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
+          <div style="flex:1;min-width:220px">${parts.length > 1 ? `<div class="meta">${esc(parts.slice(0, -1).join(' / '))}</div>` : ''}<h2 style="font-size:20px;margin:2px 0 4px">${esc(parts[parts.length - 1])}</h2>
+            <div class="muted">${d.count} item${d.count === 1 ? '' : 's'}, including anything inside it · worth ${money0(d.value)}</div></div>
+          <button class="btn" data-action="filterLoc" data-loc="${esc(cur)}">${icon('box')}Show in Items</button>
+          <button class="btn" data-action="placeLabelOne" data-place="${esc(cur)}">${icon('qr')}Print label</button></div>
+          ${here.length ? `<table class="list" style="margin-top:14px"><thead><tr><th>Item</th><th>Where</th><th class="r">Value</th></tr></thead><tbody>
+            ${here.slice(0, 200).map(a => `<tr data-open="${a.id}"><td><b>${esc(a.name)}</b>${a.status !== 'Owned' ? ` <span class="pill">${esc(a.status)}</span>` : ''}</td><td class="meta">${esc(a.location === cur ? '' : a.location.slice(cur.length + 3))}</td><td class="r nowrap">${value(a) ? money(value(a)) : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="muted" style="margin:12px 0 0">Nothing is recorded here.</p>'}</div>
+        ${placeCard(cur)}
+      </div>
+    </div>`;
+  }
+  function placeLabelsForm(pre) {
+    openModal(`<form class="dialog narrow" id="plForm"><div class="dh"><h2>Labels for places</h2></div>
+      <div class="db"><p class="s3 muted" style="margin:0">Tick the boxes, shelves and rooms to print a QR label for. Same A4 sheets as item labels (Avery L7160).</p>
+        <div class="s3 partlist" style="max-height:300px">${locPaths().map(p => `<label class="partrow"><input type="checkbox" class="plab" value="${esc(p)}" ${pre && pre.includes(p) ? 'checked' : ''}> <span>${esc(locLabel(p))}</span></label>`).join('')}</div>
+        <label class="f">Labels for each place<select id="plCopies">${[1, 2, 3, 4].map(n => opt(String(n), String(n), '1')).join('')}</select></label>
+        <label class="f">Labels already used on the sheet<input id="plSkip" type="number" min="0" max="20" value="0"></label></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="button" data-action="placeLabels">Save labels PDF…</button></div></form>`);
   }
 
   function viewSettings() {
     const d = state.snap.data;
     return `<div class="head"><h1>Settings</h1></div>
-    <div class="grid g2">
-      ${securityCard()}
-      <div class="card"><h2>Reminders</h2>
+    <div class="section-title">Security</div>
+    <div class="grid g2">${securityCard()}
+      <div class="card"><h2>${icon('bell')}Reminders</h2>
         <label class="f" style="max-width:260px">Remind me this many days ahead<input type="number" id="remDays" min="1" max="365" value="${d.settings.reminderDays}"></label>
-        <p class="muted">OpenSafe also shows a Windows notification when you open it if anything is due within 7 days.</p>
-        <button class="btn" data-action="saveRem">Save</button></div>
-      <div class="card"><h2>Backup</h2>
-        <p class="muted">OpenSafe keeps a copy of your list each day for 30 days in its data folder. For a full backup with photos and documents, save one to a USB stick or OneDrive folder.</p>
-        <p><button class="btn primary" data-action="backup">Back up to a folder…</button> <button class="btn" data-action="restore">Restore from backup…</button></p>
-        <p class="muted" style="margin-bottom:6px">Data folder: <span class="mono">${esc(state.snap.dataDir)}</span></p>
-        <button class="btn small" data-action="openData">Open data folder</button></div>
-      ${autoBackupCard()}
-      <div class="card"><h2>Appearance</h2>
+        <p><button class="btn" data-action="saveRem">Save</button></p>
+        <div id="bgCard" style="border-top:1px solid var(--line2);padding-top:14px;margin-top:6px"><b>Reminders when OpenSafe is closed</b>
+          <p class="muted" style="margin:6px 0 10px">OpenSafe starts quietly with Windows and waits by the clock. Once a day (8am to 9pm) it shows a notification if anything is due in the next 7 days. Closing the window still locks OpenSafe.</p>
+          ${state.snap.security.encrypted ? '<p class="note" style="margin:0 0 10px">With password protection on, the notification only says how many things are due, and only the due dates (no item names) are kept in OpenSafe\'s settings file.</p>' : ''}
+          <label class="switch" style="font-weight:500"><input type="checkbox" id="bgOn" ${state.bg && state.bg.enabled ? 'checked' : ''}> Keep reminders running</label></div></div>
+    </div>
+    <div class="section-title">Your lists</div>
+    <div class="grid g2">
+      <div class="card"><h2>Categories</h2><p class="muted">One per line. Existing items keep their category.</p>
+        <textarea id="catsTa" rows="10">${esc(d.categories.join('\n'))}</textarea></div>
+      <div class="card"><h2>Locations</h2><p class="muted">One per line. Use <b>/</b> for places inside places, e.g. <i>Home / Garage / Shelf 2</i>.</p>
+        <textarea id="locsTa" rows="10">${esc(d.locations.join('\n'))}</textarea>
+        <p style="margin-bottom:0"><button class="btn primary" data-action="saveLists">Save categories and locations</button></p></div>
+      <div class="card" style="grid-column:1/-1"><h2>${icon('chart')}Value drop per year</h2><p class="muted">Optional. For items with no "value now", OpenSafe estimates it from the price paid and the date bought, losing this percentage each year. Used on the dashboard and item pages, not in claim packs or reports.</p>
+        <div class="deplist" style="grid-template-columns:repeat(3,1fr)">${[...new Set([...d.categories, ...d.assets.map(x => x.category).filter(Boolean)])].map(c => `<label class="deprow"><span>${esc(c)}</span><input data-dep="${esc(c)}" inputmode="decimal" value="${esc((d.settings.depreciation || {})[c] ?? '')}" placeholder="—"><span class="faint">%</span></label>`).join('')}</div>
+        <p style="margin-bottom:0"><button class="btn primary" data-action="saveDep">Save</button></p></div>
+    </div>
+    <div class="section-title">This app</div>
+    <div class="grid g2">
+      <div class="card"><h2>${icon('sun')}Appearance</h2>
         <p class="muted">Light or dark colours. "Match Windows" follows your Windows setting.</p>
         <span class="seg">${['system', 'light', 'dark'].map(t => `<button data-action="theme" data-theme="${t}" class="${(state.snap.theme || 'system') === t ? 'on' : ''}">${{ system: 'Match Windows', light: 'Light', dark: 'Dark' }[t]}</button>`).join('')}</span></div>
-      <div class="card"><h2>Updates</h2>
-        <p>You're running version <b>${esc(state.snap.version)}</b>.</p>
+      <div class="card"><h2>${icon('download')}Updates</h2>
+        <p style="margin-top:0">You're running version <b>${esc(state.snap.version)}</b>.</p>
         <p class="muted" id="updMsg">${esc(updText())}</p>
         <p>${state.upd && state.upd.canUpdate ? '<button class="btn" data-action="updCheck">Check now</button> ' : ''}${state.upd && state.upd.state === 'ready' ? '<button class="btn primary" data-action="updInstall">Restart and update</button>' : ''}</p>
-        <p class="faint">OpenSafe checks for new versions when it starts and every 4 hours, and downloads them quietly. Your items, photos and settings are kept when it updates.</p></div>
-      <div class="card" id="bgCard"><h2>Reminders when OpenSafe is closed</h2>
-        <p class="muted">OpenSafe starts quietly with Windows and waits by the clock (bottom right). Once a day, between 8am and 9pm, it shows a Windows notification if anything is due in the next 7 days: MOT, tax, warranties, service dates, loans and policy renewals. Closing the window still locks OpenSafe.</p>
-        ${state.snap.security.encrypted ? '<p class="note" style="margin:0 0 10px">With password protection on, OpenSafe can\'t read your items while it\'s locked, so the notification only says how many things are due. To make that possible it keeps the due dates, without any item names, in its settings file.</p>' : ''}
-        <label class="switch" style="font-weight:500"><input type="checkbox" id="bgOn" ${state.bg && state.bg.enabled ? 'checked' : ''}> Keep reminders running</label></div>
-      <div class="card"><h2>Value drop per year</h2><p class="muted">Optional. For items with no "value now", OpenSafe estimates it from the price paid and the purchase date, losing this percentage each year. Leave a category blank to use the price paid. The estimate is used on the dashboard and item pages, not in claim packs or reports.</p>
-        <div class="deplist">${[...new Set([...d.categories, ...d.assets.map(x => x.category).filter(Boolean)])].map(c => `<label class="deprow"><span>${esc(c)}</span><input data-dep="${esc(c)}" inputmode="decimal" value="${esc((d.settings.depreciation || {})[c] ?? '')}" placeholder="—"><span class="faint">% a year</span></label>`).join('')}</div>
-        <p><button class="btn primary" data-action="saveDep">Save</button></p></div>
-      <div class="card"><h2>Categories</h2><p class="muted">One per line. Existing items keep their category.</p>
-        <textarea id="catsTa" rows="12">${esc(d.categories.join('\n'))}</textarea></div>
-      <div class="card"><h2>Locations</h2><p class="muted">One per line. Use <b>/</b> for places inside places, for example <i>Home / Garage / Shelf 2</i>. Choosing <i>Home / Garage</i> in Items then includes everything on its shelves.</p>
-        <textarea id="locsTa" rows="12">${esc(d.locations.join('\n'))}</textarea>
-        <p><button class="btn primary" data-action="saveLists">Save categories and locations</button></p></div>
-    </div>
-    <p class="faint" style="margin-top:18px">OpenSafe ${esc(state.snap.version)}</p>`;
+        <p class="faint" style="margin-bottom:0">OpenSafe checks for new versions when it starts and every 4 hours. Your items, photos and settings are kept when it updates.</p></div>
+    </div>`;
   }
 
   function updText() {
@@ -1137,7 +1217,7 @@
           <input type="hidden" name="fxRate" id="fxRate" value="${esc(a.fxRate ?? '')}"><input type="hidden" name="fxDate" id="fxDate" value="${esc(a.fxDate || '')}">
           <div class="faint" id="fxInfo" style="grid-column:1/-1">${a.foreignCurrency && a.fxRate ? fxText(a) : 'Uses the reference rate on the date bought. Your card or bank may have charged a different rate: if you have the £ amount from your statement, type that in Price paid instead.'}</div></div>
         ${inp('currentValue', 'Value now (£)', 'inputmode="decimal"')}${inp('warrantyExpiry', 'Warranty until', 'type="date"')}${inp('barcode', 'Barcode', 'inputmode="numeric"')}${inp('webLink', 'Web page (link)', 'type="url" placeholder="https://… product page, manual or shop"', 's2')}
-        <label class="switch s3" style="font-weight:500"><input type="checkbox" name="grab" ${a.grab ? 'checked' : ''}> 🚨 On the grab list: one of the first things to save in a fire or flood</label>
+        <label class="switch s3" style="font-weight:500"><input type="checkbox" name="grab" ${a.grab ? 'checked' : ''}> On the grab list: one of the first things to save in a fire or flood</label>
         <h3>Vehicle or boat</h3>
         <label class="f">Extra details for<select name="det_kind" id="fKind">${opt('', 'Nothing (general item)', det.kind)}${opt('vehicle', 'A vehicle (car, van, motorbike)', det.kind)}${opt('boat', 'A boat', det.kind)}</select></label>
         <div class="s2 muted" style="align-self:end;font-size:12.5px" id="kindHint">${det.kind ? '' : 'Choose this for cars, motorbikes and boats to record registration, VIN, MOT and more.'}</div>
@@ -1252,6 +1332,7 @@
   });
 
   document.addEventListener('click', async (e) => {
+    if (e.target.closest('.menu') || !e.target.closest('.menuwrap')) $$('.menu').forEach(m => m.classList.add('hidden'));
     const zoom = e.target.closest('[data-zoom]');
     if (zoom) { const lb = $('#lightbox'); lb.innerHTML = `<img src="${esc(zoom.dataset.zoom)}" alt="">`; lb.classList.remove('hidden'); return; }
     if (e.target.closest('#lightbox')) { $('#lightbox').classList.add('hidden'); return; }
@@ -1394,6 +1475,7 @@
         case 'claimOne': claimForm([a.id]); break;
         case 'selClear': state.sel.clear(); render(); break;
         case 'ocr': readReceipt(a, act.dataset.file); break;
+        case 'moreMenu': { const m = act.parentElement.querySelector('.menu'); const open = m.classList.contains('hidden'); $$('.menu').forEach(x => x.classList.add('hidden')); m.classList.toggle('hidden', !open); break; }
         case 'sell': sellForm(a); break;
         case 'lsCopyTitle': await run(() => keep.copyPlain($('#lsTitle').value), 'Title copied'); break;
         case 'lsCopyText': await run(() => keep.copyPlain($('#lsText').value), 'Description copied'); break;
@@ -1412,10 +1494,14 @@
         case 'phoneReset': await run(() => keep.phoneReset()); loadPhone(); break;
         case 'report': { const p = await run(() => keep.exportReport({ includePhotos: $('#rPhotos').checked, includeInactive: $('#rInactive').checked, groupBy: $('#rGroup').value, place: $('#rPlace').value, owner: $('#rOwner') ? $('#rOwner').value : '' })); if (p) toast('Report saved'); break; }
         case 'openLink': e.preventDefault(); await run(() => keep.openItemLink(a.id)); break;
-        case 'placeAdd': { const r = await run(() => keep.placePick(state.f.location)); if (r && r.added) toast(`✓ ${r.added} file${r.added === 1 ? '' : 's'} added`); if (r && r.errors.length) toast('⚠ ' + r.errors.join(' · '), 7000); await refresh(); break; }
-        case 'placeOpen': { const e = state.snap.data.places[state.f.location]; if (e) await run(() => keep.openAttachment(e.id, act.dataset.file, act.dataset.name)); break; }
-        case 'placeRm': if (confirm('Delete this file from OpenSafe?')) { await run(() => keep.placeRemove(state.f.location, act.dataset.fid), 'Deleted'); await refresh(); } break;
-        case 'placeLabels': { const places = [...document.querySelectorAll('.plab:checked')].map(i => i.value); if (!places.length) { toast('Tick at least one place'); break; } const p = await run(() => keep.placeLabels(places, { copies: Number($('#plCopies').value), skip: Number($('#plSkip').value) || 0 })); if (p) toast('✓ Labels saved. Print at 100% (no "fit to page").', 5000); break; }
+        case 'placeAdd': { const r = await run(() => keep.placePick(act.dataset.place)); if (r && r.added) toast(`✓ ${r.added} file${r.added === 1 ? '' : 's'} added`); if (r && r.errors.length) toast('⚠ ' + r.errors.join(' · '), 7000); await refresh(); break; }
+        case 'placeOpen': { const e = state.snap.data.places[act.dataset.place]; if (e) await run(() => keep.openAttachment(e.id, act.dataset.file, act.dataset.name)); break; }
+        case 'placeRm': if (confirm('Delete this file from OpenSafe?')) { await run(() => keep.placeRemove(act.dataset.place, act.dataset.fid), 'Deleted'); await refresh(); } break;
+        case 'placeLabels': { const places = [...document.querySelectorAll('.plab:checked')].map(i => i.value); if (!places.length) { toast('Tick at least one place'); break; } const p = await run(() => keep.placeLabels(places, { copies: Number($('#plCopies').value), skip: Number($('#plSkip').value) || 0 })); if (p) { closeModal(); toast('✓ Labels saved. Print at 100% (no "fit to page").', 5000); } break; }
+        case 'goPlace': e.preventDefault(); state.place = act.dataset.place; go('places'); break;
+        case 'placeSel': state.place = act.dataset.place; render(); break;
+        case 'placeLabelOne': { const p = await run(() => keep.placeLabels([act.dataset.place], { copies: 1, skip: 0 })); if (p) toast('✓ Label saved. Print at 100% (no "fit to page").', 5000); break; }
+        case 'placeLabelsMany': placeLabelsForm(state.view === 'places' && state.place ? [state.place] : []); break;
         case 'deleteSel': { const n = await run(() => keep.deleteMany([...state.sel])); if (n) { state.sel.clear(); toast(`${n} item${n === 1 ? '' : 's'} moved to Deleted items`, 4000); await refresh(); } break; }
         case 'findDupes': duplicatesView(); break;
         case 'dupIgnore': { await run(() => keep.ignoreDuplicates(act.dataset.ids.split(','))); act.closest('[data-group]').remove(); if (!document.querySelector('#dupDlg [data-group]')) closeModal(); break; }
@@ -1492,6 +1578,18 @@
   keep.onRecallProgress((p) => { if (state.recallBusy) { state.recallBusy = `${p.n} of ${p.total}`; if (state.view === 'dashboard') render(); } });
   keep.onUpdate((u) => { const was = state.upd && state.upd.state; state.upd = u; renderUpdate(); if (state.view === 'settings' && was !== u.state) render(); });
   keep.updateStatus().then((u) => { state.upd = u; renderUpdate(); });
+
+  // Icons in the menu, and the search box at the top of it (searches items as you type).
+  $$('[data-icon]').forEach(el => { el.outerHTML = icon(el.dataset.icon); });
+  const gs = $('#gSearch');
+  $('#gSearchForm').onsubmit = (e) => { e.preventDefault(); state.f.q = gs.value.trim(); go('items'); };
+  gs.oninput = () => {
+    if (state.view !== 'items' && gs.value.trim().length < 2) return;
+    state.f.q = gs.value.trim();
+    if (state.view !== 'items') { go('items'); }
+    else { render(); }
+    setTimeout(() => { gs.focus(); }, 0);
+  };
 
   refresh();
 })();

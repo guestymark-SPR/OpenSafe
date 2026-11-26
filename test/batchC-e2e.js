@@ -42,9 +42,11 @@ app.on('browser-window-created', (_e, win) => {
     try {
       win.setSize(1320, 900); await wait(1500);
       // 1. locations: dashboard card and filter
-      R.dashLocations = await js(`[...document.querySelectorAll('[data-action=filterLoc]')].map(e => e.innerText.replace(/\\s+/g, ' ').trim())`);
-      await shot('c1-dashboard');
-      await js(`[...document.querySelectorAll('[data-action=filterLoc]')].find(e => e.dataset.loc === 'Home / Garage').click()`); await wait(500);
+      await js(`document.querySelector('[data-nav=places]').click()`); await wait(500);
+      R.dashLocations = await js(`[...document.querySelectorAll('[data-action=placeSel]')].map(e => e.dataset.place + ' ' + e.querySelector('.c').innerText)`);
+      await shot('c1-places');
+      await js(`document.querySelector('[data-action=placeSel][data-place="Home / Garage"]').click()`); await wait(400);
+      await js(`document.querySelector('[data-action=filterLoc]').click()`); await wait(500);
       R.garageFilter = await js(`[...document.querySelectorAll('[data-open] .name')].map(e => e.innerText).sort()`);
       R.locOptions = await js(`[...document.querySelectorAll('[data-f=location] option')].map(o => o.textContent)`);
       // 2. depreciation: Tools 20% a year -> mitre saw estimated ~£640
@@ -78,7 +80,7 @@ app.on('browser-window-created', (_e, win) => {
       await js(`document.querySelector('[data-nav=items]').click()`); await wait(400);
       R.listBadges = await js(`[...document.querySelectorAll('[data-open]')].map(r => r.querySelector('.name').innerText.replace(/\\s+/g, ' ') + ' | ' + r.querySelector('.meta').innerText).filter(t => /Set of|Part of/.test(t))`);
       // 5. spreadsheet import
-      await js(`document.querySelector('[data-nav=phone]').click()`); await wait(400);
+      await js(`document.querySelector('[data-nav=data]').click()`); await wait(400);
       await js(`document.querySelector('[data-action=csvPick]').click()`); await wait(800);
       R.csvMapping = await js(`[...document.querySelectorAll('#csvForm [data-col]')].map(s => s.closest('tr').querySelector('b').innerText + ' -> ' + (s.value || "don't import"))`);
       await shot('c4-csv-map');

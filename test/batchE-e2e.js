@@ -54,18 +54,19 @@ app.on('browser-window-created', (_e, win) => {
       await js(`document.querySelector('#modal form').requestSubmit()`); await wait(800);
       R.pricePaid = await js(`[...document.querySelectorAll('.kv > div')].map(d => d.innerText.replace(/\\n/g, ': ')).find(t => t.startsWith('Price paid'))`);
       // photos and videos of a place
-      await js(`document.querySelector('[data-nav=dashboard]').click()`); await wait(400);
-      await js(`[...document.querySelectorAll('[data-action=filterLoc]')].find(e => e.dataset.loc === 'Home / Lounge').click()`); await wait(500);
-      R.placeCardEmpty = await js(`[...document.querySelectorAll('.card h2')].map(h => h.innerText).find(t => t.includes('Photos and videos of'))`);
+      await js(`document.querySelector('[data-nav=places]').click()`); await wait(400);
+      await js(`document.querySelector('[data-action=placeSel][data-place="Home / Lounge"]').click()`); await wait(500);
+      R.placeCardEmpty = await js(`[...document.querySelectorAll('.card h2')].map(h => h.innerText).find(t => t.includes('Photos and videos')) + ' | ' + document.querySelector('.places h1, .places h2, .card h1')?.innerText`);
       await js(`document.querySelector('[data-action=placeAdd]').click()`); await wait(800);
       R.placeRows = await js(`[...document.querySelectorAll('[data-action=placeOpen]')].map(b => b.closest('.rowi').innerText.replace(/\\s+/g, ' ').trim())`);
       await js(`document.querySelector('[data-action=placeOpen]').click()`); await wait(500);
       R.openedVideo = openedPaths.slice(-1)[0] && fs.readFileSync(openedPaths.slice(-1)[0], 'utf8');
       await shot('e2-place-videos');
-      await js(`document.querySelector('[data-nav=dashboard]').click()`); await wait(400);
-      R.dashMarker = await js(`[...document.querySelectorAll('[data-action=filterLoc]')].find(e => e.dataset.loc === 'Home / Lounge').innerText.includes('🎥')`);
+      await js(`document.querySelector('[data-nav=places]').click()`); await wait(400);
+      R.dashMarker = await js(`!!document.querySelector('[data-action=placeSel][data-place="Home / Lounge"] svg') && !document.querySelector('[data-action=placeSel][data-place="Home / Bedroom"] svg')`);
       // place labels
       await js(`document.querySelector('[data-nav=reports]').click()`); await wait(400);
+      await js(`document.querySelector('[data-action=placeLabelsMany]').click()`); await wait(400);
       await js(`[...document.querySelectorAll('.plab')].find(i => i.value === 'Home / Loft').click(); document.getElementById('plCopies').value = '2'; document.querySelector('[data-action=placeLabels]').click()`);
       nextSave = path.join(OUT, 'place-labels.pdf');
       await js(`document.querySelector('[data-action=placeLabels]').click()`);

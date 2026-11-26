@@ -9,25 +9,34 @@
 <body>
 <aside class="side">
   <div class="brand"><img src="icon.png" alt=""><span>OpenSafe</span></div>
+  <form class="sidesearch" id="gSearchForm" role="search"><span data-icon="search"></span><input id="gSearch" type="search" placeholder="Search items…" aria-label="Search items" autocomplete="off"></form>
   <nav id="nav">
-    <button data-nav="dashboard"><span class="i">◧</span>Dashboard</button>
-    <button data-nav="items"><span class="i">▤</span>Items</button>
-    <button data-nav="reminders"><span class="i">◷</span>Reminders <b id="remBadge" class="badge hidden"></b></button>
-    <button data-nav="phone"><span class="i">⇩</span>Import Files</button>
-    <button data-nav="policies"><span class="i">☂</span>Insurance</button>
-    <button data-nav="trips"><span class="i">⛺</span>Packing lists</button>
-    <button data-nav="reports"><span class="i">⎙</span>Reports</button>
-    <button data-nav="vault" id="vaultNav" class="hidden"><span class="i">🔒</span>Vault <b id="vaultState" class="vstate"></b></button>
-    <button data-nav="settings"><span class="i">⚙</span>Settings</button>
+    <button data-nav="dashboard"><span data-icon="home"></span>Home</button>
+    <button data-nav="reminders"><span data-icon="bell"></span>Reminders <b id="remBadge" class="badge hidden"></b></button>
+    <div class="navh">Inventory</div>
+    <button data-nav="items"><span data-icon="box"></span>Items</button>
+    <button data-nav="places"><span data-icon="pin"></span>Places</button>
+    <button data-nav="trips"><span data-icon="bag"></span>Packing lists</button>
+    <div class="navh">Protection</div>
+    <button data-nav="policies"><span data-icon="shield"></span>Insurance</button>
+    <button data-nav="vault" id="vaultNav"><span data-icon="lock"></span>Vault <b id="vaultState" class="vstate"></b></button>
+    <div class="navh">Tools</div>
+    <button data-nav="reports"><span data-icon="printer"></span>Reports &amp; printing</button>
+    <button data-nav="phone"><span data-icon="phone"></span>Phone app</button>
+    <button data-nav="data"><span data-icon="database"></span>Import &amp; backup</button>
   </nav>
-  <button id="lockBtn" class="btn wide hidden" data-action="lockApp" title="Lock OpenSafe now">🔒 Lock OpenSafe</button>
-  <button id="addBtn" class="btn primary wide" data-action="new">+ Add item</button>
+  <div class="sidefoot">
+    <button data-nav="settings" class="navbtn"><span data-icon="gear"></span>Settings</button>
+    <button id="lockBtn" class="navbtn hidden" data-action="lockApp" title="Lock OpenSafe now"><span data-icon="lock"></span>Lock OpenSafe</button>
+    <button id="addBtn" class="btn primary wide" data-action="new"><span data-icon="plus"></span>Add item</button>
+  </div>
 </aside>
 <div class="mainwrap"><div id="updBar" class="updbar hidden"></div><main id="view" tabindex="-1"></main></div>
 <div id="lockscreen" class="lockscreen hidden"></div>
 <div id="modal" class="modal hidden" role="dialog" aria-modal="true"></div>
 <div id="lightbox" class="lightbox hidden"></div>
 <div id="toast" class="toast hidden" role="status"></div>
+<script src="icons.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

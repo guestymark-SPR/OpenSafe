@@ -37,7 +37,7 @@ let started = false;
 app.on('browser-window-created', (_e, win) => {
   if (started) return; started = true;
   win.webContents.once('did-finish-load', async () => {
-    const js = (code) => win.webContents.executeJavaScript(code);
+    const js = (code) => win.webContents.executeJavaScript(code).catch(() => { throw new Error('Step failed: ' + code.slice(0, 140)); });
     const shot = async (name) => { await wait(600); fs.writeFileSync(path.join(OUT, name + '.png'), (await win.webContents.capturePage()).toPNG()); };
     const items = () => js(`[...document.querySelectorAll('[data-open] .name')].map(e => e.innerText)`);
     const R = {};
@@ -56,7 +56,7 @@ app.on('browser-window-created', (_e, win) => {
       await js(`{ const f = document.getElementById('itemForm'); f.owner.value = 'Mark'; f.requestSubmit(); }`); await wait(800);
       // dashboard: borrowed not counted, owner card, recalls
       await js(`document.querySelector('[data-nav=dashboard]').click()`); await wait(400);
-      R.itemsFoot = await js(`[...document.querySelectorAll('.stat')].find(c => c.innerText.startsWith('Items')).innerText.replace(/\\n/g, ' | ')`);
+      R.itemsFoot = await js(`[...document.querySelectorAll('.stat')].find(c => /^items/i.test(c.innerText)).innerText.replace(/\\n/g, ' | ')`);
       R.ownerCard = await js(`[...document.querySelectorAll('.card h2')].some(h => h.innerText === 'Who owns what')`);
       await js(`document.querySelector('[data-action=checkRecalls]').click()`); await wait(2500);
       R.recallQueries = fetched.map(u => decodeURIComponent(u.split('q=')[1].split('&')[0]));

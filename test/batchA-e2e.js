@@ -61,7 +61,7 @@ app.on('browser-window-created', (_e, win) => {
       R.saved = st.data.assets.map(a => `${a.name}: ${a.location} / ${a.status}${a.lentTo ? ' / ' + a.lentTo : ''}${a.policyId ? ' / policy' : ''}`);
       // item page label button
       await js(`[...document.querySelectorAll('[data-open]')].find(e => e.innerText.includes('Ladder')).click()`); await wait(400);
-      R.itemButtons = await js(`[...document.querySelectorAll('.btn')].map(b => b.innerText).filter(t => /label|Claim/i.test(t))`);
+      R.itemButtons = await js(`[...document.querySelectorAll('.btn, .menu button')].map(b => b.textContent.trim()).filter(t => /label|Claim/i.test(t))`);
       await js(`document.querySelector('[data-action=labelOne]').click()`); await wait(300);
       R.labelForm = await js(`document.getElementById('labForm').innerText.split('\\n').slice(0, 2).join(' | ')`);
       await js(`document.getElementById('labForm').requestSubmit()`);

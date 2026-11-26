@@ -4,7 +4,19 @@ Free home inventory and asset manager for Windows. Record what you own: photos, 
 
 Everything stays on your PC. There's no account, no cloud and no subscription.
 
-![Dashboard](docs/dashboard.png)
+![Home page](docs/dashboard.png)
+
+## Finding your way
+
+The menu on the left is grouped by job:
+
+- **Home** (totals, what's coming up, gaps to fill, places, recalls) and **Reminders**.
+- **Inventory:** **Items**, **Places** (every room, shelf and box with what's in it, its photos and videos, and its label) and **Packing lists**.
+- **Protection:** **Insurance** and the **Vault**.
+- **Tools:** **Reports & printing**, **Phone app** and **Import & backup**.
+- **Settings**, **Lock OpenSafe** (when password protection is on) and **+ Add item** sit at the bottom.
+
+The search box at the top of the menu searches all your items from any page. On an item's page, **Edit** and **Log service** are always shown; less-used actions (duplicate, QR label, claim pack, sell, vault, delete) are under **More**.
 
 ## Features
 
@@ -17,40 +29,40 @@ Everything stays on your PC. There's no account, no cloud and no subscription.
 - **Dark mode:** light, dark, or match Windows.
 - **Service log:** MOTs, services, repairs, batteries and inspections, with cost, mileage and a "next due" date.
 - **Reminders:** warranty end dates and next-due service dates, looking ahead a number of days you choose, plus a Windows notification at start-up for anything due within 7 days.
-- **Dashboard:** total value, amount paid, insured value, value by category, what's coming up, and gaps to fill (no serial number, no receipt, no insurer, no photo).
+- **Home page:** total value, amount paid, insured value, value by category, what's coming up, and gaps to fill (no serial number, no receipt, no insurer, no photo).
 - **Change many items at once:** tick items in the list and choose **Change…** to set their location, category, status (with who has them or who bought them) or insurance policy in one go.
 - **Search:** finds items by name, brand, model, serial number, barcode, registration, VIN, hull ID, who has it (name or phone/email), insurer, policy number and notes.
-- **Rooms within locations:** write a location as a path, such as *Home / Garage / Shelf 2*. Choosing *Home / Garage* in Items includes everything on its shelves, and the dashboard shows a count and value for each place. The phone's stock check works the same way.
+- **Rooms within locations:** write a location as a path, such as *Home / Garage / Shelf 2*. Choosing *Home / Garage* in Items includes everything on its shelves, and **Places** shows a count and value for each place. The phone's stock check works the same way.
 - **Item sets:** on an item's page, **Add parts…** groups the things that go with it (a drill's batteries and charger, a boat's tender and outboard). Each part keeps its own details; the set shows its total value, and a claim pack for the main item includes its parts.
-- **Value over time:** each change to an item's value is recorded with the date, and you can add valuations (for example from a jeweller). In **Settings → Value drop per year** you can set a percentage per category; items with no value entered then get an estimate from the price paid and how long you've had them. Estimates are used on the dashboard and item pages, not in claim packs or reports.
-- **Import from a spreadsheet:** **Import Files → Import from a spreadsheet** reads a CSV file (save it from Excel as *CSV UTF-8*), suggests which column is which, reads UK dates and £ prices, and skips rows already in OpenSafe. OpenSafe's own CSV export imports back the same way.
+- **Value over time:** each change to an item's value is recorded with the date, and you can add valuations (for example from a jeweller). In **Settings → Value drop per year** you can set a percentage per category; items with no value entered then get an estimate from the price paid and how long you've had them. Estimates are used on the Home page and item pages, not in claim packs or reports.
+- **Import from a spreadsheet:** **Import & backup → From a spreadsheet** reads a CSV file (save it from Excel as *CSV UTF-8*), suggests which column is which, reads UK dates and £ prices, and skips rows already in OpenSafe. OpenSafe's own CSV export imports back the same way.
 - **Deleted items:** deleting an item moves it, with its photos and documents, to **Items → Deleted items** for 30 days, where you can restore it. After 30 days it's deleted for good. Items deleted from the vault stay encrypted in the vault's own bin.
 - **Grab list:** tick **On the grab list** for the things to save first in a fire or flood (or use **Change…** on several). **Reports → Grab list** prints one page sorted by room, and the phone's **My inventory** has a **🚨 Grab list** filter that works offline.
 - **Web page link:** save the product page, manual or shop for an item and open it with one click. It also shows on the phone.
 - **Report by room:** the PDF report can be grouped by room / location, and limited to one place (for example only *Home / Garage*).
 - **Labels for boxes, shelves and rooms:** **Reports → Labels for boxes, shelves and rooms** prints QR labels for places. Scanning one in Capture shows what's there, and **Put items here** lets you scan items one after another to move them in (handy when packing or moving house), or start a stock check of that place.
-- **Videos and room walk-throughs:** add videos (MP4, MOV and others, up to 1 GB) to an item's documents, or photos and videos of a whole room: choose the place in **Items** (or on the dashboard) and use **Add photos or videos…**. They're stored like your other files, encrypted when password protection is on.
+- **Videos and room walk-throughs:** add videos (MP4, MOV and others, up to 1 GB) to an item's documents, or photos and videos of a whole room: choose the place in **Places** and use **Add photos or videos…**. They're stored like your other files, encrypted when password protection is on.
 - **Bought abroad:** choose the currency and enter what you paid, and **Work out £** fills in the price in pounds using the reference rate on the date bought ([Frankfurter](https://frankfurter.dev), European Central Bank data; a weekend date uses the working day before). Your card may have charged a different rate, so the £ amount from your statement is more exact if you have it.
 - **Borrowed things:** status **Borrowed** records what belongs to someone else, who it's from and a "give back by" reminder. Borrowed items aren't counted in your values or insurance totals; **Given back** clears them away.
-- **Who owns it:** an **Owner** for each item (for example a partner or a child). Filter Items by owner, see **Who owns what** on the dashboard, and print a report for one person.
+- **Who owns it:** an **Owner** for each item (for example a partner or a child). Filter Items by owner, see **Who owns what** on the Home page, and print a report for one person.
 - **Spending by year:** **Reports** shows what you paid each year, and on what.
 - **Possible duplicates:** **Items → Duplicates…** finds items entered twice (same serial number, barcode, or name with the same price or date). Merge them into one (photos, documents, service log and value history move across; the others go to Deleted items), or mark them as not duplicates.
 - **Delete several at once:** tick items and choose **Delete…**; they go to Deleted items.
-- **Product recall check:** **Dashboard → Check for recalls** searches the UK government's product safety alerts, reports and recalls (GOV.UK) for the brand and model of each item that has a model number. A result only counts when its title or description contains the model number (and the brand), and you can mark matches as "Not mine". Always check the exact model and batch on the GOV.UK page.
+- **Product recall check:** **Home → Check for recalls** searches the UK government's product safety alerts, reports and recalls (GOV.UK) for the brand and model of each item that has a model number. A result only counts when its title or description contains the model number (and the brand), and you can mark matches as "Not mine". Always check the exact model and batch on the GOV.UK page.
 - **Reminders when OpenSafe is closed:** **Settings → Keep reminders running** starts OpenSafe quietly with Windows, by the clock. Once a day (8am–9pm) it shows a notification if anything is due in the next 7 days. Closing the window still locks OpenSafe. With password protection on, the notification only says how many things are due, and only the due dates (no item names) are kept in its unencrypted settings file.
 - **Read a serial number from a photo:** **Read label** on a photo of a rating plate, sticker or box reads the serial and model number on this PC (nothing is uploaded) and lets you copy them into the item.
 - **Insurance premium history:** **Renewed…** on a policy keeps last year's insurer, premium and excess, and shows the change each year. Earlier years can be added from old paperwork.
 - **Date bought from photos:** for items with no date bought, OpenSafe suggests the date the first photo was taken (from the photo's own data). Capture reads it before shrinking a photo, so phone photos work too.
 - **Packing lists:** **Packing lists** on the PC: make a list for a trip from your items plus other things to take (sun cream, passport), and tick them off as packed and back home. On the phone (load a new inventory file), **My inventory → ⛺ Packing lists** shows the list in Packing and Coming home modes; tap to tick, or scan item labels. Ticks made on the phone stay on the phone.
-- **Sell an item:** **Sell…** on an item's page drafts an advert title and description from its details (brand, model, condition, when and where bought, parts in the set, receipt and manual), and saves its photos to a folder for uploading. It never includes your notes, serial number or price paid.
-- **Insurance claim pack:** select items, or use the button on an item, to get one PDF for your insurer. It has a cover page with the incident details and totals, then every photo, serial numbers, purchase details and receipt photos for each item. Receipt PDFs are added at the end.
+- **Sell an item:** **More → Sell…** on an item's page drafts an advert title and description from its details (brand, model, condition, when and where bought, parts in the set, receipt and manual), and saves its photos to a folder for uploading. It never includes your notes, serial number or price paid.
+- **Insurance claim pack:** select items, or use **More → Insurance claim pack…** on an item, to get one PDF for your insurer. It has a cover page with the incident details and totals, then every photo, serial numbers, purchase details and receipt photos for each item. Receipt PDFs are added at the end.
 - **Receipt reading:** click **Read receipt** on a receipt photo to fill in the shop, date and price paid. It uses Tesseract OCR and runs offline on your PC, so nothing is uploaded.
-- **Reports:** a printable PDF inventory for your insurer, with photos, and a CSV export for Excel.
+- **Reports:** a printable PDF inventory for your insurer, with photos. **Import & backup → Export CSV…** gives a spreadsheet for Excel.
 - **Password protection and vault:** AES-256 encryption of everything, a recovery key, and a PIN-protected vault for sensitive items and files.
 - **Backups:** a copy of your item list every day, kept for 30 days, plus a full backup (with photos and documents) to any folder or USB stick, and restore.
 - **OpenSafe Capture:** an offline phone and tablet app for adding items with photos, imported on the PC from one file.
 - **Inventory on your phone:** a read-only, passphrase-encrypted copy of your PC inventory you can search on your phone.
-- **QR labels:** print A4 sheets of 21 labels (63.5 × 38.1 mm, Avery L7160 size). Scanning a label on the phone opens that item. Print one label from an item's page with **QR label…**.
+- **QR labels:** print A4 sheets of 21 labels (63.5 × 38.1 mm, Avery L7160 size). Scanning a label on the phone opens that item. Print one label from an item's page with **More → Print QR label…**.
 - **Scan a label to update an item:** in Capture, tap **Scan an item's QR label** to move it, lend it (with the person's phone or email and a due-back date), mark it returned, needing repair, in repair, repaired, sold, lost or got rid of, or add a note. The changes go to the PC in your next export.
 - **Barcodes:** scan a product barcode with the phone camera, or type it in. On the PC, **Look up** fills in the product name and brand from UPCitemdb (free, about 100 lookups a day and 6 a minute, needs the internet).
 
@@ -59,7 +71,7 @@ Everything stays on your PC. There's no account, no cloud and no subscription.
 **Settings → Password protection** encrypts everything OpenSafe stores: the item list, photos, documents and daily backups.
 
 - **Encryption:** files are encrypted with AES-256-GCM using a random master key. The master key is stored only in wrapped form, encrypted with a key derived from your password (scrypt, N=2¹⁷).
-- **Asking for the password:** OpenSafe asks for it every time it opens. **🔒 Lock OpenSafe** locks it straight away. Five wrong passwords in a row add a 30-second wait, which doubles each time.
+- **Asking for the password:** OpenSafe asks for it every time it opens. **Lock OpenSafe** (bottom of the menu) locks it straight away. Five wrong passwords in a row add a 30-second wait, which doubles each time.
 - **Recovery key:** when you turn protection on, you get a 24-character recovery key, shown once. It resets a forgotten password or vault PIN. **If you lose both the password and the recovery key, the data can't be recovered.**
 - **Turning it off:** protection can be turned off, which decrypts everything again, or the password changed. A new recovery key can be made at any time, and the old one then stops working.
 
@@ -139,7 +151,7 @@ The installed version checks GitHub for a new release when it starts and every 4
 
 The portable exe and the zip can't update themselves, so use `OpenSafe-Setup` to get updates.
 
-Your data is saved in `%APPDATA%\OpenSafe\data`. **Settings → Open data folder** opens it.
+Your data is saved in `%APPDATA%\OpenSafe\data`. **Import & backup → Open** (next to the data folder path) opens it.
 
 ## Build it yourself
 
