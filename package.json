@@ -1,7 +1,7 @@
 {
   "name": "opensafe",
   "productName": "OpenSafe",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "description": "Free home inventory and asset manager for Windows, with a phone link for adding items from your Android phone.",
   "main": "src/main.js",
   "author": "guestymark-SPR",

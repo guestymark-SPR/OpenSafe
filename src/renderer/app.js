@@ -937,7 +937,7 @@
     <div class="tiles">
       <div class="card tile"><h2>${icon('phone')}Install OpenSafe Capture</h2>
         <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
-          <div class="qr" id="capQr" style="width:190px"><div class="muted">Loading…</div></div>
+          <div class="qr qr-sm" id="capQr"><div class="muted">Loading…</div></div>
           <ol class="steps" style="flex:1;min-width:180px">
             <li>Scan the code with your phone's camera and open it in <b>Chrome</b>.</li>
             <li>Tap <b>Install</b> (or ⋮ → <b>Add to Home screen</b>).</li>
