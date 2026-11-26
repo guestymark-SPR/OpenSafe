@@ -48,6 +48,7 @@
     </form>
     <div id="invOpen" class="hidden">
       <div class="invbar"><input type="search" id="invQ" placeholder="Search your things…"><button class="btn" data-act="scanLabel">📷 Scan label</button></div>
+      <div class="chips"><button class="chip" id="grabChip" data-act="grabFilter">🚨 Grab list</button></div>
       <div class="muted small" id="invMeta"></div>
       <div id="invList" class="list"></div>
     </div>
@@ -98,6 +99,7 @@
       </div>
       <label>Serial number<input name="serial" maxlength="200" autocapitalize="characters"></label>
       <label>Barcode<span class="withbtn"><input name="barcode" inputmode="numeric" maxlength="32"><button type="button" class="btn" data-act="scanBarcode">📷 Scan</button></span></label>
+      <label>Web page (link)<input name="webLink" type="url" inputmode="url" maxlength="1000" placeholder="https://… product page or manual"></label>
       <label>Condition<select name="condition"><option value="">—</option><option>New</option><option>Excellent</option><option>Good</option><option>Fair</option><option>Poor</option></select></label>
     </section>
     <section class="card">

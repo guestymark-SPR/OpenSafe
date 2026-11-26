@@ -21,7 +21,7 @@ const DOC_TYPES = ['Receipt', 'Warranty', 'Manual', 'Insurance', 'Other'];
 
 const STRING_FIELDS = ['name', 'category', 'location', 'brand', 'model', 'serial', 'supplier',
   'condition', 'status', 'insurer', 'policyNumber', 'notes', 'purchaseDate', 'warrantyExpiry',
-  'barcode', 'policyId', 'partOf', 'lentTo', 'lentContact', 'lentDate', 'dueBack', 'soldDate', 'soldTo'];
+  'barcode', 'webLink', 'policyId', 'partOf', 'lentTo', 'lentContact', 'lentDate', 'dueBack', 'soldDate', 'soldTo'];
 const DATE_FIELDS = new Set(['purchaseDate', 'warrantyExpiry', 'lentDate', 'dueBack', 'soldDate']);
 const MONEY_FIELDS = ['purchasePrice', 'currentValue', 'insuredValue', 'soldPrice'];
 // Extra details for vehicles (car, van, motorbike) and boats
@@ -35,6 +35,7 @@ const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 const DOC_EXT = new Set(['.pdf', '.jpg', '.jpeg', '.png', '.webp', '.gif', '.txt', '.doc', '.docx', '.xls', '.xlsx', '.csv']);
 
 const MAX_STRING = 5000;
+const BIN_DAYS = 30;
 
 function uid() { return crypto.randomUUID(); }
 function nowIso() { return new Date().toISOString(); }
@@ -68,6 +69,13 @@ function valueNow(a, rates) {
   if (a.currentValue !== null && a.currentValue !== undefined) return a.currentValue;
   const e = estimateValue(a, rates);
   return e !== null ? e : (a.purchasePrice ?? 0);
+}
+// A web page for the item (product page, manual, shop). Only http(s) links; "www.x.com" gets https://.
+function cleanUrl(v) {
+  let s = cleanString(v, 1000).replace(/\s+/g, '');
+  if (!s) return '';
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(s)) s = 'https://' + s;
+  try { const u = new URL(s); return (u.protocol === 'https:' || u.protocol === 'http:') && u.hostname.includes('.') ? u.href : ''; } catch (_) { return ''; }
 }
 function cleanMoney(v) {
   if (v === undefined || v === null || v === '') return null;
@@ -122,6 +130,7 @@ function emptyData() {
       depreciation: {} // category -> percent lost per year
     },
     policies: [],
+    bin: [], // deleted items, kept for BIN_DAYS: [{ asset, deletedAt }]
     categories: DEFAULT_CATEGORIES.slice(),
     locations: DEFAULT_LOCATIONS.slice(),
     assets: []
@@ -206,6 +215,7 @@ class Store {
     out.assets = Array.isArray(out.assets) ? out.assets.map(a => this._normaliseAsset(a, a, true)) : [];
     if (out.vault && typeof out.vault !== 'object') delete out.vault;
     out.settings.autoBackup = Object.assign(emptyData().settings.autoBackup, (d && d.settings && d.settings.autoBackup) || {});
+    out.bin = Array.isArray(out.bin) ? out.bin.filter(b => b && b.asset && b.asset.id).map(b => ({ asset: this._normaliseAsset(b.asset, b.asset, true), deletedAt: b.deletedAt || nowIso() })) : [];
     out.policies = Array.isArray(out.policies) ? out.policies.map(p => this._normalisePolicy(p, p)) : [];
     out.version = DATA_VERSION;
     return out;
@@ -214,7 +224,7 @@ class Store {
   save() {
     if (!this.data) throw new Error('OpenSafe is locked.');
     if (this.vault && this.keys && this.keys[sec.KEY_VAULT] && this.data.vault) {
-      const vjson = Buffer.from(JSON.stringify({ assets: this.vault.assets, fileMeta: this.vault.fileMeta }));
+      const vjson = Buffer.from(JSON.stringify({ assets: this.vault.assets, fileMeta: this.vault.fileMeta, bin: this.vault.bin || [] }));
       this.data.vault.blob = sec.seal(this.keys[sec.KEY_VAULT], sec.KEY_VAULT, vjson).toString('base64');
     }
     const json = Buffer.from(JSON.stringify(this.data, null, 2));
@@ -252,13 +262,14 @@ class Store {
     };
     for (const f of STRING_FIELDS) {
       const v = input[f] !== undefined ? input[f] : existing && existing[f];
-      a[f] = DATE_FIELDS.has(f) ? cleanDate(v) : f === 'location' ? cleanLocation(v) : cleanString(v, f === 'notes' ? MAX_STRING : 200);
+      a[f] = DATE_FIELDS.has(f) ? cleanDate(v) : f === 'location' ? cleanLocation(v) : f === 'webLink' ? cleanUrl(v) : cleanString(v, f === 'notes' ? MAX_STRING : 200);
     }
     for (const f of MONEY_FIELDS) {
       const v = input[f] !== undefined ? input[f] : existing && existing[f];
       a[f] = cleanMoney(v);
     }
     a.tags = cleanTags(input.tags !== undefined ? input.tags : existing && existing.tags);
+    a.grab = input.grab !== undefined ? input.grab === true || input.grab === 'on' || input.grab === 'true' : !!(existing && existing.grab); // on the grab list (save first in a fire or flood)
     a.details = cleanDetails(input.details !== undefined ? input.details : existing && existing.details);
     if (!a.name) a.name = 'Untitled item';
     if (!STATUSES.includes(a.status)) a.status = 'Owned';
@@ -312,6 +323,7 @@ class Store {
       }
       if (c.status !== 'Lent out') Object.assign(set, { lentTo: '', lentContact: '', lentDate: '', dueBack: '' });
     }
+    if (c.grab === 'add' || c.grab === 'remove') set.grab = c.grab === 'add';
     if (typeof c.policyId === 'string') {
       if (c.policyId && !(this.data.policies || []).some(p => p.id === c.policyId)) throw new Error('That policy no longer exists.');
       set.policyId = c.policyId;
@@ -335,18 +347,62 @@ class Store {
     if (a.location && !this.data.locations.includes(a.location)) this.data.locations.push(a.location);
   }
 
+  /** Move an item to the deleted items bin. Its photos and documents stay until it's deleted for good. */
   deleteAsset(id) {
-    const list = this.data.assets.some(a => a.id === id) ? this.data.assets : (this.vault ? this.vault.assets : []);
+    const inVault = !!(this.vault && this.vault.assets.some(a => a.id === id));
+    const list = inVault ? this.vault.assets : this.data.assets;
     const i = list.findIndex(a => a.id === id);
     if (i < 0) return false;
     const [gone] = list.splice(i, 1);
     for (const a of this.allAssets()) if (a.partOf === id) a.partOf = '';
-    if (this.vault) for (const r of [...gone.photos, ...gone.documents]) delete this.vault.fileMeta[r.id];
-    const dir = this._assetDir(id);
-    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+    const bin = inVault ? (this.vault.bin = this.vault.bin || []) : this.data.bin;
+    bin.push({ asset: gone, deletedAt: nowIso() });
     this.save();
     return true;
   }
+  _binEntries() { return [...this.data.bin.map(b => ({ b, list: this.data.bin, inVault: false })), ...(this.vault ? (this.vault.bin || []).map(b => ({ b, list: this.vault.bin, inVault: true })) : [])]; }
+  inBin(id) { return this._binEntries().some(e => e.b.asset.id === id); }
+  binView() {
+    const day = 86400000;
+    return this._binEntries().map(({ b, inVault }) => ({
+      id: b.asset.id, name: b.asset.name, category: b.asset.category, location: b.asset.location, deletedAt: b.deletedAt, inVault,
+      photos: b.asset.photos.length, documents: b.asset.documents.length,
+      daysLeft: Math.max(0, BIN_DAYS - Math.floor((Date.now() - Date.parse(b.deletedAt)) / day))
+    })).sort((x, y) => y.deletedAt.localeCompare(x.deletedAt));
+  }
+  restoreAsset(id) {
+    const e = this._binEntries().find(x => x.b.asset.id === id);
+    if (!e) throw new Error('That item isn\'t in the deleted items bin.');
+    if (this.getAsset(id)) throw new Error('An item with the same id is already in OpenSafe.');
+    e.list.splice(e.list.indexOf(e.b), 1);
+    const a = e.b.asset;
+    if (a.partOf && !this.getAsset(a.partOf)) a.partOf = '';
+    a.updatedAt = nowIso();
+    (e.inVault ? this.vault.assets : this.data.assets).push(a);
+    this._learnLists(a);
+    this.save();
+    return a;
+  }
+  /** Delete for good: the item and all its photos and documents. */
+  purgeAsset(id, { save = true } = {}) {
+    const e = this._binEntries().find(x => x.b.asset.id === id);
+    if (!e) return false;
+    e.list.splice(e.list.indexOf(e.b), 1);
+    if (this.vault) for (const r of [...e.b.asset.photos, ...e.b.asset.documents]) delete this.vault.fileMeta[r.id];
+    const dir = this._assetDir(id);
+    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+    if (save) this.save();
+    return true;
+  }
+  emptyBin() { const ids = this._binEntries().map(e => e.b.asset.id); for (const id of ids) this.purgeAsset(id, { save: false }); this.save(); return ids.length; }
+  /** Delete for good anything that has been in the bin longer than BIN_DAYS. */
+  purgeOldBin(now = Date.now()) {
+    const old = this._binEntries().filter(e => now - Date.parse(e.b.deletedAt) > BIN_DAYS * 86400000).map(e => e.b.asset.id);
+    for (const id of old) this.purgeAsset(id, { save: false });
+    if (old.length) this.save();
+    return old.length;
+  }
+
 
   // ---------- spreadsheet import ----------
   /** Add items read from a spreadsheet. Duplicates: same name and serial number, or (with no
@@ -569,6 +625,7 @@ class Store {
       try {
         if (!it || typeof it !== 'object') continue;
         const id = typeof it.id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(it.id) ? it.id.toLowerCase() : null;
+        if (id && this.inBin(id)) { res.errors.push(`${cleanString(it.name, 200) || 'An item'}: it's in the deleted items bin on this PC. Restore it first if you want to keep it, then import again.`); continue; }
         let asset = id ? this.getAsset(id) : null;
         const incoming = this._normaliseAsset(Object.assign({}, it, { id: undefined, source: 'phone' }), null);
         let changed = false;
@@ -631,6 +688,7 @@ class Store {
       if (applied.has(uidL)) continue;
       const asset = this.getAsset(String(u.itemId).toLowerCase());
       const label = cleanString(u.itemName, 200) || 'Item ' + String(u.itemId).slice(0, 8);
+      if (!asset && this.inBin(String(u.itemId).toLowerCase())) { res.skippedChanges.push(`${label}: it's in the deleted items bin. Restore it and import the file again to apply this change.`); continue; }
       if (!asset) {
         res.skippedChanges.push(this.data.vault && !this.vaultUnlocked()
           ? `${label}: not found. If it's in the vault, unlock the vault and import the file again.`
@@ -902,7 +960,7 @@ class Store {
   toCSV() {
     const cols = ['name', 'category', 'location', 'brand', 'model', 'serial', 'status', 'condition',
       'purchaseDate', 'purchasePrice', 'supplier', 'currentValue', 'warrantyExpiry', 'insurer',
-      'policyNumber', 'insuredValue', 'barcode', 'lentTo', 'lentContact', 'lentDate', 'dueBack', 'soldDate', 'soldPrice', 'soldTo',
+      'policyNumber', 'insuredValue', 'barcode', 'webLink', 'lentTo', 'lentContact', 'lentDate', 'dueBack', 'soldDate', 'soldPrice', 'soldTo',
       'reg', 'vin', 'engineNo', 'mileage', 'motDue', 'taxDue', 'hin', 'engineHours', 'tags', 'notes', 'photos', 'documents'];
     const esc = (v) => {
       let s = v === null || v === undefined ? '' : String(v);
@@ -1166,7 +1224,7 @@ class Store {
       blob: null
     };
     this.keys[sec.KEY_VAULT] = vk;
-    this.vault = { assets: [], fileMeta: {} };
+    this.vault = { assets: [], fileMeta: {}, bin: [] };
     this.save();
     return true;
   }
@@ -1177,9 +1235,10 @@ class Store {
     if (this.data.vault.blob) v = JSON.parse(sec.open(this.keys, Buffer.from(this.data.vault.blob, 'base64')).toString('utf8'));
     v.assets = Array.isArray(v.assets) ? v.assets.map(a => this._normaliseAsset(a, a, true)) : [];
     v.fileMeta = v.fileMeta && typeof v.fileMeta === 'object' ? v.fileMeta : {};
-    // forget names of vault files that no longer exist
+    v.bin = Array.isArray(v.bin) ? v.bin.filter(b => b && b.asset && b.asset.id).map(b => ({ asset: this._normaliseAsset(b.asset, b.asset, true), deletedAt: b.deletedAt || nowIso() })) : [];
+    // forget names of vault files that no longer exist (items in the bin still count)
     const live = new Set();
-    for (const a of this.data.assets) for (const r of [...a.photos, ...a.documents]) if (r.vault) live.add(r.id);
+    for (const a of [...this.data.assets, ...(this.data.bin || []).map(b => b.asset)]) for (const r of [...a.photos, ...a.documents]) if (r.vault) live.add(r.id);
     for (const id of Object.keys(v.fileMeta)) if (!live.has(id)) delete v.fileMeta[id];
     this.vault = v;
   }
@@ -1202,6 +1261,7 @@ class Store {
     }
     this._pin = { fails: 0, until: 0 };
     this._openVault(vk);
+    try { this.purgeOldBin(); } catch (_) { /* keep the vault opening */ }
     return true;
   }
 
@@ -1243,6 +1303,7 @@ class Store {
     if (!this.vault) throw new Error('Unlock the vault first.');
     const files = this.data.assets.reduce((n, a) => n + [...a.photos, ...a.documents].filter(r => r.vault).length, 0);
     if (this.vault.assets.length || files) throw new Error(`Move everything out of the vault first (${this.vault.assets.length} item(s) and ${files} file(s) are still in it).`);
+    if ((this.vault.bin || []).length) throw new Error(`The vault's deleted items (${this.vault.bin.length}) are still in its bin. Restore them or delete them for good first.`);
     delete this.data.vault;
     this.lockVault();
     this.save();
@@ -1322,4 +1383,4 @@ class Store {
   }
 }
 
-module.exports = { Store, STATUSES, CONDITIONS, DOC_TYPES, POLICY_TYPES, DETAIL_FIELDS, cleanMoney, cleanDate, cleanLocation, inLocation, estimateValue, valueNow, emptyData };
+module.exports = { Store, STATUSES, CONDITIONS, DOC_TYPES, POLICY_TYPES, DETAIL_FIELDS, cleanMoney, cleanDate, cleanLocation, inLocation, cleanUrl, estimateValue, valueNow, emptyData };

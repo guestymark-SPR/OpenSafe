@@ -203,6 +203,7 @@
         <label class="f">Location<input name="location" list="bkLocs" maxlength="200" placeholder="Keep as it is"></label>
         <label class="f">Category<input name="category" list="bkCats" maxlength="200" placeholder="Keep as it is"></label>
         <label class="f">Status<select name="status" id="bkStatus">${opt('', 'Keep as it is', '')}${L.statuses.map(x => opt(x, x, '')).join('')}</select></label>
+        <label class="f">Grab list<select name="grab">${opt('', 'Keep as it is', '')}${opt('add', 'Add to the grab list', '')}${opt('remove', 'Take off the grab list', '')}</select></label>
         <label class="f">Insurance policy<select name="policyId">${opt('__keep', 'Keep as it is', '__keep')}${opt('', 'Not linked to a policy', '__keep')}${pols.map(p => opt(p.id, `${p.insurer}${p.type ? ' · ' + p.type : ''}${p.policyNumber ? ' · ' + p.policyNumber : ''}`, '__keep')).join('')}</select></label>
         <div id="bkLend" class="s3 subgrid hidden"><h3>Lent out</h3>
           <label class="f">Lent to *<input name="lentTo" maxlength="200"></label><label class="f">Phone or email<input name="lentContact" maxlength="200"></label>
@@ -218,7 +219,7 @@
       e.preventDefault();
       const raw = Object.fromEntries(new FormData(e.target).entries());
       if (raw.policyId === '__keep') delete raw.policyId;
-      if (!raw.location.trim() && !raw.category.trim() && !raw.status && raw.policyId === undefined) { $('#bkErr').textContent = 'Choose at least one thing to change.'; return; }
+      if (!raw.location.trim() && !raw.category.trim() && !raw.status && !raw.grab && raw.policyId === undefined) { $('#bkErr').textContent = 'Choose at least one thing to change.'; return; }
       busy(e.target, true, 'Saving…');
       try { const n = await keep.bulkUpdate(ids, raw); closeModal(); state.sel.clear(); toast(`✓ ${n} item${n === 1 ? '' : 's'} changed`); await refresh(); }
       catch (ex) { $('#bkErr').textContent = ex.message; busy(e.target, false); }
@@ -412,9 +413,9 @@
   // ---------- render ----------
   function render() {
     if (!state.snap) return;
-    $$('#nav button').forEach(b => b.classList.toggle('on', b.dataset.nav === (state.view === 'item' ? 'items' : state.view)));
+    $$('#nav button').forEach(b => b.classList.toggle('on', b.dataset.nav === (state.view === 'item' || state.view === 'bin' ? 'items' : state.view)));
     const v = $('#view');
-    const views = { dashboard: viewDashboard, items: viewItems, item: viewItem, reminders: viewReminders, phone: viewPhone, reports: viewReports, settings: viewSettings, vault: viewVault, policies: viewPolicies };
+    const views = { dashboard: viewDashboard, items: viewItems, item: viewItem, reminders: viewReminders, phone: viewPhone, reports: viewReports, settings: viewSettings, vault: viewVault, policies: viewPolicies, bin: viewBin };
     v.innerHTML = (views[state.view] || viewDashboard)();
     if (state.view === 'phone') { loadCapture(); loadPhone(); const d = $('#wifiDetails'); if (d) d.ontoggle = () => { state.wifiOpen = d.open; }; }
     if (state.view === 'item') wireDrop();
@@ -490,6 +491,7 @@
       if (f.gap === 'receipt' && a.documents.some(d => d.type === 'Receipt')) return false;
       if (f.gap === 'insurer' && (a.insurer || a.policyId || !value(a))) return false;
       if (f.gap === 'photo' && a.photos.length) return false;
+      if (f.gap === 'grab' && !a.grab) return false;
       if (q) {
         const d = a.details || {};
         const hay = [a.name, a.brand, a.model, a.serial, a.barcode, a.category, a.location, a.notes, a.supplier, a.tags.join(' '), a.lentTo, a.lentContact, a.soldTo, a.insurer, a.policyNumber,
@@ -524,8 +526,8 @@
       <span class="spacer"></span>
       <span class="seg"><button data-layout="table" class="${f.layout === 'table' ? 'on' : ''}">List</button><button data-layout="grid" class="${f.layout === 'grid' ? 'on' : ''}">Photos</button></span>
     </div>
-    ${f.gap ? `<div style="margin:-4px 0 12px"><span class="pill warn">Showing items with ${gapNames[f.gap]}</span> <button class="btn small" data-action="clearGap">Clear</button></div>` : ''}`;
-    const head = `<div class="head"><h1>Items</h1><span class="sub">${list.length} shown · ${money0(total)}</span><span class="spacer"></span><button class="btn" data-action="importPick">Import from phone…</button><button class="btn primary" data-action="new">+ Add item</button></div>`;
+    ${f.gap ? `<div style="margin:-4px 0 12px"><span class="pill warn">${f.gap === 'grab' ? 'Showing the grab list' : `Showing items with ${gapNames[f.gap]}`}</span> <button class="btn small" data-action="clearGap">Clear</button></div>` : ''}`;
+    const head = `<div class="head"><h1>Items</h1><span class="sub">${list.length} shown · ${money0(total)}</span><span class="spacer"></span>${(state.snap.data.bin || []).length ? `<button class="btn" data-nav="bin">🗑 Deleted items (${state.snap.data.bin.length})</button>` : ''}<button class="btn" data-action="importPick">Import from phone…</button><button class="btn primary" data-action="new">+ Add item</button></div>`;
     if (!list.length) return head + toolbar + `<div class="card empty">${d.assets.length ? 'No items match these filters.' : 'No items yet. Add one here or from your phone.'}</div>`;
     if (f.layout === 'grid') {
       return head + toolbar + `<div class="cards">${list.map(a => `<div class="icard" data-open="${a.id}">
@@ -660,6 +662,7 @@
           ? kv('Insured by', `<a href="#" data-nav="policies">${esc(pol.insurer)}</a>${pol.type ? ' · ' + esc(pol.type) : ''}`) + kv('Policy number', esc(pol.policyNumber)) + kv('Insured value', a.insuredValue !== null ? money(a.insuredValue) : '')
           : kv('Insurer', esc(a.insurer)) + kv('Policy number', esc(a.policyNumber)) + kv('Insured value', a.insuredValue !== null ? money(a.insuredValue) : ''); })()}
         ${kv('Tags', a.tags.map(x => `<span class="pill">${esc(x)}</span>`).join(''))}${kv('Added', ukDate(a.createdAt.slice(0, 10)) + (a.source === 'phone' ? ' from phone' : ''))}${kv('Last changed', ukDate(a.updatedAt.slice(0, 10)))}
+      ${a.webLink ? kv('Web page', `<a href="#" data-action="openLink" title="${esc(a.webLink)}">${esc((() => { try { const u = new URL(a.webLink); return u.hostname.replace(/^www\./, '') + (u.pathname.length > 1 ? u.pathname.slice(0, 28) + (u.pathname.length > 28 ? '…' : '') : ''); } catch (_) { return a.webLink; } })())}</a> <button class="btn small" data-action="openLink">Open</button>`) : ''}
       ${a.barcode ? kv('Barcode', `<span class="mono">${esc(a.barcode)}</span> <button class="btn small" data-action="bcLookup">Look up</button>`) : ''}
       ${a.status === 'Lent out' ? kv('Lent to', esc(a.lentTo)) + kv('Contact', esc(a.lentContact)) + kv('Lent on', a.lentDate ? ukDate(a.lentDate) : '') + kv('Due back', a.dueBack ? ukDate(a.dueBack) : '') : ''}
       ${a.status === 'Sold' ? kv('Sold on', a.soldDate ? ukDate(a.soldDate) : '') + kv('Sold for', a.soldPrice !== null && a.soldPrice !== undefined ? money(a.soldPrice) : '') + kv('Sold to', esc(a.soldTo)) : ''}
@@ -701,9 +704,20 @@
       ${cover(a) ? `<img class="cover" src="${img(a, cover(a))}" data-zoom="${img(a, cover(a))}" alt="">` : '<div class="cover" data-tab="photos">▣</div>'}
       <div><h1>${esc(a.name)}</h1><div class="muted">${esc([a.brand, a.model].filter(Boolean).join(' '))}</div>
       <div style="margin-top:10px;font-size:22px;font-weight:650">${value(a) ? money(value(a)) : ''}</div>
-      <div style="margin-top:6px">${a.status !== 'Owned' ? `<span class="pill">${esc(a.status)}</span>` : ''}${warrantyPill(a)}${a.insurer ? '<span class="pill good">Insured</span>' : ''}</div></div>
+      <div style="margin-top:6px">${a.grab ? '<span class="pill bad">🚨 Grab list</span>' : ''}${a.status !== 'Owned' ? `<span class="pill">${esc(a.status)}</span>` : ''}${warrantyPill(a)}${a.insurer ? '<span class="pill good">Insured</span>' : ''}</div></div>
     </div>
     <div class="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${t === k ? 'on' : ''}">${l}</button>`).join('')}</div>${body}`;
+  }
+
+  function viewBin() {
+    const b = state.snap.data.bin || [];
+    return `<div class="head"><button class="btn" data-nav="items">← Items</button><h1 style="margin-left:8px">Deleted items</h1><span class="sub">Kept for 30 days, then deleted for good</span><span class="spacer"></span>${b.length ? '<button class="btn danger" data-action="binEmpty">Empty Deleted items</button>' : ''}</div>
+      ${b.length ? `<table class="list"><thead><tr><th>Item</th><th>Category</th><th>Location</th><th>Deleted</th><th>Deleted for good in</th><th></th></tr></thead><tbody>
+      ${b.map(x => `<tr><td><b>${esc(x.name)}</b> ${x.inVault ? '<span class="pill vault">🔒 Vault</span>' : ''}<div class="meta">${x.photos} photo${x.photos === 1 ? '' : 's'}, ${x.documents} document${x.documents === 1 ? '' : 's'}</div></td><td>${esc(x.category)}</td><td>${esc(x.location)}</td>
+        <td class="nowrap">${ukDate(x.deletedAt.slice(0, 10))}</td><td class="nowrap">${x.daysLeft ? `${x.daysLeft} day${x.daysLeft === 1 ? '' : 's'}` : 'Today'}</td>
+        <td class="r nowrap"><button class="btn small primary" data-action="binRestore" data-id="${x.id}">Restore</button> <button class="btn small danger" data-action="binPurge" data-id="${x.id}">Delete for good</button></td></tr>`).join('')}</tbody></table>`
+      : '<div class="empty">Nothing here. Deleted items stay here for 30 days so you can restore them.</div>'}
+      ${state.snap.security.vault.exists && !state.snap.security.vault.unlocked ? '<p class="faint" style="margin-top:12px">Items deleted from the vault are only shown while the vault is unlocked.</p>' : ''}`;
   }
 
   function viewReminders() {
@@ -810,11 +824,16 @@
     return `<div class="head"><h1>Reports</h1></div>
     <div class="grid g2">
       <div class="card"><h2>Insurance / inventory report (PDF)</h2>
-        <p class="muted">A printable list of everything you own, grouped by category, with photos, serial numbers, prices, values and whether you have a receipt. Useful for your insurer, a claim, or a moving company.</p>
+        <p class="muted">A printable list of everything you own, with photos, serial numbers, prices, values and whether you have a receipt. Useful for your insurer, a claim, or a moving company.</p>
+        <div class="row" style="display:flex;gap:10px;flex-wrap:wrap"><label class="f" style="flex:1;min-width:160px">Group by<select id="rGroup">${opt('category', 'Category', 'category')}${opt('location', 'Room / location', 'category')}</select></label>
+        <label class="f" style="flex:2;min-width:200px">Only this place<select id="rPlace">${opt('', 'Everywhere', '')}${locPaths().map(c => opt(c, locLabel(c), '')).join('')}</select></label></div>
         <p><label class="switch" style="font-weight:500"><input type="checkbox" id="rPhotos" checked> Include a photo of each item</label></p>
         <p><label class="switch" style="font-weight:500"><input type="checkbox" id="rInactive"> Include sold, disposed and lost items</label></p>
         <button class="btn primary" data-action="report">Save PDF…</button></div>
       ${state.snap.security.vault.exists ? `<div class="note" style="grid-column:1/-1">🔒 Vault items are only included while the vault is open. It's ${state.snap.security.vault.unlocked ? '<b>open</b> now, so they will be included' : '<b>locked</b> now, so they will be left out'}. Reports and spreadsheets are saved unencrypted, so keep them somewhere safe.</div>` : ''}
+      <div class="card"><h2>🚨 Grab list (PDF)</h2>
+        <p class="muted">One page of the things to save first in a fire or flood, sorted by room, with a photo of each. ${state.snap.data.assets.filter(x => x.grab).length ? `<b>${state.snap.data.assets.filter(x => x.grab).length}</b> item${state.snap.data.assets.filter(x => x.grab).length === 1 ? ' is' : 's are'} on it.` : 'Nothing is on it yet: tick <b>On the grab list</b> when editing an item, or use <b>Change…</b> on several items.'}</p>
+        <p>${state.snap.data.assets.some(x => x.grab) ? '<button class="btn primary" data-action="grabPdf">Save PDF…</button> <button class="btn" data-action="gap" data-gap="grab">Show the items</button>' : ''}</p></div>
       <div class="card"><h2>Spreadsheet (CSV)</h2>
         <p class="muted">Every item and all its fields, for Excel or Google Sheets.</p>
         <button class="btn primary" data-action="csv">Export CSV…</button></div>
@@ -914,7 +933,8 @@
           ${inp('soldDate', 'Sold on', 'type="date"')}${inp('soldPrice', 'Sold for (£)', 'inputmode="decimal"')}${inp('soldTo', 'Sold to / where')}</div>
         <h3>Purchase and value</h3>
         ${inp('purchaseDate', 'Bought on', 'type="date"')}${inp('purchasePrice', 'Price paid (£)', 'inputmode="decimal"')}${inp('supplier', 'Bought from')}
-        ${inp('currentValue', 'Value now (£)', 'inputmode="decimal"')}${inp('warrantyExpiry', 'Warranty until', 'type="date"')}${inp('barcode', 'Barcode', 'inputmode="numeric"')}
+        ${inp('currentValue', 'Value now (£)', 'inputmode="decimal"')}${inp('warrantyExpiry', 'Warranty until', 'type="date"')}${inp('barcode', 'Barcode', 'inputmode="numeric"')}${inp('webLink', 'Web page (link)', 'type="url" placeholder="https://… product page, manual or shop"', 's2')}
+        <label class="switch s3" style="font-weight:500"><input type="checkbox" name="grab" ${a.grab ? 'checked' : ''}> 🚨 On the grab list: one of the first things to save in a fire or flood</label>
         <h3>Vehicle or boat</h3>
         <label class="f">Extra details for<select name="det_kind" id="fKind">${opt('', 'Nothing (general item)', det.kind)}${opt('vehicle', 'A vehicle (car, van, motorbike)', det.kind)}${opt('boat', 'A boat', det.kind)}</select></label>
         <div class="s2 muted" style="align-self:end;font-size:12.5px" id="kindHint">${det.kind ? '' : 'Choose this for cars, motorbikes and boats to record registration, VIN, MOT and more.'}</div>
@@ -948,6 +968,7 @@
       const data = {}; const details = {};
       for (const [k, v] of Object.entries(raw)) { if (k.startsWith('det_')) details[k.slice(4)] = v; else data[k] = v; }
       data.details = details;
+      data.grab = !!e.target.grab.checked;
       if (!data.name.trim()) { $('#formErr').textContent = 'Give the item a name.'; return; }
       for (const k of ['purchasePrice', 'currentValue', 'insuredValue', 'soldPrice']) {
         if (data[k] && !Number.isFinite(Number(String(data[k]).replace(/[£,\s]/g, '')))) { $('#formErr').textContent = 'Money amounts must be numbers, e.g. 249.99'; return; }
@@ -1041,7 +1062,7 @@
         case 'back': go('items'); break;
         case 'edit': itemForm(a); break;
         case 'dup': { const c = await run(() => keep.duplicateAsset(a.id), 'Copy made – photos and documents are not copied'); await refresh(); go('item', { itemId: c.id, tab: 'overview' }); break; }
-        case 'del': { const ok = await run(() => keep.deleteAsset(a.id)); if (ok) { toast('Deleted'); await refresh(); go('items'); } break; }
+        case 'del': { const ok = await run(() => keep.deleteAsset(a.id)); if (ok) { toast('Moved to Deleted items. You can restore it for 30 days.', 4500); await refresh(); go('items'); } break; }
         case 'pick': { const r = await run(() => keep.pickFiles(a.id, act.dataset.kind, $('#docType') ? $('#docType').value : 'Other')); reportAdd(r); await refresh(); break; }
         case 'rmAtt': if (confirm('Delete this file from OpenSafe?')) { await run(() => keep.removeAttachment(a.id, act.dataset.att), 'Deleted'); await refresh(); } break;
         case 'cover': await run(() => keep.setCover(a.id, act.dataset.att)); await refresh(); break;
@@ -1049,6 +1070,9 @@
         case 'newService': serviceForm(a); break;
         case 'editService': if (!e.target.closest('button')) serviceForm(a, a.service.find(s => s.id === act.dataset.sid)); break;
         case 'rmService': e.stopPropagation(); if (confirm('Delete this service entry?')) { await run(() => keep.deleteService(a.id, act.dataset.sid), 'Deleted'); await refresh(); } break;
+        case 'binRestore': { const r = await run(() => keep.restoreItem(act.dataset.id)); toast(`✓ ${r.name} restored`); await refresh(); break; }
+        case 'binPurge': { const ok = await run(() => keep.purgeItem(act.dataset.id)); if (ok) { toast('Deleted for good'); await refresh(); } break; }
+        case 'binEmpty': { const n = await run(() => keep.emptyBin()); if (n) { toast(`${n} item${n === 1 ? '' : 's'} deleted for good`); await refresh(); } break; }
         case 'filterLoc': state.f = Object.assign(state.f, { location: act.dataset.loc, category: '', status: 'active', gap: '', q: '' }); go('items'); break;
         case 'filterCat': state.f = Object.assign(state.f, { category: act.dataset.cat === 'Uncategorised' ? '' : act.dataset.cat, status: 'active', gap: '', q: '' }); go('items'); break;
         case 'gap': state.f = Object.assign(state.f, { gap: act.dataset.gap, status: 'active', category: '', location: '', q: '' }); go('items'); break;
@@ -1157,7 +1181,9 @@
         case 'csvPick': { try { const r = await keep.csvPick(); if (r) csvForm(r); } catch (ex) { toast('⚠ ' + ex.message, 8000); } break; }
         case 'importPick': { await run(() => keep.importPick()); await refresh(); break; }
         case 'phoneReset': await run(() => keep.phoneReset()); loadPhone(); break;
-        case 'report': { const p = await run(() => keep.exportReport({ includePhotos: $('#rPhotos').checked, includeInactive: $('#rInactive').checked })); if (p) toast('Report saved'); break; }
+        case 'report': { const p = await run(() => keep.exportReport({ includePhotos: $('#rPhotos').checked, includeInactive: $('#rInactive').checked, groupBy: $('#rGroup').value, place: $('#rPlace').value })); if (p) toast('Report saved'); break; }
+        case 'openLink': e.preventDefault(); await run(() => keep.openItemLink(a.id)); break;
+        case 'grabPdf': { const p = await run(() => keep.exportGrab()); if (p) toast('Grab list saved'); break; }
         case 'csv': { const p = await run(() => keep.exportCsv()); if (p) toast('CSV saved'); break; }
         case 'saveDep': { const dep = {}; for (const i of document.querySelectorAll('[data-dep]')) if (i.value.trim()) dep[i.dataset.dep] = i.value.trim(); try { await run(() => keep.updateSettings({ depreciation: dep }), 'Saved'); await refresh(); } catch (_) {} break; }
         case 'saveRem': await run(() => keep.updateSettings({ reminderDays: $('#remDays').value }), 'Saved'); await refresh(); break;

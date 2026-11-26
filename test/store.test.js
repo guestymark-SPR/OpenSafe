@@ -47,7 +47,10 @@ test('photos, documents and path safety', () => {
   assert.ok(!s.attachmentPath(a.id, '../../x').includes('..'));
   s.removeAttachment(a.id, p.id);
   assert.strictEqual(s.getAsset(a.id).photos.length, 0);
-  s.deleteAsset(a.id);
+  s.addPhoto(a.id, 'b.png', Buffer.from('png'));
+  s.deleteAsset(a.id);                                    // to the bin: files kept
+  assert.ok(fs.existsSync(path.join(s.attachDir, a.id)));
+  s.purgeAsset(a.id);                                     // deleted for good: files gone
   assert.ok(!fs.existsSync(path.join(s.attachDir, a.id)));
 });
 
@@ -456,4 +459,65 @@ test('spreadsheet import: mapping, UK dates, money, duplicates, round trip of ow
   assert.strictEqual(s2.importItems(back.items).added, 3); // the export holds each item twice; duplicates skipped
   const d2 = s2.data.assets.find(a => a.name === 'Drill, cordless');
   assert.deepStrictEqual([d2.serial, d2.purchasePrice, d2.purchaseDate, d2.location, d2.status], ['MK1', 1299.5, '2025-03-14', 'Home / Garage', 'Lent out']);
+});
+
+test('deleted items bin: restore, delete for good, 30-day clear-out, phone imports', () => {
+  const s = tmpStore();
+  const drill = s.saveAsset({ name: 'Drill', location: 'Garage' });
+  const bat = s.saveAsset({ name: 'Battery', partOf: drill.id });
+  s.addPhoto(drill.id, 'd.png', Buffer.from('png'));
+  s.deleteAsset(drill.id);
+  assert.strictEqual(s.getAsset(drill.id), null);
+  assert.strictEqual(s.getAsset(bat.id).partOf, '');
+  assert.deepStrictEqual(s.binView().map(b => [b.name, b.daysLeft, b.photos]), [['Drill', 30, 1]]);
+  assert.strictEqual(s.summary().count, 1);
+  // a phone export that still mentions it
+  const r = s.importCapture({ format: 'opensafe-export', version: 2, items: [{ id: drill.id, name: 'Drill' }],
+    updates: [{ id: '99999999-aaaa-4aaa-8aaa-aaaaaaaaaaaa', itemId: drill.id, at: new Date().toISOString(), summary: 'Moved to Shed', changes: { location: 'Shed' } }] });
+  assert.strictEqual(r.added, 0);
+  assert.match(r.errors[0], /deleted items bin/);
+  assert.match(r.skippedChanges[0], /deleted items bin/);
+  // restore keeps photos
+  s.restoreAsset(drill.id);
+  assert.strictEqual(s.getAsset(drill.id).photos.length, 1);
+  assert.ok(s.readAttachment(drill.id, s.getAsset(drill.id).photos[0].file).length);
+  assert.throws(() => s.restoreAsset(drill.id), /isn't in the deleted items bin/);
+  // survives a reload
+  s.deleteAsset(bat.id);
+  const s2 = new Store(s.dir); s2.load();
+  assert.deepStrictEqual(s2.binView().map(b => b.name), ['Battery']);
+  // clear-out after 30 days
+  s.data.bin[0].deletedAt = new Date(Date.now() - 31 * 86400000).toISOString();
+  s.deleteAsset(drill.id);
+  assert.strictEqual(s.purgeOldBin(), 1);
+  assert.deepStrictEqual(s.binView().map(b => b.name), ['Drill']);
+  assert.strictEqual(s.emptyBin(), 1);
+  assert.ok(!fs.existsSync(path.join(s.attachDir, drill.id)));
+});
+
+test('web link, grab list flag, report grouped by room for one place', () => {
+  const { cleanUrl } = require('../src/store');
+  assert.strictEqual(cleanUrl('www.makitauk.com/products/dhp485'), 'https://www.makitauk.com/products/dhp485');
+  assert.strictEqual(cleanUrl('javascript:alert(1)'), '');
+  assert.strictEqual(cleanUrl('file:///C:/x'), '');
+  assert.strictEqual(cleanUrl('not a link'), '');
+  const s = tmpStore();
+  const a = s.saveAsset({ name: 'Passport', location: 'Home / Bedroom', grab: true, webLink: 'gov.uk/renew-adult-passport' });
+  assert.strictEqual(a.grab, true);
+  assert.strictEqual(a.webLink, 'https://gov.uk/renew-adult-passport');
+  s.saveAsset({ id: a.id, name: 'Passport' });                 // grab not sent: kept
+  assert.strictEqual(s.getAsset(a.id).grab, true);
+  s.saveAsset({ id: a.id, name: 'Passport', grab: false });
+  assert.strictEqual(s.getAsset(a.id).grab, false);
+  const b = s.saveAsset({ name: 'Laptop', location: 'Home / Office', currentValue: 900 });
+  s.saveAsset({ name: 'Drill', location: 'Garage', currentValue: 100 });
+  s.bulkUpdate([a.id, b.id], { grab: 'add' });
+  assert.deepStrictEqual(s.allAssets().filter(x => x.grab).map(x => x.name).sort(), ['Laptop', 'Passport']);
+  const { buildGrabListHtml } = require('../src/grablist');
+  const g = buildGrabListHtml(s);
+  assert.ok(g.indexOf('Home / Bedroom') < g.indexOf('Home / Office') && !g.includes('Drill'));
+  const { buildReportHtml } = require('../src/report');
+  const r = buildReportHtml(s, { groupBy: 'location', place: 'Home', includePhotos: false });
+  assert.ok(r.includes('<h2>Home / Bedroom') && r.includes('<h2>Home / Office') && !r.includes('Drill'));
+  assert.ok(r.includes('Household inventory report: Home'));
 });

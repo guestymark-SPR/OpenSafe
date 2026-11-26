@@ -13,6 +13,7 @@ const ocr = require('./ocr');
 const phoneview = require('./phoneview');
 const { buildLabelsHtml } = require('./labels');
 const csv = require('./csv');
+const { buildGrabListHtml } = require('./grablist');
 const updater = require('./updater');
 const firewall = require('./firewall');
 
@@ -58,6 +59,7 @@ function sendSecurity() {
 
 /** Everything that should happen once the data is readable (at start-up, or after unlocking). */
 function afterUnlock() {
+  try { store.purgeOldBin(); } catch (_) { /* never block opening */ }
   if (store.data.settings.phoneLinkEnabled && !phone.running) startPhone().catch(() => {});
   setTimeout(checkAutoBackup, 20000);
   if (!backupTimer) backupTimer = setInterval(checkAutoBackup, 60 * 60 * 1000);
@@ -211,7 +213,8 @@ function remindOnStartup() {
 
 function snapshot() {
   if (store.isLocked()) return { locked: true, security: store.securityState(), version: require('../package.json').version };
-  const data = JSON.parse(JSON.stringify(Object.assign({}, store.data, { vault: undefined, assets: [] })));
+  const data = JSON.parse(JSON.stringify(Object.assign({}, store.data, { vault: undefined, assets: [], bin: [] })));
+  data.bin = store.binView();
   delete data.settings.phoneToken;
   data.assets = store.viewAssets();
   return {
@@ -338,7 +341,7 @@ function registerIpc() {
     const r = await dialog.showMessageBox(win, {
       type: 'warning', buttons: ['Delete', 'Cancel'], defaultId: 1, cancelId: 1,
       title: 'Delete item', message: `Delete "${a.name}"?`,
-      detail: `This removes the item and its ${a.photos.length} photo(s) and ${a.documents.length} document(s) from OpenSafe. Your daily backups in the data folder still hold the record.`
+      detail: `It goes to Deleted items with its ${a.photos.length} photo(s) and ${a.documents.length} document(s). You can restore it from there for 30 days, after which it's deleted for good.`
     });
     if (r.response !== 0) return false;
     return store.deleteAsset(id);
@@ -372,6 +375,19 @@ function registerIpc() {
     return Object.assign(res, { problems: problems.slice(0, 30), problemCount: problems.length });
   });
 
+  h('bin:restore', (id) => store.restoreAsset(String(id)));
+  h('bin:purge', async (id) => {
+    const b = store.binView().find(x => x.id === String(id));
+    if (!b) return false;
+    const r = await dialog.showMessageBox(win, { type: 'warning', buttons: ['Delete for good', 'Cancel'], defaultId: 1, cancelId: 1, title: 'Delete for good', message: `Delete "${b.name}" for good?`, detail: `Its ${b.photos} photo(s) and ${b.documents} document(s) are deleted too. This can't be undone.` });
+    return r.response === 0 ? store.purgeAsset(String(id)) : false;
+  });
+  h('bin:empty', async () => {
+    const n = store.binView().length;
+    if (!n) return 0;
+    const r = await dialog.showMessageBox(win, { type: 'warning', buttons: ['Empty Deleted items', 'Cancel'], defaultId: 1, cancelId: 1, title: 'Empty Deleted items', message: `Delete ${n} item${n === 1 ? '' : 's'} for good?`, detail: 'Their photos and documents are deleted too. This can\'t be undone.' });
+    return r.response === 0 ? store.emptyBin() : 0;
+  });
   h('value:add', (id, v) => store.addValuation(String(id), v || {}));
   h('value:remove', (id, vid) => store.removeValuation(String(id), String(vid)));
   h('asset:setParts', (id, ids) => store.setParts(String(id), Array.isArray(ids) ? ids.map(String) : []));
@@ -427,6 +443,18 @@ function registerIpc() {
     return r.filePath;
   });
 
+  h('export:grab', async () => {
+    const r = await dialog.showSaveDialog(win, { title: 'Save grab list', defaultPath: path.join(app.getPath('documents'), 'OpenSafe-grab-list.pdf'), filters: [{ name: 'PDF', extensions: ['pdf'] }] });
+    if (r.canceled || !r.filePath) return null;
+    fs.mkdirSync(OPEN_DIR, { recursive: true });
+    const tmp = path.join(OPEN_DIR, `grab-${Date.now()}.html`);
+    fs.writeFileSync(tmp, buildGrabListHtml(store), 'utf8');
+    const pw = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, javascript: false } });
+    try { await pw.loadFile(tmp); fs.writeFileSync(r.filePath, await pw.webContents.printToPDF({ pageSize: 'A4', printBackground: true, margins: { marginType: 'default' } })); }
+    finally { pw.destroy(); fs.rm(tmp, () => {}); }
+    shell.openPath(r.filePath);
+    return r.filePath;
+  });
   h('export:report', async (opts) => {
     const r = await dialog.showSaveDialog(win, {
       title: 'Save insurance report',
@@ -605,6 +633,13 @@ function registerIpc() {
   });
   h('capture:info', async () => ({ url: CAPTURE_URL, qr: await QRCode.toDataURL(CAPTURE_URL, { margin: 1, width: 360, errorCorrectionLevel: 'M' }) }));
   h('open:external', (which) => { if (which === 'capture') shell.openExternal(CAPTURE_URL); return true; });
+  // Opens an item's saved web page. The link comes from the store, not from the window, and must be http(s).
+  h('open:itemLink', (id) => {
+    const a = store.getAsset(String(id));
+    if (!a || !/^https?:\/\//i.test(a.webLink || '')) throw new Error('This item has no web page saved.');
+    shell.openExternal(a.webLink);
+    return true;
+  });
 
   h('update:status', () => updater.getStatus());
   h('update:check', () => updater.checkNow());

@@ -8,14 +8,19 @@ const ukDate = (s) => s ? new Date(s + 'T00:00:00Z').toLocaleDateString('en-GB',
 function buildReportHtml(store, opts) {
   const includeInactive = !!opts.includeInactive;
   const includePhotos = opts.includePhotos !== false;
+  const byLocation = opts.groupBy === 'location';
+  const place = String(opts.place || '');
+  const inPlace = (loc) => !place || (!!loc && (loc === place || loc.startsWith(place + ' / ')));
+  const key = (a) => byLocation ? (a.location || 'No location') : (a.category || 'Uncategorised');
   const assets = store.allAssets()
     .filter(a => includeInactive || !['Sold', 'Disposed', 'Lost / Stolen'].includes(a.status))
+    .filter(a => inPlace(a.location))
     .slice()
-    .sort((a, b) => (a.category || '').localeCompare(b.category || '') || a.name.localeCompare(b.name));
+    .sort((a, b) => key(a).localeCompare(key(b), 'en-GB') || a.name.localeCompare(b.name, 'en-GB'));
 
   const groups = new Map();
   for (const a of assets) {
-    const c = a.category || 'Uncategorised';
+    const c = key(a);
     if (!groups.has(c)) groups.set(c, []);
     groups.get(c).push(a);
   }
@@ -44,7 +49,7 @@ function buildReportHtml(store, opts) {
     for (const a of list) {
       const receipts = a.documents.filter(d => d.type === 'Receipt').length;
       body += `<tr>${includePhotos ? `<td class="ph">${photo(a)}</td>` : ''}
-        <td><b>${esc(a.name)}</b><div class="sub">${esc([a.brand, a.model].filter(Boolean).join(' '))}${a.location ? ' · ' + esc(a.location) : ''}${a.status !== 'Owned' ? ' · ' + esc(a.status) : ''}</div></td>
+        <td><b>${esc(a.name)}</b><div class="sub">${esc([[a.brand, a.model].filter(Boolean).join(' '), byLocation ? a.category : a.location, a.status !== 'Owned' ? a.status : ''].filter(Boolean).join(' · '))}</div></td>
         <td class="mono">${esc(a.serial) || '—'}</td>
         <td>${ukDate(a.purchaseDate)}<div class="sub">${esc(a.supplier)}</div></td>
         <td class="r">${gbp(a.purchasePrice)}</td>
@@ -69,8 +74,8 @@ function buildReportHtml(store, opts) {
   .sub{color:#666;font-size:8.5pt} .ph{width:58pt} img,.nophoto{width:54pt;height:40pt;object-fit:cover;border-radius:3pt;background:#eee;display:block}
   .foot{margin-top:18pt;color:#888;font-size:8pt}
 </style></head><body>
-<h1>Household inventory report</h1>
-<div class="meta">Generated ${esc(generated)} by OpenSafe · ${assets.length} item${assets.length === 1 ? '' : 's'}${includeInactive ? ' (including sold, disposed and lost items)' : ''}</div>
+<h1>Household inventory report${place ? ': ' + esc(place) : ''}</h1>
+<div class="meta">Generated ${esc(generated)} by OpenSafe · ${assets.length} item${assets.length === 1 ? '' : 's'} · grouped by ${byLocation ? 'room / location' : 'category'}${includeInactive ? ' (including sold, disposed and lost items)' : ''}</div>
 <div class="totals"><div>Total value now<b>${gbp(total)}</b></div><div>Insured value recorded<b>${gbp(insured)}</b></div><div>Items with receipts<b>${assets.filter(a => a.documents.some(d => d.type === 'Receipt')).length} of ${assets.length}</b></div></div>
 ${body}
 <div class="foot">"Value now" uses the current value you entered, or the purchase price where none was entered (in the totals only). Figures are as recorded in OpenSafe and are not a professional valuation.</div>

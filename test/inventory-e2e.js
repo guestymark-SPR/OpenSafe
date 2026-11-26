@@ -25,7 +25,7 @@ const server = http.createServer((req, res) => {
 const thumb = 'data:image/jpeg;base64,' + fs.readFileSync('/tmp/okshots/photos/p1.jpg').toString('base64');
 const view = { exportedAt: new Date().toISOString(), count: 3, items: [
   { id: 'aaaaaaaa-1111-4111-8111-111111111111', name: 'Mercedes C220d estate', category: 'Vehicles', location: 'Driveway', currentValue: 14500, details: { kind: 'vehicle', reg: 'AB21 CDE', motDue: '2026-12-05' }, photos: 3, documents: 2, thumb, tags: [] },
-  { id: 'bbbbbbbb-2222-4222-8222-222222222222', name: 'Makita drill', category: 'Tools', location: 'Garage', serial: 'MK-0099', brand: 'Makita', photos: 1, documents: 1, thumb: null, tags: ['diy'] },
+  { id: 'bbbbbbbb-2222-4222-8222-222222222222', name: 'Makita drill', category: 'Tools', location: 'Garage', serial: 'MK-0099', brand: 'Makita', photos: 1, documents: 1, thumb: null, tags: ['diy'], grab: true, webLink: 'https://www.makitauk.com/products/dhp485' },
   { id: 'cccccccc-3333-4333-8333-333333333333', name: 'Moody 37', category: 'Marine', details: { kind: 'boat', hin: 'GB-MOD37' }, photos: 0, documents: 0, tags: [] }
 ] };
 const fileText = pv.encryptView(view, 'phone pass 1');
@@ -57,6 +57,12 @@ app.whenReady().then(async () => {
     await shot('i3-detail');
     R.detail = await js(`document.getElementById('sheetBody').innerText`);
     await js(`document.querySelector('[data-act=closeSheet]').click()`);
+    await js(`document.getElementById('grabChip').click()`); await wait(300);
+    R.grabFilter = await js(`[...document.querySelectorAll('#invList .item .n')].map(e => e.innerText)`);
+    await js(`document.querySelector('[data-inv]').click()`); await wait(300);
+    R.drillLink = await js(`(document.querySelector('.weblink') || {}).href || null`);
+    R.drillGrab = await js(`document.getElementById('sheetBody').innerText.includes('On the grab list')`);
+    await js(`document.querySelector('[data-act=closeSheet]').click(); document.getElementById('grabChip').click()`); await wait(200);
     // QR label link opened while the inventory is locked (fresh page load)
     await js(`document.querySelector('[data-act=lockInv]').click()`); await wait(300);
     await win.loadURL('about:blank'); await win.loadURL(base + '#item=cccccccc-3333-4333-8333-333333333333'); await wait(900);

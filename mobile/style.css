@@ -108,3 +108,5 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--accent2);border-
 .stocklist li{padding:8px 2px;border-bottom:1px solid var(--line);cursor:pointer}
 .stocklist li small{display:block;color:var(--muted)}
 .stockh{margin:14px 0 2px;font-size:15px}
+.chips{display:flex;gap:8px;margin:8px 0 4px}.chip{border:1px solid var(--line);background:#fff;border-radius:20px;padding:6px 12px;font:600 13px system-ui;color:var(--ink);cursor:pointer}.chip.on{background:var(--danger);border-color:var(--danger);color:#fff}
+.weblink{word-break:break-all}

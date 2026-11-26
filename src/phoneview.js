@@ -41,11 +41,11 @@ function buildView(store, { includeVault = false, makeThumb }) {
     const pol = policies.find(p => p.id === a.policyId);
     return {
       id: a.id, name: a.name, category: a.category, location: a.location, status: a.status, brand: a.brand, model: a.model,
-      serial: a.serial, barcode: a.barcode, condition: a.condition, purchaseDate: a.purchaseDate, purchasePrice: a.purchasePrice,
+      serial: a.serial, barcode: a.barcode, webLink: a.webLink, condition: a.condition, purchaseDate: a.purchaseDate, purchasePrice: a.purchasePrice,
       supplier: a.supplier, currentValue: a.currentValue, warrantyExpiry: a.warrantyExpiry,
       insurer: pol ? pol.insurer : a.insurer, policyNumber: pol ? pol.policyNumber : a.policyNumber, insuredValue: a.insuredValue,
       lentTo: a.lentTo, lentContact: a.lentContact, dueBack: a.dueBack, details: a.details, tags: a.tags, notes: a.notes,
-      photos: a.photos.length, documents: a.documents.length, inVault: store.isVaultAsset(a), thumb
+      grab: !!a.grab, photos: a.photos.length, documents: a.documents.length, inVault: store.isVaultAsset(a), thumb
     };
   });
   return { exportedAt: new Date().toISOString(), count: items.length, items };

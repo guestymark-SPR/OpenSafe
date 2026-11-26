@@ -10,7 +10,7 @@
   const FORMAT_VERSION_FILES = 3;    // changes that carry photos or receipts (needs OpenSafe 1.8 or later)
   const DEFAULT_CATS = ['Vehicles', 'Electronics', 'Computers & Phones', 'Tools', 'Camping & Outdoor', 'Motorbike Gear', 'Marine', 'Furniture', 'Appliances', 'Jewellery & Watches', 'Sports & Hobbies', 'Clothing', 'Other'];
   const DEFAULT_LOCS = ['Home', 'Garage', 'Car', 'Storage', 'Boat'];
-  const FIELDS = ['name', 'category', 'location', 'brand', 'model', 'serial', 'barcode', 'condition', 'purchasePrice', 'currentValue', 'purchaseDate', 'warrantyExpiry', 'supplier', 'notes', 'tags'];
+  const FIELDS = ['name', 'category', 'location', 'brand', 'model', 'serial', 'barcode', 'webLink', 'condition', 'purchasePrice', 'currentValue', 'purchaseDate', 'warrantyExpiry', 'supplier', 'notes', 'tags'];
 
   // ---------- IndexedDB ----------
   let dbp = null;
@@ -381,9 +381,13 @@
     if (inv) renderInv(); else $('invList').replaceChildren();
   }
 
+  let grabOnly = false;
   function renderInv() {
     const q = $('invQ').value.trim().toLowerCase();
-    const list = inv.items.filter(a => !q || [a.name, a.brand, a.model, a.serial, a.category, a.location, a.barcode, (a.details || {}).reg, (a.tags || []).join(' ')].join(' ').toLowerCase().includes(q));
+    $('grabChip').classList.toggle('on', grabOnly);
+    $('grabChip').classList.toggle('hidden', !inv.items.some(a => a.grab));
+    const list = inv.items.filter(a => (!grabOnly || a.grab) && (!q || [a.name, a.brand, a.model, a.serial, a.category, a.location, a.barcode, (a.details || {}).reg, (a.tags || []).join(' ')].join(' ').toLowerCase().includes(q)));
+    if (grabOnly) list.sort((x, y) => (x.location || '~').localeCompare(y.location || '~') || x.name.localeCompare(y.name));
     $('invMeta').textContent = `${inv.count} items · copied from the PC on ${new Date(inv.exportedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
     $('invList').replaceChildren(...list.map(a => {
       const d = document.createElement('div'); d.className = 'item'; d.dataset.inv = a.id;
@@ -406,6 +410,8 @@
       .filter(([, v]) => v);
     sheet(`<div class="detail">${a.thumb ? `<img class="big" src="${a.thumb}" alt="">` : ''}<h2 style="margin-top:12px">${esc(a.name)}</h2>
       <div class="kv">${rows.map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${esc(v)}</div></div>`).join('')}</div>
+      ${a.grab ? '<div class="waiting" style="background:#fde8e6;color:var(--danger)">🚨 On the grab list</div>' : ''}
+      ${/^https?:\/\//i.test(a.webLink || '') ? `<p><a class="weblink" href="${esc(a.webLink)}" target="_blank" rel="noopener noreferrer">🔗 ${esc(a.webLink.replace(/^https?:\/\/(www\.)?/, '').slice(0, 60))}</a></p>` : ''}
       ${a.notes ? `<p style="white-space:pre-wrap">${esc(a.notes)}</p>` : ''}
       ${updates.filter(u => u.itemId === a.id && !u.exportedAt).map(u => `<div class="waiting">⏳ Waiting to export: ${esc(u.summary)}</div>`).join('')}
       <p class="muted small">${a.photos} photo${a.photos === 1 ? '' : 's'} and ${a.documents} document${a.documents === 1 ? '' : 's'} on the PC.</p>
@@ -803,6 +809,7 @@
       case 'itemAction': actionForm(a.dataset.kind, a.dataset.id); break;
       case 'itemDetails': showInvItem(a.dataset.id); break;
       case 'skipUnlock': showActions(a.dataset.id, true); break;
+      case 'grabFilter': grabOnly = !grabOnly; renderInv(); break;
       case 'stockCheck': startStockCheck(); break;
       case 'stockMore': runStockScan(); break;
       case 'stockMove': stockMoveAll(); break;
