@@ -18,6 +18,8 @@ Everything stays on your PC. There's no account, no cloud and no subscription.
 - **Service log:** MOTs, services, repairs, batteries and inspections, with cost, mileage and a "next due" date.
 - **Reminders:** warranty end dates and next-due service dates, looking ahead a number of days you choose, plus a Windows notification at start-up for anything due within 7 days.
 - **Dashboard:** total value, amount paid, insured value, value by category, what's coming up, and gaps to fill (no serial number, no receipt, no insurer, no photo).
+- **Insurance claim pack:** select items, or use the button on an item, to get one PDF for your insurer. It has a cover page with the incident details and totals, then every photo, serial numbers, purchase details and receipt photos for each item. Receipt PDFs are added at the end.
+- **Receipt reading:** click **Read receipt** on a receipt photo to fill in the shop, date and price paid. It uses Tesseract OCR and runs offline on your PC, so nothing is uploaded.
 - **Reports:** a printable PDF inventory for your insurer, with photos, and a CSV export for Excel.
 - **Password protection and vault:** AES-256 encryption of everything, a recovery key, and a PIN-protected vault for sensitive items and files.
 - **Backups:** a copy of your item list every day, kept for 30 days, plus a full backup (with photos and documents) to any folder or USB stick, and restore.

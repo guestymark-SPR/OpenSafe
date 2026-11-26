@@ -8,6 +8,8 @@ const QRCode = require('qrcode');
 const { Store, STATUSES, CONDITIONS, DOC_TYPES, POLICY_TYPES } = require('./store');
 const { PhoneServer } = require('./phoneServer');
 const { buildReportHtml } = require('./report');
+const { buildClaimPack } = require('./claim');
+const ocr = require('./ocr');
 const updater = require('./updater');
 const firewall = require('./firewall');
 
@@ -92,6 +94,15 @@ async function startPhone() {
 }
 
 async function init() {
+  // Developer check that receipt reading works inside the packaged app (used by the build tests).
+  if (process.env.OPENSAFE_OCR_SELFTEST) {
+    let line;
+    try { const t = await ocr.readText(fs.readFileSync(process.env.OPENSAFE_OCR_SELFTEST)); line = 'OCR_SELFTEST ' + JSON.stringify(ocr.parseReceipt(t)); }
+    catch (e) { line = 'OCR_SELFTEST_ERROR ' + e.message; }
+    console.log(line);
+    if (process.env.OPENSAFE_OCR_SELFTEST_OUT) fs.writeFileSync(process.env.OPENSAFE_OCR_SELFTEST_OUT, line);
+    await ocr.stop(); app.exit(0); return;
+  }
   applyTheme();
   store = new Store(DATA_DIR);
   if (!store.isEncrypted()) store.load(); // with protection on, data is read after the password
@@ -402,6 +413,50 @@ function registerIpc() {
     return r.filePath;
   });
 
+  h('export:claim', async (ids, info) => {
+    if (!Array.isArray(ids) || !ids.length) throw new Error('Choose at least one item.');
+    const pack = buildClaimPack(store, ids.map(String), info || {});
+    const r = await dialog.showSaveDialog(win, {
+      title: 'Save claim pack',
+      defaultPath: path.join(app.getPath('documents'), `OpenSafe-claim-pack-${new Date().toISOString().slice(0, 10)}.pdf`),
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    });
+    if (r.canceled || !r.filePath) return null;
+    fs.mkdirSync(OPEN_DIR, { recursive: true });
+    const tmp = path.join(OPEN_DIR, `claim-${Date.now()}.html`);
+    fs.writeFileSync(tmp, pack.html, 'utf8');
+    const pw = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, javascript: false } });
+    let pdf;
+    try {
+      await pw.loadFile(tmp);
+      pdf = await pw.webContents.printToPDF({ pageSize: 'A4', printBackground: true, margins: { marginType: 'default' } });
+    } finally { pw.destroy(); fs.rm(tmp, () => {}); }
+    // Append receipt/warranty PDFs after the generated pages
+    const { PDFDocument } = require('pdf-lib');
+    const out = await PDFDocument.load(pdf);
+    const failed = [];
+    for (const d of pack.pdfs) {
+      try {
+        const src = await PDFDocument.load(d.buf, { ignoreEncryption: true });
+        const pages = await out.copyPages(src, src.getPageIndices());
+        pages.forEach(p => out.addPage(p));
+      } catch (_) { failed.push(`${d.item}: ${d.name} (the PDF couldn't be read)`); }
+    }
+    out.setTitle('Insurance claim pack'); out.setProducer('OpenSafe');
+    fs.writeFileSync(r.filePath, await out.save());
+    const notIncluded = pack.skipped.concat(failed);
+    if (notIncluded.length) dialog.showMessageBox(win, { type: 'warning', title: 'Claim pack', message: 'Claim pack saved, but some files weren\'t included', detail: notIncluded.join('\n') + '\n\nUnlock the vault first to include vault files.' });
+    shell.openPath(r.filePath);
+    return { path: r.filePath, appended: pack.pdfs.length - failed.length, notIncluded };
+  });
+
+  h('ocr:receipt', async (assetId, file) => {
+    if (!/\.(jpe?g|png|webp|gif)$/i.test(String(file))) throw new Error('Receipt reading works on photos of receipts (JPG, PNG or WebP). For a PDF, type the details in.');
+    const buf = store.readAttachment(String(assetId), String(file));
+    const text = await ocr.readText(buf);
+    return ocr.parseReceipt(text);
+  });
+
   h('backup:create', async () => {
     const r = await dialog.showOpenDialog(win, { title: 'Choose where to save the backup folder', properties: ['openDirectory', 'createDirectory'] });
     if (r.canceled || !r.filePaths[0]) return null;
@@ -479,6 +534,7 @@ function registerIpc() {
 
 app.on('window-all-closed', async () => {
   if (phone) await phone.stop();
+  await ocr.stop();
   if (store) store.lock();
   cleanOpenDir();
   app.quit();

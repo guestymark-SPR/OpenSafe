@@ -16,6 +16,7 @@
 
   const state = {
     snap: null,
+    sel: new Set(),
     upd: null,
     updHidden: false,
     view: 'dashboard',
@@ -151,6 +152,53 @@
       e.preventDefault();
       const ids = $$('#polItems input[name=i]:checked').map(x => x.value);
       await run(() => keep.setPolicyItems(p.id, ids), 'Saved'); closeModal(); await refresh();
+    };
+  }
+
+  // ---------- claim pack & receipts ----------
+  function claimForm(ids) {
+    const names = ids.map(id => (asset(id) || {}).name).filter(Boolean);
+    const vaultNote = state.snap.security.vault.exists && !state.snap.security.vault.unlocked ? '<p class="s3 note" style="margin:0">The vault is locked, so files in it won\'t be included. Unlock it first if you need them.</p>' : '';
+    openModal(`<form class="dialog narrow" id="claimForm"><div class="dh"><h2>Claim pack</h2></div>
+      <div class="db"><p class="s3 muted" style="margin:0">One PDF for your insurer with ${names.length === 1 ? `<b>${esc(names[0])}</b>` : `<b>${names.length} items</b>`}: every photo, serial numbers, purchase details, receipt photos, and receipt PDFs added at the end. All boxes below are optional.</p>
+        <label class="f">Date of incident<input name="incidentDate" type="date"></label>
+        <label class="f">Claim number<input name="claimNumber" maxlength="60"></label>
+        <label class="f s3">Police / crime reference<input name="crimeRef" maxlength="60" placeholder="e.g. a crime reference number for theft"></label>
+        <label class="f s3">What happened<textarea name="whatHappened" rows="4" maxlength="3000"></textarea></label>${vaultNote}
+        <div class="err" id="claimErr"></div></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Save claim pack…</button></div></form>`);
+    $('#claimForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const info = Object.fromEntries(new FormData(e.target).entries());
+      busy(e.target, true, 'Building PDF…');
+      try { const r = await keep.claimPack(ids, info); if (r) { closeModal(); toast(`✓ Claim pack saved${r.appended ? ` with ${r.appended} PDF document${r.appended === 1 ? '' : 's'} attached` : ''}`, 4500); } else busy(e.target, false); }
+      catch (ex) { $('#claimErr').textContent = ex.message; busy(e.target, false); }
+    };
+  }
+
+  async function readReceipt(a, file) {
+    openModal(`<div class="dialog narrow"><div class="dh"><h2>Reading receipt…</h2></div><div class="db"><p class="s3 muted" style="margin:0">Reading the text on this PC (nothing is uploaded). This takes a few seconds the first time.</p></div></div>`);
+    let r;
+    try { r = await keep.readReceipt(a.id, file); }
+    catch (ex) { closeModal(); toast('⚠ ' + ex.message, 6000); return; }
+    const row = (key, label, val, shown, cur) => val ? `<label class="switch s3" style="font-weight:500;display:flex;gap:10px"><input type="checkbox" name="${key}" ${cur ? '' : 'checked'}> <span style="flex:1">${label}: <b>${esc(shown)}</b>${cur ? ` <span class="muted">(currently ${esc(cur)})</span>` : ''}</span></label>` : '';
+    const found = r.shop || r.date || r.total !== null;
+    openModal(`<form class="dialog narrow" id="ocrForm"><div class="dh"><h2>Receipt details</h2></div>
+      <div class="db">${found ? '<p class="s3 muted" style="margin:0">Tick what to copy into this item. Check them against the receipt: reading isn\'t always perfect.</p>' : '<p class="s3" style="margin:0">Couldn\'t find a shop, date or total. A sharper, straight-on photo in good light usually helps.</p>'}
+        ${row('supplier', 'Bought from', r.shop, r.shop, a.supplier)}
+        ${row('purchaseDate', 'Bought on', r.date, r.date ? ukDate(r.date) : '', a.purchaseDate ? ukDate(a.purchaseDate) : '')}
+        ${row('purchasePrice', 'Price paid', r.total !== null, r.total !== null ? money(r.total) : '', a.purchasePrice !== null && a.purchasePrice !== undefined ? money(a.purchasePrice) : '')}
+        <details class="s3"><summary class="muted" style="cursor:pointer">Text found on the receipt</summary><pre style="white-space:pre-wrap;font-size:12px;max-height:200px;overflow:auto">${esc(r.text)}</pre></details></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Close</button>${found ? '<button class="btn primary" type="submit">Copy to item</button>' : ''}</div></form>`);
+    const f = $('#ocrForm');
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const patch = { id: a.id };
+      if (f.supplier && f.supplier.checked) patch.supplier = r.shop;
+      if (f.purchaseDate && f.purchaseDate.checked) patch.purchaseDate = r.date;
+      if (f.purchasePrice && f.purchasePrice.checked) patch.purchasePrice = r.total;
+      if (Object.keys(patch).length === 1) { closeModal(); return; }
+      await run(() => keep.saveAsset(patch), 'Receipt details copied'); closeModal(); await refresh();
     };
   }
 
@@ -395,8 +443,12 @@
         <div class="img">${cover(a) ? `<img src="${img(a, cover(a))}" alt="" loading="lazy">` : '▣'}</div>
         <div class="body"><div class="name">${esc(a.name)}</div><div class="meta">${esc(a.category || '')}</div><div class="val">${value(a) ? money(value(a)) : '<span class="faint">No value</span>'}</div></div></div>`).join('')}</div>`;
     }
-    return head + toolbar + `<table class="list"><thead><tr><th style="width:60px"></th><th>Item</th><th>Category</th><th>Location</th><th>Serial no.</th><th>Bought</th><th class="r">Value now</th><th></th></tr></thead><tbody>
-      ${list.map(a => `<tr data-open="${a.id}"><td>${thumb(a)}</td>
+    const ids = list.map(a => a.id);
+    for (const id of [...state.sel]) if (!state.snap.data.assets.some(a => a.id === id)) state.sel.delete(id);
+    const allOn = ids.length && ids.every(id => state.sel.has(id));
+    const selBar = state.sel.size ? `<div class="selbar"><b>${state.sel.size} selected</b><button class="btn primary small" data-action="claimSel">Claim pack…</button><button class="btn small" data-action="selClear">Clear selection</button></div>` : '';
+    return head + toolbar + selBar + `<table class="list"><thead><tr><th style="width:34px"><input type="checkbox" class="selall" title="Select all shown" ${allOn ? 'checked' : ''}></th><th style="width:60px"></th><th>Item</th><th>Category</th><th>Location</th><th>Serial no.</th><th>Bought</th><th class="r">Value now</th><th></th></tr></thead><tbody>
+      ${list.map(a => `<tr data-open="${a.id}"><td><input type="checkbox" class="selbox" data-id="${a.id}" ${state.sel.has(a.id) ? 'checked' : ''} aria-label="Select ${esc(a.name)}"></td><td>${thumb(a)}</td>
         <td><div class="name">${esc(a.name)}</div><div class="meta">${esc([a.brand, a.model].filter(Boolean).join(' '))}</div></td>
         <td>${esc(a.category)}</td><td>${esc(a.location)}</td><td class="mono">${esc(a.serial) || '<span class="faint">—</span>'}</td>
         <td class="nowrap">${ukDate(a.purchaseDate)}</td><td class="r nowrap">${value(a) ? money(value(a)) : '—'}</td>
@@ -446,7 +498,7 @@
       ${a.photos.length ? `<div class="gallery">${a.photos.map((p, i) => p.locked ? `<div class="ph-tile locked" data-nav="vault"><div>🔒<br>Vault photo<br><small>Unlock the vault to see it</small></div></div>` : `<div class="ph-tile">
         <img src="${img(a, p)}" alt="${esc(p.name)}" data-zoom="${img(a, p)}">
         ${i === 0 ? '<span class="pill acc coverflag">Cover</span>' : ''}${p.vaultFile ? '<span class="pill vault coverflag" style="left:auto;right:6px">🔒 Vault</span>' : ''}
-        <div class="acts">${i ? `<button data-action="cover" data-att="${p.id}">Make cover</button>` : ''}${fileVaultBtn(a, p)}<button data-action="rmAtt" data-att="${p.id}">Delete</button></div></div>`).join('')}</div>`
+        <div class="acts">${i ? `<button data-action="cover" data-att="${p.id}">Make cover</button>` : ''}<button data-action="ocr" data-file="${esc(p.file)}" title="Read a photo of a receipt">Read receipt</button>${fileVaultBtn(a, p)}<button data-action="rmAtt" data-att="${p.id}">Delete</button></div></div>`).join('')}</div>`
         : '<div class="empty">No photos yet. Photos of the item, its serial plate and its box all help with insurance claims.</div>'}`;
     } else if (t === 'docs') {
       body = `<div class="drop" id="drop">Drag receipts, manuals or warranty cards here as
@@ -455,7 +507,7 @@
       ${a.documents.length ? `<table class="list"><thead><tr><th>Name</th><th>Type</th><th>Added</th><th></th></tr></thead><tbody>
         ${a.documents.map(d => d.locked ? `<tr><td colspan="3">🔒 <b>Vault file</b> <span class="muted">(unlock the vault to see its name and open it)</span></td><td class="r"><button class="btn small" data-nav="vault">Unlock vault</button></td></tr>`
         : `<tr><td data-action="openDoc" data-file="${esc(d.file)}" data-name="${esc(d.name)}"><b>${esc(d.name)}</b> ${d.vaultFile ? '<span class="pill vault">🔒 Vault</span>' : ''}</td><td><span class="pill ${d.type === 'Receipt' ? 'good' : ''}">${esc(d.type)}</span></td>
-        <td>${ukDate(d.addedAt.slice(0, 10))}</td><td class="r nowrap"><button class="btn small" data-action="openDoc" data-file="${esc(d.file)}" data-name="${esc(d.name)}">Open</button> ${fileVaultBtn(a, d, true)}<button class="btn small danger" data-action="rmAtt" data-att="${d.id}">Delete</button></td></tr>`).join('')}
+        <td>${ukDate(d.addedAt.slice(0, 10))}</td><td class="r nowrap"><button class="btn small" data-action="openDoc" data-file="${esc(d.file)}" data-name="${esc(d.name)}">Open</button> ${/\.(jpe?g|png|webp|gif)$/i.test(d.file) ? `<button class="btn small" data-action="ocr" data-file="${esc(d.file)}">Read receipt</button> ` : ''}${fileVaultBtn(a, d, true)}<button class="btn small danger" data-action="rmAtt" data-att="${d.id}">Delete</button></td></tr>`).join('')}
       </tbody></table>` : '<div class="empty">No documents yet.</div>'}`;
     } else if (t === 'service') {
       const cost = a.service.reduce((x, s) => x + (s.cost || 0), 0);
@@ -467,7 +519,7 @@
       </tbody></table>` : '<div class="empty">No service history. Log MOTs, services, repairs, battery changes and inspections here. Set a "next due" date to get a reminder.</div>'}`;
     }
     return `<div class="head"><button class="btn" data-action="back">← Items</button><span class="spacer"></span>
-      ${itemVaultBtn(a)}<button class="btn" data-action="dup">Duplicate</button><button class="btn danger" data-action="del">Delete</button><button class="btn primary" data-action="edit">Edit</button></div>
+      ${itemVaultBtn(a)}<button class="btn" data-action="claimOne">Claim pack…</button><button class="btn" data-action="dup">Duplicate</button><button class="btn danger" data-action="del">Delete</button><button class="btn primary" data-action="edit">Edit</button></div>
     ${a.inVault ? '<div class="note" style="margin-bottom:14px">🔒 This item is in the vault. It\'s hidden, and left out of totals and reports, whenever the vault is locked.</div>' : ''}
     <div class="detail-head">
       ${cover(a) ? `<img class="cover" src="${img(a, cover(a))}" data-zoom="${img(a, cover(a))}" alt="">` : '<div class="cover" data-tab="photos">▣</div>'}
@@ -782,6 +834,8 @@
     if (e.target.closest('#lightbox')) { $('#lightbox').classList.add('hidden'); return; }
     if (e.target.id === 'modal') { if (!state.rk) closeModal(); return; } // never lose an unsaved recovery key
 
+    if (e.target.classList && e.target.classList.contains('selbox')) { const id = e.target.dataset.id; if (e.target.checked) state.sel.add(id); else state.sel.delete(id); render(); return; }
+    if (e.target.classList && e.target.classList.contains('selall')) { const on = e.target.checked; for (const a of filtered()) { if (on) state.sel.add(a.id); else state.sel.delete(a.id); } render(); return; }
     const nav = e.target.closest('[data-nav]');
     if (nav) { if (nav.dataset.nav === 'items') state.f.gap = ''; go(nav.dataset.nav); return; }
     const tab = e.target.closest('[data-tab]');
@@ -892,6 +946,10 @@
           await refresh(); break;
         }
         case 'theme': await keep.setTheme(act.dataset.theme); await refresh(); break;
+        case 'claimSel': claimForm([...state.sel]); break;
+        case 'claimOne': claimForm([a.id]); break;
+        case 'selClear': state.sel.clear(); render(); break;
+        case 'ocr': readReceipt(a, act.dataset.file); break;
         case 'importPick': { await run(() => keep.importPick()); await refresh(); break; }
         case 'phoneReset': await run(() => keep.phoneReset()); loadPhone(); break;
         case 'report': { const p = await run(() => keep.exportReport({ includePhotos: $('#rPhotos').checked, includeInactive: $('#rInactive').checked })); if (p) toast('Report saved'); break; }

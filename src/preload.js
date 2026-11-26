@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('keep', {
   removeAttachment: (assetId, attId) => call('attach:remove', assetId, attId),
   setCover: (assetId, attId) => call('attach:cover', assetId, attId),
   openAttachment: (assetId, file, name) => call('attach:open', assetId, file, name),
+  claimPack: (ids, info) => call('export:claim', ids, info),
+  readReceipt: (assetId, file) => call('ocr:receipt', assetId, file),
   savePolicy: (p) => call('policy:save', p),
   deletePolicy: (id) => call('policy:delete', id),
   setPolicyItems: (id, ids) => call('policy:setItems', id, ids),

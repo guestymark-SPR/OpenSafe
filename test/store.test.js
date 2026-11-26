@@ -236,3 +236,16 @@ test('automatic backups: due logic, rotation, missing folder', () => {
   assert.ok(!bad.ok && /isn't available/.test(bad.error));
   assert.ok(s.data.settings.autoBackup.lastError);
 });
+
+test('receipt parsing: shop, UK dates and totals', () => {
+  const { parseReceipt } = require('../src/ocr');
+  const a = parseReceipt('TESCO\nExtra\nwww.tesco.com\nMilk 1.45\nSUB-TOTAL 23.45\nSAVINGS 2.00\nTOTAL TO PAY £21.45\n03/11/24 18:22');
+  assert.deepStrictEqual([a.shop, a.date, a.total], ['Tesco', '2024-11-03', 21.45]);
+  const b = parseReceipt('Currys PC World\nTax invoice\n14 Mar 2025\nLenovo Legion 5 1,299.00\nAmount due £1,299.00');
+  assert.deepStrictEqual([b.shop, b.date, b.total], ['Currys PC World', '2025-03-14', 1299]);
+  const c = parseReceipt('Halfords\n2025-06-01\nTyres 2 x 89.99\nOil 24.50');
+  assert.deepStrictEqual([c.shop, c.date, c.total], ['Halfords', '2025-06-01', 89.99]);
+  const d = parseReceipt('31/02/2025 nonsense date\n12/05/2025 ok');
+  assert.strictEqual(d.date, '2025-05-12');
+  assert.deepStrictEqual(parseReceipt('').total, null);
+});
