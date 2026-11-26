@@ -42,6 +42,7 @@ const SYNONYMS = {
   model: ['model', 'modelno', 'modelnumber'],
   serial: ['serial', 'serialno', 'serialnumber', 'sn', 'imei'],
   barcode: ['barcode', 'ean', 'upc', 'gtin'],
+  owner: ['owner', 'belongsto', 'whose', 'ownedby'],
   webLink: ['weblink', 'link', 'url', 'website', 'webpage', 'productpage', 'web'],
   condition: ['condition'],
   status: ['status'],
@@ -58,7 +59,7 @@ const SYNONYMS = {
 };
 const FIELD_LABELS = {
   name: 'Name', category: 'Category', location: 'Location', brand: 'Brand', model: 'Model', serial: 'Serial number',
-  barcode: 'Barcode', webLink: 'Web page', condition: 'Condition', status: 'Status', purchaseDate: 'Bought on', purchasePrice: 'Price paid',
+  barcode: 'Barcode', owner: 'Owner', webLink: 'Web page', condition: 'Condition', status: 'Status', purchaseDate: 'Bought on', purchasePrice: 'Price paid',
   currentValue: 'Value now', supplier: 'Bought from', warrantyExpiry: 'Warranty until', insurer: 'Insurer',
   policyNumber: 'Policy number', insuredValue: 'Insured value', tags: 'Tags', notes: 'Notes'
 };

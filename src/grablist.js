@@ -4,7 +4,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<'
 const mime = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif' };
 
 function buildGrabListHtml(store) {
-  const items = store.allAssets().filter(a => a.grab && !['Sold', 'Disposed', 'Lost / Stolen'].includes(a.status))
+  const items = store.allAssets().filter(a => a.grab && !['Sold', 'Disposed', 'Lost / Stolen', 'Given back'].includes(a.status))
     .sort((a, b) => (a.location || '~').localeCompare(b.location || '~', 'en-GB') || a.name.localeCompare(b.name, 'en-GB'));
   const photo = (a) => {
     const p = a.photos.find(x => !x.vault);

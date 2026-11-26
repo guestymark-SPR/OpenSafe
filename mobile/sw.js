@@ -1,6 +1,6 @@
 'use strict';
 // Offline support: keep the app's own files cached. Item data lives in IndexedDB, not here.
-const CACHE = 'opensafe-capture-v9';
+const CACHE = 'opensafe-capture-v10';
 const FILES = ['./', 'index.html', 'app.js', 'style.css', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/maskable-512.png'];
 
 self.addEventListener('install', (e) => {

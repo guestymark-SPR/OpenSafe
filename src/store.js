@@ -15,14 +15,18 @@ const DEFAULT_CATEGORIES = [
   'Sports & Hobbies', 'Clothing', 'Other'
 ];
 const DEFAULT_LOCATIONS = ['Home', 'Garage', 'Car', 'Storage', 'Boat'];
-const STATUSES = ['Owned', 'Lent out', 'Needs repair', 'In repair', 'Sold', 'Disposed', 'Lost / Stolen'];
+const STATUSES = ['Owned', 'Lent out', 'Needs repair', 'In repair', 'Borrowed', 'Sold', 'Disposed', 'Lost / Stolen', 'Given back'];
+// No longer here (left out of lists, totals and reminders unless asked for).
+const GONE = ['Sold', 'Disposed', 'Lost / Stolen', 'Given back'];
+// Here, but not yours: left out of values and insurance totals.
+const NOT_MINE = ['Borrowed'];
 const CONDITIONS = ['New', 'Excellent', 'Good', 'Fair', 'Poor'];
 const DOC_TYPES = ['Receipt', 'Warranty', 'Manual', 'Insurance', 'Video', 'Other'];
 
 const STRING_FIELDS = ['name', 'category', 'location', 'brand', 'model', 'serial', 'supplier',
   'condition', 'status', 'insurer', 'policyNumber', 'notes', 'purchaseDate', 'warrantyExpiry',
-  'barcode', 'webLink', 'foreignCurrency', 'fxDate', 'policyId', 'partOf', 'lentTo', 'lentContact', 'lentDate', 'dueBack', 'soldDate', 'soldTo'];
-const DATE_FIELDS = new Set(['purchaseDate', 'warrantyExpiry', 'lentDate', 'dueBack', 'soldDate', 'fxDate']);
+  'barcode', 'webLink', 'foreignCurrency', 'fxDate', 'policyId', 'partOf', 'owner', 'borrowedFrom', 'borrowedContact', 'returnBy', 'lentTo', 'lentContact', 'lentDate', 'dueBack', 'soldDate', 'soldTo'];
+const DATE_FIELDS = new Set(['purchaseDate', 'warrantyExpiry', 'lentDate', 'dueBack', 'soldDate', 'fxDate', 'returnBy']);
 const MONEY_FIELDS = ['purchasePrice', 'currentValue', 'insuredValue', 'soldPrice', 'foreignPrice'];
 // Extra details for vehicles (car, van, motorbike) and boats
 const DETAIL_KINDS = ['', 'vehicle', 'boat'];
@@ -131,6 +135,7 @@ function emptyData() {
       depreciation: {} // category -> percent lost per year
     },
     policies: [],
+    people: [], // household members items can belong to ("who owns it")
     places: {}, // photos and videos of a room or place: { 'Home / Lounge': { id, files: [{ id, file, name, kind, addedAt }] } }
     bin: [], // deleted items, kept for BIN_DAYS: [{ asset, deletedAt }]
     categories: DEFAULT_CATEGORIES.slice(),
@@ -217,6 +222,7 @@ class Store {
     out.assets = Array.isArray(out.assets) ? out.assets.map(a => this._normaliseAsset(a, a, true)) : [];
     if (out.vault && typeof out.vault !== 'object') delete out.vault;
     out.settings.autoBackup = Object.assign(emptyData().settings.autoBackup, (d && d.settings && d.settings.autoBackup) || {});
+    out.people = Array.isArray(out.people) ? out.people.map(p => cleanString(p, 200)).filter(Boolean) : [];
     out.places = out.places && typeof out.places === 'object' && !Array.isArray(out.places) ? out.places : {};
     out.bin = Array.isArray(out.bin) ? out.bin.filter(b => b && b.asset && b.asset.id).map(b => ({ asset: this._normaliseAsset(b.asset, b.asset, true), deletedAt: b.deletedAt || nowIso() })) : [];
     out.policies = Array.isArray(out.policies) ? out.policies.map(p => this._normalisePolicy(p, p)) : [];
@@ -329,14 +335,22 @@ class Store {
         set.soldDate = cleanDate(c.soldDate);
         set.soldTo = cleanString(c.soldTo, 200);
       }
+      if (c.status === 'Borrowed') {
+        set.borrowedFrom = cleanString(c.borrowedFrom, 200);
+        if (!set.borrowedFrom) throw new Error('Enter who the items belong to.');
+        set.borrowedContact = cleanString(c.borrowedContact, 200);
+        set.returnBy = cleanDate(c.returnBy);
+      }
       if (c.status !== 'Lent out') Object.assign(set, { lentTo: '', lentContact: '', lentDate: '', dueBack: '' });
     }
     if (c.grab === 'add' || c.grab === 'remove') set.grab = c.grab === 'add';
+    if (typeof c.owner === 'string' && c.owner.trim()) set.owner = c.owner.trim() === '-' ? '' : cleanString(c.owner, 200);
     if (typeof c.policyId === 'string') {
       if (c.policyId && !(this.data.policies || []).some(p => p.id === c.policyId)) throw new Error('That policy no longer exists.');
       set.policyId = c.policyId;
     }
     if (!Object.keys(set).length) throw new Error('Choose what to change.');
+    if (set.owner) this._learnPerson(set.owner);
     let n = 0;
     for (const id of ids.slice(0, 10000)) {
       const a = this.getAsset(String(id));
@@ -350,7 +364,13 @@ class Store {
     return n;
   }
 
+  _learnPerson(name) {
+    if (!Array.isArray(this.data.people)) this.data.people = [];
+    if (name && !this.data.people.some(p => p.toLowerCase() === name.toLowerCase())) this.data.people.push(name);
+  }
+
   _learnLists(a) {
+    if (a.owner) this._learnPerson(a.owner);
     if (a.category && !this.data.categories.includes(a.category)) this.data.categories.push(a.category);
     if (a.location && !this.data.locations.includes(a.location)) this.data.locations.push(a.location);
   }
@@ -436,6 +456,107 @@ class Store {
     try { fs.unlinkSync(this.attachmentPath(e.id, f.file)); } catch (_) { /* already gone */ }
     this.save();
     return true;
+  }
+
+  // ---------- spending by year ----------
+  /** What you paid, by the year bought (items you own or owned; not borrowed ones). */
+  spendingByYear() {
+    const years = {};
+    for (const a of this.allAssets()) {
+      if (NOT_MINE.includes(a.status) || a.status === 'Given back' || a.purchasePrice === null || a.purchasePrice === undefined) continue;
+      const y = a.purchaseDate ? a.purchaseDate.slice(0, 4) : 'Unknown';
+      const e = years[y] = years[y] || { year: y, total: 0, count: 0, byCategory: {} };
+      e.total += a.purchasePrice; e.count++;
+      const c = a.category || 'Uncategorised';
+      e.byCategory[c] = (e.byCategory[c] || 0) + a.purchasePrice;
+    }
+    return Object.values(years).sort((x, y) => (x.year === 'Unknown') - (y.year === 'Unknown') || y.year.localeCompare(x.year)) // newest year first, unknown last
+      .map(e => Object.assign(e, { total: Math.round(e.total * 100) / 100, top: Object.entries(e.byCategory).sort((p, q) => q[1] - p[1]).slice(0, 3).map(([c, v]) => ({ category: c, total: Math.round(v * 100) / 100 })) }));
+  }
+
+  // ---------- possible duplicates ----------
+  /** Groups of items that look like the same thing entered twice. Pairs marked "not duplicates" are left out. */
+  findDuplicates() {
+    const norm = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const items = this.allAssets().filter(a => !GONE.includes(a.status));
+    const ignored = new Set(this.data.notDuplicates || []);
+    const groups = [];
+    const add = (reason, list) => {
+      const ids = [...new Set(list.map(a => a.id))].sort();
+      if (ids.length < 2) return;
+      const key = ids.join('|');
+      if (ignored.has(key) || groups.some(g => g.key === key)) return;
+      groups.push({ key, reason, ids });
+    };
+    const by = (fn) => { const m = new Map(); for (const a of items) { const k = fn(a); if (!k) continue; if (!m.has(k)) m.set(k, []); m.get(k).push(a); } return [...m.values()].filter(l => l.length > 1); };
+    for (const l of by(a => norm(a.serial).length >= 4 ? norm(a.serial) : '')) add('Same serial number', l);
+    for (const l of by(a => norm(a.barcode).length >= 8 && (a.serial ? '' : norm(a.barcode)) )) add('Same barcode, no serial numbers', l);
+    for (const l of by(a => norm(a.name) && a.purchasePrice !== null && a.purchasePrice !== undefined ? `${norm(a.name)}|${a.purchasePrice}` : '')) add('Same name and price paid', l);
+    for (const l of by(a => norm(a.name) && a.purchaseDate ? `${norm(a.name)}|${a.purchaseDate}` : '')) add('Same name and date bought', l);
+    return groups;
+  }
+  notDuplicates(ids) {
+    const key = [...new Set((ids || []).map(String))].sort().join('|');
+    if (!Array.isArray(this.data.notDuplicates)) this.data.notDuplicates = [];
+    if (key && !this.data.notDuplicates.includes(key)) this.data.notDuplicates.push(key);
+    this.save();
+  }
+  /** Merge items into `keepId`: photos, documents, service log and value history move across, empty
+   *  details are filled in, notes are joined, and the others go to Deleted items. */
+  mergeAssets(keepId, otherIds) {
+    const keep = this.getAsset(keepId);
+    if (!keep) throw new Error('Item not found');
+    const others = (otherIds || []).map(String).filter(id => id !== keepId).map(id => this.getAsset(id)).filter(Boolean);
+    if (!others.length) throw new Error('Choose the items to merge.');
+    if ([keep, ...others].some(a => this.isVaultAsset(a))) throw new Error('Move the items out of the vault before merging them.');
+    if ([keep, ...others].some(a => [...a.photos, ...a.documents].some(r => r.vault))) throw new Error('One of these items has files in the vault. Move them out of the vault first.');
+    fs.mkdirSync(this._assetDir(keep.id), { recursive: true });
+    for (const o of others) {
+      for (const kind of ['photos', 'documents']) {
+        for (const r of o[kind]) {
+          const src = this.attachmentPath(o.id, r.file);
+          if (!fs.existsSync(src)) continue;
+          fs.copyFileSync(src, this.attachmentPath(keep.id, r.file)); // same key, so the sealed bytes copy as they are
+          keep[kind].push(r);
+        }
+        o[kind] = [];
+      }
+      keep.service = keep.service.concat(o.service || []);
+      keep.valueHistory = (keep.valueHistory || []).concat(o.valueHistory || []).sort((x, y) => x.date.localeCompare(y.date));
+      for (const f of [...STRING_FIELDS, ...MONEY_FIELDS]) {
+        if (f === 'notes' || f === 'name') continue;
+        const empty = keep[f] === '' || keep[f] === null || keep[f] === undefined;
+        if (empty && o[f] !== '' && o[f] !== null && o[f] !== undefined) keep[f] = o[f];
+      }
+      if (o.notes && !String(keep.notes || '').includes(o.notes)) keep.notes = cleanString([keep.notes, o.notes].filter(Boolean).join('\n'), MAX_STRING);
+      keep.tags = [...new Set([...keep.tags, ...o.tags])];
+      if (o.grab) keep.grab = true;
+      for (const a of this.allAssets()) if (a.partOf === o.id) a.partOf = (keep.id === a.id || keep.partOf) ? '' : keep.id; // sets are one level deep
+    }
+    keep.updatedAt = nowIso();
+    this.save();
+    for (const o of others) this.deleteAsset(o.id);
+    return keep;
+  }
+  /** Save the result of a recall check; matches already dismissed stay hidden. */
+  saveRecallCheck(result) {
+    const prev = this.data.recalls || {};
+    const dismissed = Array.isArray(prev.dismissed) ? prev.dismissed : [];
+    this.data.recalls = { checkedAt: nowIso(), checked: result.checked, skipped: result.skipped, errors: (result.errors || []).slice(0, 5), matches: result.matches.filter(m => !dismissed.includes(m.assetId + '|' + m.link)), dismissed };
+    this.save();
+    return this.data.recalls;
+  }
+  dismissRecall(assetId, link) {
+    const r = this.data.recalls; if (!r) return;
+    const key = assetId + '|' + link;
+    if (!r.dismissed.includes(key)) r.dismissed.push(key);
+    r.matches = r.matches.filter(m => m.assetId + '|' + m.link !== key);
+    this.save();
+  }
+  deleteMany(ids) {
+    let n = 0;
+    for (const id of (ids || []).map(String)) if (this.deleteAsset(id)) n++;
+    return n;
   }
 
   // ---------- spreadsheet import ----------
@@ -836,7 +957,11 @@ class Store {
     const diff = (d) => Math.round((Date.parse(d + 'T00:00:00Z') - t0) / 86400000);
     const out = [];
     for (const a of this.allAssets()) {
-      if (['Sold', 'Disposed', 'Lost / Stolen'].includes(a.status)) continue;
+      if (GONE.includes(a.status)) continue;
+      if (a.status === 'Borrowed' && a.returnBy) {
+        const n = diff(a.returnBy);
+        if (n <= days) out.push({ assetId: a.id, assetName: a.name, kind: 'Give back' + (a.borrowedFrom ? ` to ${a.borrowedFrom}` : ''), date: a.returnBy, daysLeft: n, source: 'item' });
+      }
       if (a.warrantyExpiry) {
         const n = diff(a.warrantyExpiry);
         if (n <= days && n >= -30) out.push({ assetId: a.id, assetName: a.name, kind: 'Warranty', date: a.warrantyExpiry, daysLeft: n, source: 'item' });
@@ -957,8 +1082,11 @@ class Store {
     const rates = this.data.settings.depreciation || {};
     const vn = (a) => valueNow(a, rates);
     const all = this.allAssets();
-    const active = all.filter(a => !['Sold', 'Disposed', 'Lost / Stolen'].includes(a.status));
+    const here = all.filter(a => !GONE.includes(a.status));
+    const active = here.filter(a => !NOT_MINE.includes(a.status)); // what you own: used for values and insurance
     const sum = (k) => active.reduce((t, a) => t + (a[k] || 0), 0);
+    const byOwner = {};
+    for (const a of active) { if (!a.owner) continue; byOwner[a.owner] = byOwner[a.owner] || { count: 0, value: 0 }; byOwner[a.owner].count++; byOwner[a.owner].value += vn(a); }
     const byCategory = {};
     for (const a of active) {
       const c = a.category || 'Uncategorised';
@@ -982,19 +1110,20 @@ class Store {
     const noReceipt = active.filter(a => !a.documents.some(d => d.type === 'Receipt')).length;
     return {
       count: active.length,
+      borrowedCount: here.length - active.length,
       totalCount: all.length,
       purchaseTotal: sum('purchasePrice'),
       currentTotal: active.reduce((t, a) => t + vn(a), 0),
       estimatedCount: active.filter(a => (a.currentValue === null || a.currentValue === undefined) && estimateValue(a, rates) !== null).length,
       insuredTotal: sum('insuredValue'),
-      byCategory, byLocation, uninsured, noSerial, noReceipt
+      byCategory, byLocation, byOwner, uninsured, noSerial, noReceipt
     };
   }
 
   toCSV() {
     const cols = ['name', 'category', 'location', 'brand', 'model', 'serial', 'status', 'condition',
       'purchaseDate', 'purchasePrice', 'supplier', 'currentValue', 'warrantyExpiry', 'insurer',
-      'policyNumber', 'insuredValue', 'barcode', 'webLink', 'foreignCurrency', 'foreignPrice', 'lentTo', 'lentContact', 'lentDate', 'dueBack', 'soldDate', 'soldPrice', 'soldTo',
+      'policyNumber', 'insuredValue', 'barcode', 'webLink', 'foreignCurrency', 'foreignPrice', 'owner', 'borrowedFrom', 'returnBy', 'lentTo', 'lentContact', 'lentDate', 'dueBack', 'soldDate', 'soldPrice', 'soldTo',
       'reg', 'vin', 'engineNo', 'mileage', 'motDue', 'taxDue', 'hin', 'engineHours', 'tags', 'notes', 'photos', 'documents'];
     const esc = (v) => {
       let s = v === null || v === undefined ? '' : String(v);
@@ -1417,4 +1546,4 @@ class Store {
   }
 }
 
-module.exports = { VIDEO_EXT, Store, STATUSES, CONDITIONS, DOC_TYPES, POLICY_TYPES, DETAIL_FIELDS, cleanMoney, cleanDate, cleanLocation, inLocation, cleanUrl, estimateValue, valueNow, emptyData };
+module.exports = { VIDEO_EXT, GONE, NOT_MINE, Store, STATUSES, CONDITIONS, DOC_TYPES, POLICY_TYPES, DETAIL_FIELDS, cleanMoney, cleanDate, cleanLocation, inLocation, cleanUrl, estimateValue, valueNow, emptyData };

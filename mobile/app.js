@@ -405,7 +405,7 @@
     const ukd = (s) => s ? new Date(s + 'T00:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '';
     const rows = [['Category', a.category], ['Location', a.location], ['Status', a.status !== 'Owned' ? a.status : ''], ['Brand', a.brand], ['Model', a.model], ['Serial number', a.serial], ['Barcode', a.barcode],
       ['Bought on', ukd(a.purchaseDate)], ['Bought from', a.supplier], ['Price paid', gbp(a.purchasePrice ?? '')], ['Value now', gbp(a.currentValue ?? '')], ['Warranty until', ukd(a.warrantyExpiry)],
-      ['Insurer', a.insurer], ['Policy number', a.policyNumber], ['Lent to', a.lentTo], ['Their contact', a.lentContact], ['Due back', ukd(a.dueBack)],
+      ['Owner', a.owner], ['Belongs to', a.status === 'Borrowed' ? a.borrowedFrom : ''], ['Give back by', a.status === 'Borrowed' ? ukd(a.returnBy) : ''], ['Insurer', a.insurer], ['Policy number', a.policyNumber], ['Lent to', a.lentTo], ['Their contact', a.lentContact], ['Due back', ukd(a.dueBack)],
       ['Registration', d.reg], ['VIN / frame no.', d.vin], ['Mileage', d.mileage], ['MOT due', ukd(d.motDue)], ['Road tax due', ukd(d.taxDue)], ['Hull ID', d.hin], ['Engine hours', d.engineHours], ['Mooring', d.mooring]]
       .filter(([, v]) => v);
     sheet(`<div class="detail">${a.thumb ? `<img class="big" src="${a.thumb}" alt="">` : ''}<h2 style="margin-top:12px">${esc(a.name)}</h2>
@@ -689,7 +689,7 @@
   }
 
   // ---------- stock check: scan every label in a place, see what's missing or misplaced ----------
-  const GONE = ['Sold', 'Disposed', 'Lost / Stolen'];
+  const GONE = ['Sold', 'Disposed', 'Lost / Stolen', 'Given back'];
   let stock = null;
   const inLoc = (loc, place) => place === '' ? !loc : !!loc && (loc === place || loc.startsWith(place + ' / '));
   const idFromLabel = (text) => { const m = String(text).match(/item=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i); return m ? m[1].toLowerCase() : null; };

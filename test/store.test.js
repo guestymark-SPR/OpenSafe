@@ -548,3 +548,55 @@ test('batch E: videos, photos and videos of a place, place labels, bought abroad
   assert.deepStrictEqual([g.foreignCurrency, g.foreignPrice, g.fxRate, g.fxDate, g.purchasePrice], ['', null, null, '', 252.55]);
   assert.strictEqual(s.saveAsset({ name: 'X', foreignCurrency: 'GBP', foreignPrice: 5 }).foreignCurrency, '');
 });
+
+test('batch F: borrowed, owner, spending by year, duplicates and merge, delete many, recall matching', () => {
+  const s = tmpStore();
+  const trailer = s.saveAsset({ name: "Dave's trailer", status: 'Borrowed', borrowedFrom: 'Dave', returnBy: addDays(5), currentValue: 800 });
+  s.saveAsset({ name: 'Old drill', status: 'Given back', currentValue: 50 });
+  const tv = s.saveAsset({ name: 'TV', owner: 'Mark', currentValue: 500, purchasePrice: 600, purchaseDate: '2024-11-29', category: 'Electronics' });
+  s.saveAsset({ name: 'Kettle', owner: 'mark', purchasePrice: 40, purchaseDate: '2024-02-01', category: 'Appliances' });
+  s.saveAsset({ name: 'Sofa', purchasePrice: 900, category: 'Furniture' });
+  const sum = s.summary();
+  assert.strictEqual(sum.count, 3);                         // TV, Kettle, Sofa
+  assert.strictEqual(sum.borrowedCount, 1);
+  assert.strictEqual(sum.currentTotal, 500 + 40 + 900);     // trailer not counted
+  assert.deepStrictEqual(sum.byOwner, { Mark: { count: 1, value: 500 }, mark: { count: 1, value: 40 } });
+  assert.deepStrictEqual(s.data.people, ['Mark']);          // case-insensitive list of people
+  assert.ok(s.reminders().some(r => r.assetId === trailer.id && r.kind === 'Give back to Dave'));
+  const sp = s.spendingByYear();
+  assert.deepStrictEqual(sp.map(r => [r.year, r.total, r.count]), [['2024', 640, 2], ['Unknown', 900, 1]]);
+  assert.strictEqual(sp[0].top[0].category, 'Electronics');
+  assert.throws(() => s.bulkUpdate([tv.id], { status: 'Borrowed' }), /who the items belong to/);
+  // duplicates
+  const a1 = s.saveAsset({ name: 'Makita Drill', serial: 'MK-1234', location: 'Garage', tags: ['diy'] });
+  s.addPhoto(a1.id, 'a.png', Buffer.from('png-a'));
+  const a2 = s.saveAsset({ name: 'Drill', serial: 'mk 1234', brand: 'Makita', notes: 'From the shed list', tags: ['tools'] });
+  s.addPhoto(a2.id, 'b.png', Buffer.from('png-b'));
+  s.addDocument(a2.id, 'receipt.pdf', Buffer.from('%PDF'), 'Receipt');
+  s.saveService(a2.id, { date: '2025-01-01', type: 'Service' });
+  const groups = s.findDuplicates();
+  assert.ok(groups.some(g => g.reason === 'Same serial number' && g.ids.includes(a1.id) && g.ids.includes(a2.id)));
+  const merged = s.mergeAssets(a1.id, [a2.id]);
+  assert.deepStrictEqual([merged.photos.length, merged.documents.length, merged.service.length, merged.brand, merged.notes], [2, 1, 1, 'Makita', 'From the shed list']);
+  assert.deepStrictEqual(merged.tags.sort(), ['diy', 'tools']);
+  assert.strictEqual(s.readAttachment(a1.id, merged.photos[1].file).toString(), 'png-b');
+  assert.strictEqual(s.getAsset(a2.id), null);
+  assert.ok(s.binView().some(b => b.id === a2.id));
+  const b1 = s.saveAsset({ name: 'Chair', purchasePrice: 30 }), b2 = s.saveAsset({ name: 'chair', purchasePrice: 30 });
+  assert.ok(s.findDuplicates().some(g => g.ids.includes(b1.id)));
+  s.notDuplicates([b2.id, b1.id]);
+  assert.ok(!s.findDuplicates().some(g => g.ids.includes(b1.id)));
+  assert.strictEqual(s.deleteMany([b1.id, b2.id, 'nope']), 2);
+  // recall matching
+  const r = require('../src/recalls');
+  const res = [{ title: 'Product Recall: LG ESS Battery Division - RESU ESS Home Batteries (2103-0025)', link: '/product-safety-alerts-reports-recalls/product-recall-resu-ess-home-batteries-lg-ess-battery-division-2103-0025', public_timestamp: '2022-03-25T22:11:24Z', product_alert_type: 'product-recall', product_risk_level: 'low' },
+    { title: 'Product Recall: Ridgeback Comet, Speed and Motion Bicycles (2609-0070)', link: '/product-safety-alerts-reports-recalls/x' }];
+  assert.strictEqual(r.matchesFor({ id: 'i', name: 'Battery', brand: 'LG', model: 'RESU 10H' }, res).length, 0);  // model must appear in full
+  assert.strictEqual(r.matchesFor({ id: 'i', name: 'Battery', brand: 'LG', model: 'RESU' }, res).length, 1);
+  assert.strictEqual(r.matchesFor({ id: 'i', name: 'Battery', brand: 'Tesla', model: 'RESU' }, res).length, 0); // brand must appear too
+  assert.strictEqual(r.queryFor({ model: '37' }), null);
+  const saved = s.saveRecallCheck({ checked: 1, skipped: 0, matches: r.matchesFor({ id: tv.id, name: 'TV', brand: 'LG', model: 'RESU' }, res), errors: [] });
+  assert.strictEqual(saved.matches.length, 1);
+  s.dismissRecall(tv.id, saved.matches[0].link);
+  assert.strictEqual(s.saveRecallCheck({ checked: 1, skipped: 0, matches: r.matchesFor({ id: tv.id, name: 'TV', brand: 'LG', model: 'RESU' }, res), errors: [] }).matches.length, 0);
+});

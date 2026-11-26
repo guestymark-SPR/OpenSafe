@@ -13,6 +13,7 @@ const ocr = require('./ocr');
 const phoneview = require('./phoneview');
 const { buildLabelsHtml, buildPlaceLabelsHtml } = require('./labels');
 const csv = require('./csv');
+const recalls = require('./recalls');
 const { buildGrabListHtml } = require('./grablist');
 const updater = require('./updater');
 const firewall = require('./firewall');
@@ -388,6 +389,33 @@ function registerIpc() {
     if (!n) return 0;
     const r = await dialog.showMessageBox(win, { type: 'warning', buttons: ['Empty Deleted items', 'Cancel'], defaultId: 1, cancelId: 1, title: 'Empty Deleted items', message: `Delete ${n} item${n === 1 ? '' : 's'} for good?`, detail: 'Their photos and documents are deleted too. This can\'t be undone.' });
     return r.response === 0 ? store.emptyBin() : 0;
+  });
+  h('asset:deleteMany', async (ids) => {
+    const list = (Array.isArray(ids) ? ids : []).map(String).filter(id => store.getAsset(id));
+    if (!list.length) return 0;
+    const r = await dialog.showMessageBox(win, { type: 'warning', buttons: [`Delete ${list.length}`, 'Cancel'], defaultId: 1, cancelId: 1, title: 'Delete items', message: `Delete ${list.length} item${list.length === 1 ? '' : 's'}?`, detail: 'They go to Deleted items with their photos and documents. You can restore them from there for 30 days.' });
+    return r.response === 0 ? store.deleteMany(list) : 0;
+  });
+  h('dupes:find', () => store.findDuplicates());
+  h('dupes:ignore', (ids) => store.notDuplicates(ids));
+  h('dupes:merge', (keepId, otherIds) => store.mergeAssets(String(keepId), otherIds));
+  h('spending:get', () => store.spendingByYear());
+  h('recalls:check', async () => {
+    const items = store.allAssets().filter(a => !['Sold', 'Disposed', 'Lost / Stolen', 'Given back'].includes(a.status));
+    const fetchJson = async (url) => {
+      const res = await net.fetch(url, { headers: { Accept: 'application/json' } });
+      if (!res.ok) throw new Error(`GOV.UK answered ${res.status}`);
+      return res.json();
+    };
+    const result = await recalls.checkRecalls(items, fetchJson, { onProgress: (n, total) => { if (win && !win.isDestroyed()) win.webContents.send('recalls:progress', { n, total }); } });
+    if (result.checked && result.errors.length === result.checked) throw new Error('Couldn\'t reach GOV.UK. Check your internet connection and try again.');
+    return store.saveRecallCheck(result);
+  });
+  h('recalls:dismiss', (assetId, link) => store.dismissRecall(String(assetId), String(link)));
+  h('recalls:open', (link) => {
+    if (!/^https:\/\/www\.gov\.uk\/product-safety-alerts-reports-recalls\/[a-z0-9-]+$/.test(String(link))) throw new Error('Not a GOV.UK recall page.');
+    shell.openExternal(String(link));
+    return true;
   });
   h('value:add', (id, v) => store.addValuation(String(id), v || {}));
   h('value:remove', (id, vid) => store.removeValuation(String(id), String(vid)));

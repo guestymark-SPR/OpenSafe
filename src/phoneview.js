@@ -46,7 +46,7 @@ function buildView(store, { includeVault = false, makeThumb }) {
       supplier: a.supplier, currentValue: a.currentValue, warrantyExpiry: a.warrantyExpiry,
       insurer: pol ? pol.insurer : a.insurer, policyNumber: pol ? pol.policyNumber : a.policyNumber, insuredValue: a.insuredValue,
       lentTo: a.lentTo, lentContact: a.lentContact, dueBack: a.dueBack, details: a.details, tags: a.tags, notes: a.notes,
-      grab: !!a.grab, photos: a.photos.length, documents: a.documents.length, inVault: store.isVaultAsset(a), thumb
+      grab: !!a.grab, owner: a.owner, borrowedFrom: a.borrowedFrom, returnBy: a.returnBy, photos: a.photos.length, documents: a.documents.length, inVault: store.isVaultAsset(a), thumb
     };
   });
   return { exportedAt: new Date().toISOString(), count: items.length, items };

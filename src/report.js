@@ -13,8 +13,9 @@ function buildReportHtml(store, opts) {
   const inPlace = (loc) => !place || (!!loc && (loc === place || loc.startsWith(place + ' / ')));
   const key = (a) => byLocation ? (a.location || 'No location') : (a.category || 'Uncategorised');
   const assets = store.allAssets()
-    .filter(a => includeInactive || !['Sold', 'Disposed', 'Lost / Stolen'].includes(a.status))
+    .filter(a => includeInactive || !['Sold', 'Disposed', 'Lost / Stolen', 'Given back', 'Borrowed'].includes(a.status))
     .filter(a => inPlace(a.location))
+    .filter(a => !opts.owner || a.owner === opts.owner)
     .slice()
     .sort((a, b) => key(a).localeCompare(key(b), 'en-GB') || a.name.localeCompare(b.name, 'en-GB'));
 
@@ -24,7 +25,7 @@ function buildReportHtml(store, opts) {
     if (!groups.has(c)) groups.set(c, []);
     groups.get(c).push(a);
   }
-  const val = (a) => a.currentValue ?? a.purchasePrice ?? 0;
+  const val = (a) => a.status === 'Borrowed' ? 0 : (a.currentValue ?? a.purchasePrice ?? 0); // borrowed things aren't yours
   const total = assets.reduce((t, a) => t + val(a), 0);
   const insured = assets.reduce((t, a) => t + (a.insuredValue || 0), 0);
   const generated = new Date().toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short' });
@@ -74,8 +75,8 @@ function buildReportHtml(store, opts) {
   .sub{color:#666;font-size:8.5pt} .ph{width:58pt} img,.nophoto{width:54pt;height:40pt;object-fit:cover;border-radius:3pt;background:#eee;display:block}
   .foot{margin-top:18pt;color:#888;font-size:8pt}
 </style></head><body>
-<h1>Household inventory report${place ? ': ' + esc(place) : ''}</h1>
-<div class="meta">Generated ${esc(generated)} by OpenSafe · ${assets.length} item${assets.length === 1 ? '' : 's'} · grouped by ${byLocation ? 'room / location' : 'category'}${includeInactive ? ' (including sold, disposed and lost items)' : ''}</div>
+<h1>Household inventory report${place ? ': ' + esc(place) : ''}${opts.owner ? ' · ' + esc(opts.owner) : ''}</h1>
+<div class="meta">Generated ${esc(generated)} by OpenSafe · ${assets.length} item${assets.length === 1 ? '' : 's'} · grouped by ${byLocation ? 'room / location' : 'category'}${includeInactive ? ' (including sold, disposed, lost and borrowed items)' : ''}</div>
 <div class="totals"><div>Total value now<b>${gbp(total)}</b></div><div>Insured value recorded<b>${gbp(insured)}</b></div><div>Items with receipts<b>${assets.filter(a => a.documents.some(d => d.type === 'Receipt')).length} of ${assets.length}</b></div></div>
 ${body}
 <div class="foot">"Value now" uses the current value you entered, or the purchase price where none was entered (in the totals only). Figures are as recorded in OpenSafe and are not a professional valuation.</div>

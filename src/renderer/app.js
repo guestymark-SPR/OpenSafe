@@ -11,7 +11,7 @@
   const money0 = (n) => gbp0.format(n || 0);
   const ukDate = (s) => s ? new Date(s + (s.length === 10 ? 'T00:00:00Z' : '')).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: s.length === 10 ? 'UTC' : undefined }) : '—';
   const img = (a, p) => `keep://file/${encodeURIComponent(a.id)}/${encodeURIComponent(p.file)}`;
-  const INACTIVE = ['Sold', 'Disposed', 'Lost / Stolen'];
+  const INACTIVE = ['Sold', 'Disposed', 'Lost / Stolen', 'Given back'];
   // Value now: the value entered, else an estimate from the category's yearly drop, else the price paid.
   function estimate(a) {
     const r = ((state.snap && state.snap.data.settings.depreciation) || {})[a.category];
@@ -45,7 +45,7 @@
     view: 'dashboard',
     itemId: null,
     tab: 'overview',
-    f: { q: '', category: '', location: '', status: 'active', sort: 'added', layout: 'table', gap: '' }
+    f: { q: '', category: '', location: '', owner: '', status: 'active', sort: 'added', layout: 'table', gap: '' }
   };
 
   // ---------- helpers ----------
@@ -207,23 +207,27 @@
         <label class="f">Location<input name="location" list="bkLocs" maxlength="200" placeholder="Keep as it is"></label>
         <label class="f">Category<input name="category" list="bkCats" maxlength="200" placeholder="Keep as it is"></label>
         <label class="f">Status<select name="status" id="bkStatus">${opt('', 'Keep as it is', '')}${L.statuses.map(x => opt(x, x, '')).join('')}</select></label>
+        <label class="f">Owner<input name="owner" list="bkPeople" maxlength="200" placeholder="Keep as it is (type - to clear)"></label>
+        <datalist id="bkPeople">${(d.people || []).map(p => `<option value="${esc(p)}">`).join('')}</datalist>
         <label class="f">Grab list<select name="grab">${opt('', 'Keep as it is', '')}${opt('add', 'Add to the grab list', '')}${opt('remove', 'Take off the grab list', '')}</select></label>
         <label class="f">Insurance policy<select name="policyId">${opt('__keep', 'Keep as it is', '__keep')}${opt('', 'Not linked to a policy', '__keep')}${pols.map(p => opt(p.id, `${p.insurer}${p.type ? ' · ' + p.type : ''}${p.policyNumber ? ' · ' + p.policyNumber : ''}`, '__keep')).join('')}</select></label>
         <div id="bkLend" class="s3 subgrid hidden"><h3>Lent out</h3>
           <label class="f">Lent to *<input name="lentTo" maxlength="200"></label><label class="f">Phone or email<input name="lentContact" maxlength="200"></label>
           <label class="f">Lent on<input name="lentDate" type="date" value="${new Date().toISOString().slice(0, 10)}"></label><label class="f">Due back (reminder)<input name="dueBack" type="date"></label></div>
+        <div id="bkBorrow" class="s3 subgrid hidden"><h3>Borrowed</h3>
+          <label class="f">Belongs to *<input name="borrowedFrom" maxlength="200"></label><label class="f">Their phone or email<input name="borrowedContact" maxlength="200"></label><label class="f">Give back by<input name="returnBy" type="date"></label></div>
         <div id="bkSold" class="s3 subgrid hidden"><h3>Sold</h3>
           <label class="f">Sold on<input name="soldDate" type="date"></label><label class="f">Sold to<input name="soldTo" maxlength="200"></label></div>
         <datalist id="bkLocs">${d.locations.map(c => `<option value="${esc(c)}">`).join('')}</datalist>
         <datalist id="bkCats">${d.categories.map(c => `<option value="${esc(c)}">`).join('')}</datalist>
         <div class="err" id="bkErr"></div></div>
       <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Change ${ids.length} item${ids.length === 1 ? '' : 's'}</button></div></form>`);
-    $('#bkStatus').onchange = (e) => { $('#bkLend').classList.toggle('hidden', e.target.value !== 'Lent out'); $('#bkSold').classList.toggle('hidden', e.target.value !== 'Sold'); };
+    $('#bkStatus').onchange = (e) => { $('#bkLend').classList.toggle('hidden', e.target.value !== 'Lent out'); $('#bkSold').classList.toggle('hidden', e.target.value !== 'Sold'); $('#bkBorrow').classList.toggle('hidden', e.target.value !== 'Borrowed'); };
     $('#bulkForm').onsubmit = async (e) => {
       e.preventDefault();
       const raw = Object.fromEntries(new FormData(e.target).entries());
       if (raw.policyId === '__keep') delete raw.policyId;
-      if (!raw.location.trim() && !raw.category.trim() && !raw.status && !raw.grab && raw.policyId === undefined) { $('#bkErr').textContent = 'Choose at least one thing to change.'; return; }
+      if (!raw.location.trim() && !raw.category.trim() && !raw.status && !raw.grab && !raw.owner.trim() && raw.policyId === undefined) { $('#bkErr').textContent = 'Choose at least one thing to change.'; return; }
       busy(e.target, true, 'Saving…');
       try { const n = await keep.bulkUpdate(ids, raw); closeModal(); state.sel.clear(); toast(`✓ ${n} item${n === 1 ? '' : 's'} changed`); await refresh(); }
       catch (ex) { $('#bkErr').textContent = ex.message; busy(e.target, false); }
@@ -424,6 +428,7 @@
     if (state.view === 'phone') { loadCapture(); loadPhone(); const d = $('#wifiDetails'); if (d) d.ontoggle = () => { state.wifiOpen = d.open; }; }
     if (state.view === 'item') wireDrop();
     if (state.view === 'vault') wireVaultForm();
+    if (state.view === 'reports') spendingCard();
   }
 
   function viewDashboard() {
@@ -448,7 +453,7 @@
       <div class="card stat"><div class="lbl">Value now</div><div class="num">${money0(s.currentTotal)}</div><div class="foot">${s.estimatedCount ? `${s.estimatedCount} estimated from the yearly drop; others use price paid if no value is set` : 'Uses price paid where no value is set'}</div></div>
       <div class="card stat"><div class="lbl">Total paid</div><div class="num">${money0(s.purchaseTotal)}</div><div class="foot">Active items only</div></div>
       <div class="card stat"><div class="lbl">Insured value recorded</div><div class="num">${money0(s.insuredTotal)}</div><div class="foot">${s.uninsured} item${s.uninsured === 1 ? '' : 's'} with no insurer</div></div>
-      <div class="card stat"><div class="lbl">Items</div><div class="num">${s.count}</div><div class="foot">${s.totalCount - s.count} sold, disposed or lost</div></div>
+      <div class="card stat"><div class="lbl">Items</div><div class="num">${s.count}</div><div class="foot">${s.totalCount - s.count - (s.borrowedCount || 0)} sold, given away or lost${s.borrowedCount ? ` · ${s.borrowedCount} borrowed, not counted` : ''}</div></div>
     </div>
     <div class="grid g3">
       <div class="card"><h2>Value by category</h2>
@@ -471,10 +476,12 @@
           <div class="gap"><span>No serial number</span><button class="btn small" data-action="gap" data-gap="serial">${s.noSerial}</button></div>
           <div class="gap"><span>No receipt attached</span><button class="btn small" data-action="gap" data-gap="receipt">${s.noReceipt}</button></div>
           <div class="gap"><span>No insurer recorded</span><button class="btn small" data-action="gap" data-gap="insurer">${s.uninsured}</button></div>
-          <div class="gap"><span>No photo</span><button class="btn small" data-action="gap" data-gap="photo">${assets.filter(a => !INACTIVE.includes(a.status) && !a.photos.length).length}</button></div>
+          <div class="gap"><span>No photo</span><button class="btn small" data-action="gap" data-gap="photo">${assets.filter(a => !INACTIVE.includes(a.status) && a.status !== 'Borrowed' && !a.photos.length).length}</button></div>
         </div>
       </div>
     </div>
+    ${Object.keys(s.byOwner || {}).length ? `<div class="card" style="margin-top:16px"><h2>Who owns what</h2><div class="rows">${Object.entries(s.byOwner).sort((x, y) => y[1].value - x[1].value).map(([p, v]) => `<div class="rowi" data-action="filterOwner" data-owner="${esc(p)}"><span style="flex:1">${esc(p)}</span><span class="meta">${v.count} · ${money0(v.value)}</span></div>`).join('')}</div><div class="faint" style="margin-top:6px">Items with no owner set count as yours.</div></div>` : ''}
+    ${recallsCard()}
     <div class="card" style="margin-top:16px"><h2>Recently added</h2>
       <div class="rows">${recent.map(a => `<div class="rowi" data-open="${a.id}">${thumb(a)}
         <div style="flex:1"><div class="name">${esc(a.name)}</div><div class="meta">${esc([a.category, a.location].filter(Boolean).join(' · '))}</div></div>
@@ -491,10 +498,12 @@
       if (f.status && f.status !== 'active' && f.status !== 'all' && a.status !== f.status) return false;
       if (f.category && a.category !== f.category) return false;
       if (f.location && !inLoc(a.location, f.location)) return false;
+      if (f.owner && a.owner !== f.owner) return false;
       if (f.gap === 'serial' && a.serial) return false;
       if (f.gap === 'receipt' && a.documents.some(d => d.type === 'Receipt')) return false;
       if (f.gap === 'insurer' && (a.insurer || a.policyId || !value(a))) return false;
       if (f.gap === 'photo' && a.photos.length) return false;
+      if (f.gap && f.gap !== 'grab' && a.status === 'Borrowed') return false; // gaps are about your own things
       if (f.gap === 'grab' && !a.grab) return false;
       if (q) {
         const d = a.details || {};
@@ -519,11 +528,12 @@
   function viewItems() {
     const f = state.f, d = state.snap.data;
     const list = filtered();
-    const total = list.reduce((t, a) => t + value(a), 0);
+    const total = list.reduce((t, a) => t + (a.status === 'Borrowed' ? 0 : value(a)), 0); // borrowed things aren't yours
     const gapNames = { serial: 'no serial number', receipt: 'no receipt', insurer: 'no insurer', photo: 'no photo' };
     const toolbar = `<div class="toolbar">
       <input type="search" id="q" placeholder="Search name, serial, barcode, reg, who has it, notes…" value="${esc(f.q)}">
       <select data-f="category">${opt('', 'All categories', f.category)}${d.categories.map(c => opt(c, c, f.category)).join('')}</select>
+      ${(state.snap.data.people || []).length ? `<select data-f="owner">${opt('', 'Everyone', f.owner || '')}${state.snap.data.people.map(p => opt(p, p, f.owner || '')).join('')}</select>` : ''}
       <select data-f="location">${opt('', 'All locations', f.location)}${locPaths().map(c => opt(c, locLabel(c), f.location)).join('')}</select>
       <select data-f="status">${opt('active', 'Active items', f.status)}${opt('all', 'All statuses', f.status)}${state.snap.lists.statuses.map(s => opt(s, s, f.status)).join('')}</select>
       <select data-f="sort">${opt('added', 'Newest first', f.sort)}${opt('name', 'Name A–Z', f.sort)}${opt('value', 'Highest value', f.sort)}${opt('bought', 'Recently bought', f.sort)}${opt('category', 'Category', f.sort)}</select>
@@ -531,7 +541,7 @@
       <span class="seg"><button data-layout="table" class="${f.layout === 'table' ? 'on' : ''}">List</button><button data-layout="grid" class="${f.layout === 'grid' ? 'on' : ''}">Photos</button></span>
     </div>
     ${f.gap ? `<div style="margin:-4px 0 12px"><span class="pill warn">${f.gap === 'grab' ? 'Showing the grab list' : `Showing items with ${gapNames[f.gap]}`}</span> <button class="btn small" data-action="clearGap">Clear</button></div>` : ''}`;
-    const head = `<div class="head"><h1>Items</h1><span class="sub">${list.length} shown · ${money0(total)}</span><span class="spacer"></span>${(state.snap.data.bin || []).length ? `<button class="btn" data-nav="bin">🗑 Deleted items (${state.snap.data.bin.length})</button>` : ''}<button class="btn" data-action="importPick">Import from phone…</button><button class="btn primary" data-action="new">+ Add item</button></div>`;
+    const head = `<div class="head"><h1>Items</h1><span class="sub">${list.length} shown · ${money0(total)}</span><span class="spacer"></span><button class="btn" data-action="findDupes" title="Find items entered twice">Duplicates…</button>${(state.snap.data.bin || []).length ? `<button class="btn" data-nav="bin">🗑 Deleted items (${state.snap.data.bin.length})</button>` : ''}<button class="btn" data-action="importPick">Import from phone…</button><button class="btn primary" data-action="new">+ Add item</button></div>`;
     if (!list.length) return head + toolbar + `<div class="card empty">${d.assets.length ? 'No items match these filters.' : 'No items yet. Add one here or from your phone.'}</div>`;
     if (f.layout === 'grid') {
       return head + toolbar + `<div class="cards">${list.map(a => `<div class="icard" data-open="${a.id}">
@@ -541,7 +551,7 @@
     const ids = list.map(a => a.id);
     for (const id of [...state.sel]) if (!state.snap.data.assets.some(a => a.id === id)) state.sel.delete(id);
     const allOn = ids.length && ids.every(id => state.sel.has(id));
-    const selBar = state.sel.size ? `<div class="selbar"><b>${state.sel.size} selected</b><button class="btn primary small" data-action="bulkSel">Change…</button><button class="btn small" data-action="claimSel">Claim pack…</button><button class="btn small" data-action="labelsSel">QR labels…</button><button class="btn small" data-action="selClear">Clear selection</button></div>` : '';
+    const selBar = state.sel.size ? `<div class="selbar"><b>${state.sel.size} selected</b><button class="btn primary small" data-action="bulkSel">Change…</button><button class="btn small" data-action="claimSel">Claim pack…</button><button class="btn small" data-action="labelsSel">QR labels…</button><button class="btn small danger" data-action="deleteSel">Delete…</button><button class="btn small" data-action="selClear">Clear selection</button></div>` : '';
     return head + toolbar + placeCard(f.location) + selBar + `<table class="list"><thead><tr><th style="width:34px"><input type="checkbox" class="selall" title="Select all shown" ${allOn ? 'checked' : ''}></th><th style="width:60px"></th><th>Item</th><th>Category</th><th>Location</th><th>Serial no.</th><th>Bought</th><th class="r">Value now</th><th></th></tr></thead><tbody>
       ${list.map(a => `<tr data-open="${a.id}"><td><input type="checkbox" class="selbox" data-id="${a.id}" ${state.sel.has(a.id) ? 'checked' : ''} aria-label="Select ${esc(a.name)}"></td><td>${thumb(a)}</td>
         <td><div class="name">${esc(a.name)}${partsOf(a.id).length ? ` <span class="pill">Set of ${partsOf(a.id).length + 1}</span>` : ''}</div><div class="meta">${esc([a.brand, a.model].filter(Boolean).join(' '))}${a.partOf && asset(a.partOf) ? `${a.brand || a.model ? ' · ' : ''}Part of ${esc(asset(a.partOf).name)}` : ''}</div></td>
@@ -668,6 +678,8 @@
         ${kv('Tags', a.tags.map(x => `<span class="pill">${esc(x)}</span>`).join(''))}${kv('Added', ukDate(a.createdAt.slice(0, 10)) + (a.source === 'phone' ? ' from phone' : ''))}${kv('Last changed', ukDate(a.updatedAt.slice(0, 10)))}
       ${a.webLink ? kv('Web page', `<a href="#" data-action="openLink" title="${esc(a.webLink)}">${esc((() => { try { const u = new URL(a.webLink); return u.hostname.replace(/^www\./, '') + (u.pathname.length > 1 ? u.pathname.slice(0, 28) + (u.pathname.length > 28 ? '…' : '') : ''); } catch (_) { return a.webLink; } })())}</a> <button class="btn small" data-action="openLink">Open</button>`) : ''}
       ${a.barcode ? kv('Barcode', `<span class="mono">${esc(a.barcode)}</span> <button class="btn small" data-action="bcLookup">Look up</button>`) : ''}
+      ${a.owner ? kv('Owner', esc(a.owner)) : ''}
+      ${a.status === 'Borrowed' ? kv('Belongs to', esc(a.borrowedFrom)) + kv('Their contact', esc(a.borrowedContact)) + kv('Give back by', a.returnBy ? ukDate(a.returnBy) : '') : ''}
       ${a.status === 'Lent out' ? kv('Lent to', esc(a.lentTo)) + kv('Contact', esc(a.lentContact)) + kv('Lent on', a.lentDate ? ukDate(a.lentDate) : '') + kv('Due back', a.dueBack ? ukDate(a.dueBack) : '') : ''}
       ${a.status === 'Sold' ? kv('Sold on', a.soldDate ? ukDate(a.soldDate) : '') + kv('Sold for', a.soldPrice !== null && a.soldPrice !== undefined ? money(a.soldPrice) : '') + kv('Sold to', esc(a.soldTo)) : ''}
       </div>${a.notes ? `<div class="notes">${esc(a.notes)}</div>` : ''}</div>
@@ -708,7 +720,7 @@
       ${cover(a) ? `<img class="cover" src="${img(a, cover(a))}" data-zoom="${img(a, cover(a))}" alt="">` : '<div class="cover" data-tab="photos">▣</div>'}
       <div><h1>${esc(a.name)}</h1><div class="muted">${esc([a.brand, a.model].filter(Boolean).join(' '))}</div>
       <div style="margin-top:10px;font-size:22px;font-weight:650">${value(a) ? money(value(a)) : ''}</div>
-      <div style="margin-top:6px">${a.grab ? '<span class="pill bad">🚨 Grab list</span>' : ''}${a.status !== 'Owned' ? `<span class="pill">${esc(a.status)}</span>` : ''}${warrantyPill(a)}${a.insurer ? '<span class="pill good">Insured</span>' : ''}</div></div>
+      <div style="margin-top:6px">${recallsFor(a.id).length ? '<span class="pill bad" data-action="showRecalls" style="cursor:pointer">⚠ Possible product recall</span>' : ''}${a.grab ? '<span class="pill bad">🚨 Grab list</span>' : ''}${a.status !== 'Owned' ? `<span class="pill">${esc(a.status)}</span>` : ''}${warrantyPill(a)}${a.insurer ? '<span class="pill good">Insured</span>' : ''}</div></div>
     </div>
     <div class="tabs">${tabs.map(([k, l]) => `<button data-tab="${k}" class="${t === k ? 'on' : ''}">${l}</button>`).join('')}</div>${body}`;
   }
@@ -721,6 +733,42 @@
       ${files.length ? `<div class="rows">${files.map(x => `<div class="rowi"><span style="font-size:20px">${x.kind === 'video' ? '🎥' : '🖼️'}</span><span style="flex:1"><b>${esc(x.name)}</b> <span class="meta">${ukDate(x.addedAt.slice(0, 10))}</span></span>
         <button class="btn small" data-action="placeOpen" data-file="${esc(x.file)}" data-name="${esc(x.name)}">${x.kind === 'video' ? 'Play' : 'Open'}</button><button class="btn small danger" data-action="placeRm" data-fid="${x.id}">Delete</button></div>`).join('')}</div>`
       : '<div class="muted">A slow video of each room, opening cupboards and drawers, is good evidence of what you own for an insurance claim. Videos up to 1 GB; they\'re stored like your other files (encrypted if password protection is on).</div>'}</div>`;
+  }
+
+  const recallsFor = (id) => ((state.snap.data.recalls || {}).matches || []).filter(m => m.assetId === id);
+  function recallRows(list) {
+    return `<div class="rows">${list.map(m => `<div class="rowi" style="align-items:flex-start"><span class="pill ${m.risk === 'serious' || m.risk === 'high' ? 'bad' : 'warn'}">${esc(m.type === 'product-recall' ? 'Recall' : m.type === 'product-safety-alert' ? 'Safety alert' : 'Safety report')}${m.risk && m.risk !== 'not-provided' ? ' · ' + esc(m.risk) + ' risk' : ''}</span>
+      <span style="flex:1"><b data-open="${m.assetId}" style="cursor:pointer">${esc(m.assetName)}</b><div class="meta">${esc(m.title)}${m.date ? ' · ' + ukDate(m.date) : ''}</div></span>
+      <button class="btn small" data-action="openRecall" data-link="${esc(m.link)}">Read on GOV.UK</button><button class="btn small" data-action="dismissRecall" data-aid="${m.assetId}" data-link="${esc(m.link)}" title="Not my product">Not mine</button></div>`).join('')}</div>`;
+  }
+  function recallsCard() {
+    const r = state.snap.data.recalls;
+    const busyNow = state.recallBusy;
+    return `<div class="card" style="margin-top:16px"><h2 style="display:flex;align-items:center">Product recalls<span class="spacer"></span><button class="btn small" data-action="checkRecalls" ${busyNow ? 'disabled' : ''}>${busyNow ? `Checking… ${busyNow}` : 'Check for recalls'}</button></h2>
+      ${r ? (r.matches.length ? `<p class="muted" style="margin-top:0">Possible matches from the UK's product safety alerts, reports and recalls. Check each one against your item's exact model and batch.</p>${recallRows(r.matches)}`
+        : `<div class="muted">No matches found for the ${r.checked} item${r.checked === 1 ? '' : 's'} checked on ${ukDate(r.checkedAt.slice(0, 10))}.</div>`) + (r.skipped ? `<div class="faint" style="margin-top:6px">${r.skipped} item${r.skipped === 1 ? '' : 's'} weren't checked because they have no model number.</div>` : '')
+        : '<div class="muted">Checks the items that have a model number against the UK government\'s product safety alerts, reports and recalls (GOV.UK). Only the model numbers and brands are sent.</div>'}</div>`;
+  }
+  // The item with the most information: ticked by default as the one to keep.
+  const richest = (ids) => ids.map(asset).filter(Boolean).map(x => ({ id: x.id, score: x.photos.length * 3 + x.documents.length * 3 + ['brand', 'model', 'serial', 'barcode', 'category', 'location', 'supplier', 'purchaseDate', 'warrantyExpiry', 'notes'].filter(k => x[k]).length + (x.purchasePrice !== null ? 1 : 0) + (x.currentValue !== null ? 1 : 0) + x.name.length / 100 })).sort((p, q) => q.score - p.score)[0]?.id;
+  async function duplicatesView() {
+    const groups = await run(() => keep.findDuplicates());
+    if (!groups.length) { toast('No possible duplicates found'); return; }
+    openModal(`<div class="dialog" id="dupDlg"><div class="dh"><h2>Possible duplicates (${groups.length})</h2></div>
+      <div class="db" style="display:block">${groups.map((g, gi) => `<div class="card" style="margin-bottom:12px" data-group="${gi}"><h3 style="margin:0 0 6px">${esc(g.reason)}</h3>
+        ${g.ids.map((id) => { const x = asset(id); return x ? `<label class="partrow"><input type="radio" name="keep${gi}" value="${id}" ${id === richest(g.ids) ? 'checked' : ''}> <span style="flex:1"><b>${esc(x.name)}</b> <span class="meta">${esc([x.brand, x.model, x.serial && 'S/N ' + x.serial, x.location, x.purchasePrice !== null ? money(x.purchasePrice) : '', x.purchaseDate && ukDate(x.purchaseDate)].filter(Boolean).join(' · '))} · ${x.photos.length} photo${x.photos.length === 1 ? '' : 's'}, ${x.documents.length} document${x.documents.length === 1 ? '' : 's'}</span></span></label>` : ''; }).join('')}
+        <p style="margin:8px 0 0"><button class="btn small primary" data-action="dupMerge" data-gi="${gi}" data-ids="${g.ids.join(',')}">Merge into the ticked one</button> <button class="btn small" data-action="dupIgnore" data-ids="${g.ids.join(',')}">Not duplicates</button></p></div>`).join('')}
+        <p class="muted">Merging moves photos, documents, the service log and value history to the ticked item, fills in any details it's missing, joins the notes, and sends the others to Deleted items (you can restore them for 30 days).</p></div>
+      <div class="df"><button class="btn" data-action="close">Close</button></div></div>`);
+  }
+  async function spendingCard() {
+    const el = $('#spendCard'); if (!el) return;
+    const rows = await keep.spending();
+    if (!rows.length) { el.innerHTML = '<h2>Spending by year</h2><div class="muted">Add prices and dates bought to see what you spent each year.</div>'; return; }
+    const max = Math.max(1, ...rows.map(r => r.total));
+    el.innerHTML = `<h2>Spending by year</h2><p class="muted" style="margin-top:0">What you paid for the things in OpenSafe, by the year you bought them (borrowed items left out).</p>
+      <div class="bars">${rows.map(r => `<div class="barrow" title="${esc(r.top.map(t => `${t.category}: ${money(t.total)}`).join(', '))}"><span class="lab">${esc(r.year === 'Unknown' ? 'Date not known' : r.year)} <span class="faint">(${r.count})</span></span><span class="track"><span class="fill" style="width:${(r.total / max * 100).toFixed(1)}%;display:block"></span></span><span class="v">${money0(r.total)}</span></div>
+        <div class="meta" style="margin:-4px 0 8px 2px">${esc(r.top.map(t => `${t.category} ${money0(t.total)}`).join(' · '))}</div>`).join('')}</div>`;
   }
 
   function viewBin() {
@@ -840,11 +888,12 @@
       <div class="card"><h2>Insurance / inventory report (PDF)</h2>
         <p class="muted">A printable list of everything you own, with photos, serial numbers, prices, values and whether you have a receipt. Useful for your insurer, a claim, or a moving company.</p>
         <div class="row" style="display:flex;gap:10px;flex-wrap:wrap"><label class="f" style="flex:1;min-width:160px">Group by<select id="rGroup">${opt('category', 'Category', 'category')}${opt('location', 'Room / location', 'category')}</select></label>
-        <label class="f" style="flex:2;min-width:200px">Only this place<select id="rPlace">${opt('', 'Everywhere', '')}${locPaths().map(c => opt(c, locLabel(c), '')).join('')}</select></label></div>
+        ${(state.snap.data.people || []).length ? `<label class="f" style="flex:1;min-width:160px">Owner<select id="rOwner">${opt('', 'Everyone', '')}${state.snap.data.people.map(p => opt(p, p, '')).join('')}</select></label>` : ''}<label class="f" style="flex:2;min-width:200px">Only this place<select id="rPlace">${opt('', 'Everywhere', '')}${locPaths().map(c => opt(c, locLabel(c), '')).join('')}</select></label></div>
         <p><label class="switch" style="font-weight:500"><input type="checkbox" id="rPhotos" checked> Include a photo of each item</label></p>
         <p><label class="switch" style="font-weight:500"><input type="checkbox" id="rInactive"> Include sold, disposed and lost items</label></p>
         <button class="btn primary" data-action="report">Save PDF…</button></div>
       ${state.snap.security.vault.exists ? `<div class="note" style="grid-column:1/-1">🔒 Vault items are only included while the vault is open. It's ${state.snap.security.vault.unlocked ? '<b>open</b> now, so they will be included' : '<b>locked</b> now, so they will be left out'}. Reports and spreadsheets are saved unencrypted, so keep them somewhere safe.</div>` : ''}
+      <div class="card" id="spendCard"><h2>Spending by year</h2><div class="muted">Working it out…</div></div>
       <div class="card"><h2>📦 Labels for boxes, shelves and rooms</h2>
         <p class="muted">Stick one on a box, shelf or door. Scanning it in OpenSafe Capture shows what's there, lets you scan items to put them there, or starts a stock check. Same A4 sheets as item labels (Avery L7160).</p>
         <div class="partlist" style="max-height:180px">${locPaths().map(p => `<label class="partrow"><input type="checkbox" class="plab" value="${esc(p)}"> <span>${esc(p)}</span></label>`).join('') || '<div class="muted">No locations yet.</div>'}</div>
@@ -946,6 +995,10 @@
         <label class="f">Location<input name="location" list="dlLocs" value="${esc(a.location || '')}" placeholder="e.g. Home / Garage / Shelf 2"></label>
         <label class="f">Condition<select name="condition">${opt('', '—', a.condition || '')}${L.conditions.map(s => opt(s, s, a.condition)).join('')}</select></label>
         ${inp('brand', 'Brand')}${inp('model', 'Model')}${inp('serial', 'Serial number')}
+        <label class="f">Owner (who it belongs to)<input name="owner" list="dlPeople" value="${esc(a.owner || '')}" placeholder="Leave blank if it's yours"></label>
+        <datalist id="dlPeople">${(state.snap.data.people || []).map(p => `<option value="${esc(p)}">`).join('')}</datalist>
+        <div id="borrowBox" class="s3 subgrid ${a.status === 'Borrowed' ? '' : 'hidden'}"><h3>Borrowed from someone else</h3>
+          ${inp('borrowedFrom', 'Belongs to')}${inp('borrowedContact', 'Their phone or email')}${inp('returnBy', 'Give back by (reminder)', 'type="date"')}</div>
         <div id="lendBox" class="s3 subgrid ${a.status === 'Lent out' ? '' : 'hidden'}"><h3>Lent out</h3>
           ${inp('lentTo', 'Lent to')}${inp('lentContact', 'Phone or email')}${inp('lentDate', 'Lent on', 'type="date"')}${inp('dueBack', 'Due back (reminder)', 'type="date"')}</div>
         <div id="soldBox" class="s3 subgrid ${a.status === 'Sold' ? '' : 'hidden'}"><h3>Sold</h3>
@@ -977,7 +1030,7 @@
       <datalist id="dlLocs">${d.locations.map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     </form>`);
     const f = $('#itemForm');
-    $('#fStatus').onchange = (e) => { $('#lendBox').classList.toggle('hidden', e.target.value !== 'Lent out'); $('#soldBox').classList.toggle('hidden', e.target.value !== 'Sold'); };
+    $('#fStatus').onchange = (e) => { $('#lendBox').classList.toggle('hidden', e.target.value !== 'Lent out'); $('#soldBox').classList.toggle('hidden', e.target.value !== 'Sold'); $('#borrowBox').classList.toggle('hidden', e.target.value !== 'Borrowed'); };
     const showKind = (k) => {
       const cur = {}; for (const el of $$('#detBox input')) cur[el.name.slice(4)] = el.value;
       $('#detBox').innerHTML = k ? DETAIL_UI[k].map(([key, label, type]) => detInp([key, label, type])).join('') : '';
@@ -1215,12 +1268,21 @@
         case 'csvPick': { try { const r = await keep.csvPick(); if (r) csvForm(r); } catch (ex) { toast('⚠ ' + ex.message, 8000); } break; }
         case 'importPick': { await run(() => keep.importPick()); await refresh(); break; }
         case 'phoneReset': await run(() => keep.phoneReset()); loadPhone(); break;
-        case 'report': { const p = await run(() => keep.exportReport({ includePhotos: $('#rPhotos').checked, includeInactive: $('#rInactive').checked, groupBy: $('#rGroup').value, place: $('#rPlace').value })); if (p) toast('Report saved'); break; }
+        case 'report': { const p = await run(() => keep.exportReport({ includePhotos: $('#rPhotos').checked, includeInactive: $('#rInactive').checked, groupBy: $('#rGroup').value, place: $('#rPlace').value, owner: $('#rOwner') ? $('#rOwner').value : '' })); if (p) toast('Report saved'); break; }
         case 'openLink': e.preventDefault(); await run(() => keep.openItemLink(a.id)); break;
         case 'placeAdd': { const r = await run(() => keep.placePick(state.f.location)); if (r && r.added) toast(`✓ ${r.added} file${r.added === 1 ? '' : 's'} added`); if (r && r.errors.length) toast('⚠ ' + r.errors.join(' · '), 7000); await refresh(); break; }
         case 'placeOpen': { const e = state.snap.data.places[state.f.location]; if (e) await run(() => keep.openAttachment(e.id, act.dataset.file, act.dataset.name)); break; }
         case 'placeRm': if (confirm('Delete this file from OpenSafe?')) { await run(() => keep.placeRemove(state.f.location, act.dataset.fid), 'Deleted'); await refresh(); } break;
         case 'placeLabels': { const places = [...document.querySelectorAll('.plab:checked')].map(i => i.value); if (!places.length) { toast('Tick at least one place'); break; } const p = await run(() => keep.placeLabels(places, { copies: Number($('#plCopies').value), skip: Number($('#plSkip').value) || 0 })); if (p) toast('✓ Labels saved. Print at 100% (no "fit to page").', 5000); break; }
+        case 'deleteSel': { const n = await run(() => keep.deleteMany([...state.sel])); if (n) { state.sel.clear(); toast(`${n} item${n === 1 ? '' : 's'} moved to Deleted items`, 4000); await refresh(); } break; }
+        case 'findDupes': duplicatesView(); break;
+        case 'dupIgnore': { await run(() => keep.ignoreDuplicates(act.dataset.ids.split(','))); act.closest('[data-group]').remove(); if (!document.querySelector('#dupDlg [data-group]')) closeModal(); break; }
+        case 'dupMerge': { const gi = act.dataset.gi; const keepId = (document.querySelector(`#dupDlg input[name=keep${gi}]:checked`) || {}).value; const others = act.dataset.ids.split(',').filter(id => id !== keepId); if (!keepId || !confirm(`Merge ${others.length} item${others.length === 1 ? '' : 's'} into "${asset(keepId).name}"?`)) break; await run(() => keep.mergeItems(keepId, others), 'Merged'); act.closest('[data-group]').remove(); await refresh(); if (!document.querySelector('#dupDlg [data-group]')) closeModal(); break; }
+        case 'checkRecalls': { state.recallBusy = '…'; render(); try { const r = await keep.checkRecalls(); toast(r.matches.length ? `⚠ ${r.matches.length} possible recall match${r.matches.length === 1 ? '' : 'es'}` : `✓ No recalls found for ${r.checked} item${r.checked === 1 ? '' : 's'}`, 5000); } catch (ex) { toast('⚠ ' + ex.message, 6000); } state.recallBusy = null; await refresh(); break; }
+        case 'openRecall': await run(() => keep.openRecall(act.dataset.link)); break;
+        case 'dismissRecall': await run(() => keep.dismissRecall(act.dataset.aid, act.dataset.link)); await refresh(); break;
+        case 'showRecalls': openModal(`<div class="dialog"><div class="dh"><h2>Possible product recall</h2></div><div class="db" style="display:block"><p class="muted" style="margin-top:0">Check the exact model, batch or serial range on the GOV.UK page before acting.</p>${recallRows(recallsFor(a.id))}</div><div class="df"><button class="btn" data-action="close">Close</button></div></div>`); break;
+        case 'filterOwner': state.f = Object.assign(state.f, { owner: act.dataset.owner, location: '', category: '', status: 'active', gap: '', q: '' }); go('items'); break;
         case 'grabPdf': { const p = await run(() => keep.exportGrab()); if (p) toast('Grab list saved'); break; }
         case 'csv': { const p = await run(() => keep.exportCsv()); if (p) toast('CSV saved'); break; }
         case 'saveDep': { const dep = {}; for (const i of document.querySelectorAll('[data-dep]')) if (i.value.trim()) dep[i.dataset.dep] = i.value.trim(); try { await run(() => keep.updateSettings({ depreciation: dep }), 'Saved'); await refresh(); } catch (_) {} break; }
@@ -1278,6 +1340,7 @@
   });
   keep.onNav((w) => go(w));
   keep.onSecurity(() => refresh());
+  keep.onRecallProgress((p) => { if (state.recallBusy) { state.recallBusy = `${p.n} of ${p.total}`; if (state.view === 'dashboard') render(); } });
   keep.onUpdate((u) => { const was = state.upd && state.upd.state; state.upd = u; renderUpdate(); if (state.view === 'settings' && was !== u.state) render(); });
   keep.updateStatus().then((u) => { state.upd = u; renderUpdate(); });
 
