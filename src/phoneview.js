@@ -44,7 +44,7 @@ function buildView(store, { includeVault = false, makeThumb }) {
       serial: a.serial, barcode: a.barcode, condition: a.condition, purchaseDate: a.purchaseDate, purchasePrice: a.purchasePrice,
       supplier: a.supplier, currentValue: a.currentValue, warrantyExpiry: a.warrantyExpiry,
       insurer: pol ? pol.insurer : a.insurer, policyNumber: pol ? pol.policyNumber : a.policyNumber, insuredValue: a.insuredValue,
-      lentTo: a.lentTo, dueBack: a.dueBack, details: a.details, tags: a.tags, notes: a.notes,
+      lentTo: a.lentTo, lentContact: a.lentContact, dueBack: a.dueBack, details: a.details, tags: a.tags, notes: a.notes,
       photos: a.photos.length, documents: a.documents.length, inVault: store.isVaultAsset(a), thumb
     };
   });

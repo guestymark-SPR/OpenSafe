@@ -523,7 +523,7 @@
           : kv('Insurer', esc(a.insurer)) + kv('Policy number', esc(a.policyNumber)) + kv('Insured value', a.insuredValue !== null ? money(a.insuredValue) : ''); })()}
         ${kv('Tags', a.tags.map(x => `<span class="pill">${esc(x)}</span>`).join(''))}${kv('Added', ukDate(a.createdAt.slice(0, 10)) + (a.source === 'phone' ? ' from phone' : ''))}${kv('Last changed', ukDate(a.updatedAt.slice(0, 10)))}
       ${a.barcode ? kv('Barcode', `<span class="mono">${esc(a.barcode)}</span> <button class="btn small" data-action="bcLookup">Look up</button>`) : ''}
-      ${a.status === 'Lent out' ? kv('Lent to', esc(a.lentTo)) + kv('Lent on', a.lentDate ? ukDate(a.lentDate) : '') + kv('Due back', a.dueBack ? ukDate(a.dueBack) : '') : ''}
+      ${a.status === 'Lent out' ? kv('Lent to', esc(a.lentTo)) + kv('Contact', esc(a.lentContact)) + kv('Lent on', a.lentDate ? ukDate(a.lentDate) : '') + kv('Due back', a.dueBack ? ukDate(a.dueBack) : '') : ''}
       ${a.status === 'Sold' ? kv('Sold on', a.soldDate ? ukDate(a.soldDate) : '') + kv('Sold for', a.soldPrice !== null && a.soldPrice !== undefined ? money(a.soldPrice) : '') + kv('Sold to', esc(a.soldTo)) : ''}
       </div>${a.notes ? `<div class="notes">${esc(a.notes)}</div>` : ''}</div>
       ${a.details && a.details.kind ? `<div class="card" style="margin-top:14px"><h2>${a.details.kind === 'boat' ? 'Boat details' : 'Vehicle details'}</h2><div class="kv">
@@ -763,7 +763,7 @@
         <label class="f">Condition<select name="condition">${opt('', '—', a.condition || '')}${L.conditions.map(s => opt(s, s, a.condition)).join('')}</select></label>
         ${inp('brand', 'Brand')}${inp('model', 'Model')}${inp('serial', 'Serial number')}
         <div id="lendBox" class="s3 subgrid ${a.status === 'Lent out' ? '' : 'hidden'}"><h3>Lent out</h3>
-          ${inp('lentTo', 'Lent to')}${inp('lentDate', 'Lent on', 'type="date"')}${inp('dueBack', 'Due back (reminder)', 'type="date"')}</div>
+          ${inp('lentTo', 'Lent to')}${inp('lentContact', 'Phone or email')}${inp('lentDate', 'Lent on', 'type="date"')}${inp('dueBack', 'Due back (reminder)', 'type="date"')}</div>
         <div id="soldBox" class="s3 subgrid ${a.status === 'Sold' ? '' : 'hidden'}"><h3>Sold</h3>
           ${inp('soldDate', 'Sold on', 'type="date"')}${inp('soldPrice', 'Sold for (£)', 'inputmode="decimal"')}${inp('soldTo', 'Sold to / where')}</div>
         <h3>Purchase and value</h3>

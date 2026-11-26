@@ -162,9 +162,12 @@ async function importFromPath(file) {
   if (res.added) lines.push(`${res.added} new item${res.added === 1 ? '' : 's'} added.`);
   if (res.updated) lines.push(`${res.updated} item${res.updated === 1 ? '' : 's'} already here got new photos or details.`);
   if (res.unchanged) lines.push(`${res.unchanged} item${res.unchanged === 1 ? ' was' : 's were'} already imported, so ${res.unchanged === 1 ? 'it was' : 'they were'} skipped.`);
-  lines.push(`${res.photos} photo${res.photos === 1 ? '' : 's'} and ${res.documents} receipt${res.documents === 1 ? '' : 's'} saved.`);
+  if (res.added || res.updated || res.photos || res.documents) lines.push(`${res.photos} photo${res.photos === 1 ? '' : 's'} and ${res.documents} receipt${res.documents === 1 ? '' : 's'} saved.`);
+  if (res.changes) lines.push('', `${res.changes} change${res.changes === 1 ? '' : 's'} from scanning labels:`, ...res.changeLines.slice(0, 15), ...(res.changeLines.length > 15 ? [`…and ${res.changeLines.length - 15} more.`] : []));
+  if (res.skippedChanges.length) lines.push('', 'Changes not applied:', ...res.skippedChanges.slice(0, 10));
+  if (!lines.length) lines.push('Nothing new in this file. It was already imported.');
   if (res.errors.length) lines.push('', 'Not imported:', ...res.errors.slice(0, 10));
-  if (win) dialog.showMessageBox(win, { type: res.errors.length ? 'warning' : 'info', title: 'Import', message: res.added ? 'Items imported from your phone' : 'Import finished', detail: lines.join('\n') });
+  if (win) dialog.showMessageBox(win, { type: res.errors.length ? 'warning' : 'info', title: 'Import', message: res.added ? 'Items imported from your phone' : res.changes ? 'Changes imported from your phone' : 'Import finished', detail: lines.join('\n').replace(/^\n+/, '') });
   return res;
 }
 

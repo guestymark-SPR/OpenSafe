@@ -170,7 +170,7 @@ test('import from OpenSafe Capture: add, re-import, edits and bad files', () => 
   assert.deepStrictEqual([b.name, b.location, b.serial, b.photos.length], ['Family tent', 'Garage', 'SN-9', 2]);
   // bad input
   assert.throws(() => s.importCapture({ hello: 1 }), /isn't an OpenSafe export/);
-  assert.throws(() => s.importCapture({ format: 'opensafe-export', version: 2, items: [] }), /newer version/);
+  assert.throws(() => s.importCapture({ format: 'opensafe-export', version: 3, items: [] }), /newer version/);
   const r4 = s.importCapture({ format: 'opensafe-export', version: 1, items: [{ name: 'Bad file', photos: [{ name: 'x.exe', type: 'application/x-msdownload', data: png }] }] });
   assert.strictEqual(r4.added, 1); assert.strictEqual(r4.errors.length, 1);
 });
@@ -273,4 +273,57 @@ test('phone inventory file: encrypted, vault excluded unless asked; labels sheet
   const html = await buildLabelsHtml(s, [a.id, a.id, a.id], { skip: 19 });
   assert.strictEqual((html.match(/class="sheet"/g) || []).length, 2); // 19 skipped + 3 labels = 22 > 21
   assert.strictEqual((html.match(/<img src="data:image\/png/g) || []).length, 3);
+});
+
+test('changes from scanning labels: applied once, PC edits win, history in notes', async () => {
+  const s = tmpStore();
+  const drill = s.saveAsset({ name: 'Makita drill', location: 'Garage', notes: 'Bought for the shed' });
+  const ladder = s.saveAsset({ name: 'Ladder', location: 'Garage' });
+  const later = (min) => new Date(Date.now() + min * 60000).toISOString();
+  const U = (n) => `0000000${n}-aaaa-4aaa-8aaa-aaaaaaaaaaaa`;
+  const file = { format: 'opensafe-export', version: 2, items: [], updates: [
+    { id: U(2), itemId: drill.id, at: later(2), kind: 'lend', summary: 'Lent to Dave (07700 900123), due back 5 Dec 2026', note: 'With the spare battery',
+      changes: { status: 'Lent out', lentTo: 'Dave', lentContact: '07700 900123', lentDate: '2026-11-26', dueBack: '2026-12-05' } },
+    { id: U(1), itemId: drill.id, at: later(1), kind: 'move', summary: 'Moved to Shed', changes: { location: 'Shed' } },
+    { id: U(3), itemId: ladder.id, at: later(1), kind: 'needsRepair', summary: 'Needs repairing', note: 'Bent rung', changes: { status: 'Needs repair' } },
+    { id: U(4), itemId: ladder.id, at: later(1), kind: 'x', summary: 'bad', changes: { status: 'Exploded', location: 'x'.repeat(500) } },
+    { id: U(5), itemId: 'ffffffff-ffff-4fff-8fff-ffffffffffff', at: later(1), summary: 'Moved', itemName: 'Kayak', changes: { location: 'Loft' } }
+  ] };
+  const r = s.importCapture(file);
+  assert.strictEqual(r.changes, 4);
+  assert.strictEqual(r.skippedChanges.length, 1);
+  assert.match(r.skippedChanges[0], /Kayak: not found/);
+  const d = s.getAsset(drill.id);
+  assert.strictEqual(d.location, 'Shed');
+  assert.strictEqual(d.status, 'Lent out');
+  assert.strictEqual(d.lentContact, '07700 900123');
+  assert.strictEqual(d.dueBack, '2026-12-05');
+  const lines = d.notes.split('\n');
+  assert.strictEqual(lines[0], 'Bought for the shed');
+  assert.match(lines[1], /\(phone\): Moved to Shed$/);   // applied in time order
+  assert.match(lines[2], /\(phone\): Lent to Dave .*\(With the spare battery\)$/);
+  const l = s.getAsset(ladder.id);
+  assert.strictEqual(l.status, 'Needs repair');          // the invalid status was ignored
+  assert.strictEqual(l.location.length, 200);
+  assert.ok(s.reminders().some(x => x.assetId === drill.id && /Due back from Dave/.test(x.kind)));
+  // importing the same file again changes nothing
+  const r2 = s.importCapture(JSON.parse(JSON.stringify(file)));
+  assert.strictEqual(r2.changes, 0);
+  assert.strictEqual(s.getAsset(drill.id).notes.split('\n').length, 3);
+  // a phone change older than the last PC edit is skipped, not applied
+  await new Promise(res => setTimeout(res, 5));
+  const old = new Date(Date.now() - 60000).toISOString();
+  s.saveAsset({ id: ladder.id, name: 'Ladder', location: 'Loft' });
+  const r3 = s.importCapture({ format: 'opensafe-export', version: 2, items: [], updates: [{ id: U(6), itemId: ladder.id, at: old, summary: 'Moved to Garage', changes: { location: 'Garage' } }] });
+  assert.strictEqual(r3.changes, 0);
+  assert.match(r3.skippedChanges[0], /last edited on this PC/);
+  assert.strictEqual(s.getAsset(ladder.id).location, 'Loft');
+  // a new item and a change to it in the same file both apply
+  const NEW = 'abcdef01-2345-4678-89ab-cdef01234567';
+  const r4 = s.importCapture({ format: 'opensafe-export', version: 2, items: [{ id: NEW, name: 'Tent', createdAt: old }],
+    updates: [{ id: U(7), itemId: NEW, at: old, summary: 'Lent to Sam', changes: { status: 'Lent out', lentTo: 'Sam' } }] });
+  assert.strictEqual(r4.added, 1); assert.strictEqual(r4.changes, 1);
+  assert.strictEqual(s.getAsset(NEW).lentTo, 'Sam');
+  // a newer file version is refused clearly
+  assert.throws(() => s.importCapture({ format: 'opensafe-export', version: 3, items: [] }), /newer version/);
 });

@@ -19,10 +19,10 @@
   <button id="menuBtn" class="iconbtn" aria-label="Menu">⋮</button>
 </header>
 <div id="menu" class="menu hidden" role="menu">
-  <button data-act="exportAll" role="menuitem">Export all items again</button>
+  <button data-act="exportAll" role="menuitem">Export everything again</button>
   <button data-act="lockInv" role="menuitem">Lock inventory</button>
   <button data-act="forgetInv" role="menuitem">Remove inventory from this phone</button>
-  <button data-act="clearExported" role="menuitem">Remove exported items</button>
+  <button data-act="clearExported" role="menuitem">Remove exported items and changes</button>
   <button data-act="install" role="menuitem" id="installMenu" class="hidden">Install app</button>
   <button data-act="about" role="menuitem">About</button>
 </div>
@@ -60,10 +60,12 @@
       <p>Add it to your home screen so it opens like an app and works without internet.</p>
       <button class="btn primary" data-act="install">Install</button>
     </div>
+    <button class="btn scanbtn" data-act="scanItem">📷 Scan an item's QR label<span>Move it, lend it, or say it needs repairing</span></button>
     <div class="card exportcard">
       <div><b id="pendingCount">0 items</b> <span class="muted" id="pendingText">ready to export</span></div>
       <button class="btn primary" id="exportBtn" data-act="export">Export to PC</button>
     </div>
+    <div id="changes" class="hidden"><h3 class="sectionh">Changes from scanning labels</h3><div id="changeList" class="list"></div><h3 class="sectionh" id="itemsHead">New items</h3></div>
     <div id="list" class="list"></div>
     <div id="empty" class="empty hidden">
       <div class="emptyicon">📦</div>

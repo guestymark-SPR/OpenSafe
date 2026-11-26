@@ -5,7 +5,8 @@
 (function () {
   const $ = (id) => document.getElementById(id);
   const FORMAT = 'opensafe-export';
-  const FORMAT_VERSION = 1;
+  const FORMAT_VERSION = 1;          // items only
+  const FORMAT_VERSION_CHANGES = 2;  // items plus changes from scanning labels (needs OpenSafe 1.6 or later)
   const DEFAULT_CATS = ['Vehicles', 'Electronics', 'Computers & Phones', 'Tools', 'Camping & Outdoor', 'Motorbike Gear', 'Marine', 'Furniture', 'Appliances', 'Jewellery & Watches', 'Sports & Hobbies', 'Clothing', 'Other'];
   const DEFAULT_LOCS = ['Home', 'Garage', 'Car', 'Storage', 'Boat'];
   const FIELDS = ['name', 'category', 'location', 'brand', 'model', 'serial', 'barcode', 'condition', 'purchasePrice', 'currentValue', 'purchaseDate', 'warrantyExpiry', 'supplier', 'notes', 'tags'];
@@ -47,6 +48,8 @@
 
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = crypto.getRandomValues(new Uint8Array(1))[0] % 16; return (c === 'x' ? r : (r & 3 | 8)).toString(16); }));
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const ukDate = (s) => s ? new Date(s + 'T00:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '';
+  const todayLocal = () => { const d = new Date(), p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
   const gbp = (v) => { const n = Number(String(v || '').replace(/[£,\s]/g, '')); return v !== '' && Number.isFinite(n) ? new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(n) : ''; };
 
   // ---------- UI helpers ----------
@@ -81,12 +84,15 @@
 
   // ---------- state ----------
   let items = [];
+  let updates = []; // changes made by scanning a label, waiting to go to the PC
+  async function loadUpdates() { updates = (await kvGet('updates')) || []; }
   let editing = null; // item being edited (copy)
   let deferredInstall = null;
 
   function learnedLists() {
     const cats = new Set(DEFAULT_CATS), locs = new Set(DEFAULT_LOCS);
-    for (const it of items) { if (it.category) cats.add(it.category); if (it.location) locs.add(it.location); }
+    for (const it of [...items, ...((inv && inv.items) || [])]) { if (it.category) cats.add(it.category); if (it.location) locs.add(it.location); }
+    for (const u of updates) if (u.changes && u.changes.location) locs.add(u.changes.location);
     const fill = (el, vals) => el.replaceChildren(...[...vals].map(v => { const o = document.createElement('option'); o.value = v; return o; }));
     fill($('cats'), cats); fill($('locs'), locs);
   }
@@ -107,11 +113,21 @@
   async function renderList() {
     items = (await allItems()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     freeUrls();
+    await loadUpdates();
     const pending = items.filter(i => !i.exportedAt);
-    $('pendingCount').textContent = `${pending.length} item${pending.length === 1 ? '' : 's'}`;
-    $('pendingText').textContent = pending.length ? 'ready to export' : (items.length ? 'everything has been exported' : 'ready to export');
-    $('exportBtn').disabled = !pending.length;
-    $('empty').classList.toggle('hidden', items.length > 0);
+    const pendU = updates.filter(u => !u.exportedAt);
+    $('pendingCount').textContent = `${pending.length} item${pending.length === 1 ? '' : 's'}` + (pendU.length ? ` and ${pendU.length} change${pendU.length === 1 ? '' : 's'}` : '');
+    $('pendingText').textContent = (pending.length || pendU.length) ? 'ready to export' : ((items.length || updates.length) ? 'everything has been exported' : 'ready to export');
+    $('exportBtn').disabled = !pending.length && !pendU.length;
+    $('empty').classList.toggle('hidden', items.length > 0 || updates.length > 0);
+    $('changes').classList.toggle('hidden', !updates.length);
+    $('itemsHead').classList.toggle('hidden', !items.length);
+    $('changeList').replaceChildren(...updates.slice().sort((a, b) => b.at.localeCompare(a.at)).map(u => {
+      const d = document.createElement('div'); d.className = 'change'; d.dataset.change = u.id;
+      const when = new Date(u.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+      d.innerHTML = `<div class="t"><div class="n">${esc(u.itemName || itemInfo(u.itemId).name)}</div><div class="m">${esc(u.summary)}${u.note && u.kind !== 'note' ? ' · ' + esc(u.note) : ''}</div><div class="m">${esc(when)}</div></div>${u.exportedAt ? '<span class="pill done">Exported</span>' : '<span class="pill">New</span>'}`;
+      return d;
+    }));
     $('list').replaceChildren(...items.map(it => {
       const d = document.createElement('div'); d.className = 'item'; d.dataset.id = it.id;
       const thumb = it.photos[0] ? `<img src="${blobUrl(it.photos[0].blob)}" alt="">` : '<div class="ph">▣</div>';
@@ -208,8 +224,8 @@
     });
   }
 
-  async function buildExport(list) {
-    const out = { format: FORMAT, version: FORMAT_VERSION, app: 'OpenSafe Capture', exportedAt: new Date().toISOString(), device: navigator.userAgent.slice(0, 200), items: [] };
+  async function buildExport(list, ups) {
+    const out = { format: FORMAT, version: ups.length ? FORMAT_VERSION_CHANGES : FORMAT_VERSION, app: 'OpenSafe Capture', exportedAt: new Date().toISOString(), device: navigator.userAgent.slice(0, 200), items: [] };
     for (const it of list) {
       const x = { id: it.id, createdAt: it.createdAt, updatedAt: it.updatedAt };
       for (const k of FIELDS) x[k] = it[k] || '';
@@ -219,6 +235,7 @@
       for (const r of it.receipts) x.documents.push({ id: r.id, name: r.name, type: r.type, docType: 'Receipt', data: await blobToBase64(r.blob) });
       out.items.push(x);
     }
+    if (ups.length) out.updates = ups.map(u => ({ id: u.id, itemId: u.itemId, itemName: u.itemName, at: u.at, kind: u.kind, changes: u.changes, summary: u.summary, note: u.note }));
     return out;
   }
 
@@ -228,21 +245,24 @@
   }
 
   async function doExport(all) {
+    await loadUpdates();
     const list = all ? items : items.filter(i => !i.exportedAt);
-    if (!list.length) { toast('Nothing to export'); return; }
+    const ups = all ? updates : updates.filter(u => !u.exportedAt);
+    if (!list.length && !ups.length) { toast('Nothing to export'); return; }
     const btn = $('exportBtn'); btn.disabled = true; btn.textContent = 'Preparing…';
     let data;
-    try { data = JSON.stringify(await buildExport(list)); }
+    try { data = JSON.stringify(await buildExport(list, ups)); }
     catch (ex) { toast('Export failed: ' + ex.message, 5000); btn.disabled = false; btn.textContent = 'Export to PC'; return; }
     btn.textContent = 'Export to PC'; btn.disabled = false;
     const base = `OpenSafe-${stamp()}`;
     const mb = data.length < 1048576 ? Math.max(1, Math.round(data.length / 1024)) + ' KB' : (data.length / 1048576).toFixed(1) + ' MB';
-    pendingExport = { list, data, base };
+    pendingExport = { list, ups, data, base };
     const canShareFile = (name, type) => { try { return !!(navigator.canShare && navigator.canShare({ files: [new File(['x'], name, { type })] })); } catch (_) { return false; } };
     shareName = canShareFile(base + '.opensafe', 'application/octet-stream') ? [base + '.opensafe', 'application/octet-stream']
       : canShareFile(base + '.opensafe.txt', 'text/plain') ? [base + '.opensafe.txt', 'text/plain'] : null;
-    sheet(`<h2>Export ${list.length} item${list.length === 1 ? '' : 's'}</h2>
-      <p class="muted">One file with everything, photos included (${mb}).</p>
+    const what = [list.length && `${list.length} item${list.length === 1 ? '' : 's'}`, ups.length && `${ups.length} change${ups.length === 1 ? '' : 's'}`].filter(Boolean).join(' and ');
+    sheet(`<h2>Export ${what}</h2>
+      <p class="muted">One file with everything, photos included (${mb}).</p>${ups.length ? '<p class="muted small">Changes from scanning labels need OpenSafe 1.6 or later on the PC.</p>' : ''}
       ${shareName ? '<button class="btn primary" data-act="share">Send to PC…</button><p class="muted" style="margin-top:-4px">Pick Quick Share, Bluetooth, email, Google Drive or OneDrive.</p>' : ''}
       <button class="btn ${shareName ? '' : 'primary'}" data-act="download">Save to Downloads</button>
       <p class="muted">Then on your PC, open OpenSafe and choose <b>Items → Import from phone</b>, or just double-click the file.</p>
@@ -250,13 +270,19 @@
   }
   let pendingExport = null, shareName = null;
 
-  async function markExported(list) {
+  async function markExported(list, ups) {
     const now = new Date().toISOString();
     for (const it of list) { it.exportedAt = now; await putItem(it); }
+    if (ups.length) {
+      await loadUpdates();
+      const ids = new Set(ups.map(u => u.id));
+      for (const u of updates) if (ids.has(u.id)) u.exportedAt = now;
+      await kvSet('updates', updates);
+    }
   }
   async function finishExport(how) {
-    const { list } = pendingExport;
-    await markExported(list);
+    const { list, ups } = pendingExport;
+    await markExported(list, ups);
     pendingExport = null;
     closeSheet();
     renderList();
@@ -343,13 +369,15 @@
     const ukd = (s) => s ? new Date(s + 'T00:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '';
     const rows = [['Category', a.category], ['Location', a.location], ['Status', a.status !== 'Owned' ? a.status : ''], ['Brand', a.brand], ['Model', a.model], ['Serial number', a.serial], ['Barcode', a.barcode],
       ['Bought on', ukd(a.purchaseDate)], ['Bought from', a.supplier], ['Price paid', gbp(a.purchasePrice ?? '')], ['Value now', gbp(a.currentValue ?? '')], ['Warranty until', ukd(a.warrantyExpiry)],
-      ['Insurer', a.insurer], ['Policy number', a.policyNumber], ['Lent to', a.lentTo], ['Due back', ukd(a.dueBack)],
+      ['Insurer', a.insurer], ['Policy number', a.policyNumber], ['Lent to', a.lentTo], ['Their contact', a.lentContact], ['Due back', ukd(a.dueBack)],
       ['Registration', d.reg], ['VIN / frame no.', d.vin], ['Mileage', d.mileage], ['MOT due', ukd(d.motDue)], ['Road tax due', ukd(d.taxDue)], ['Hull ID', d.hin], ['Engine hours', d.engineHours], ['Mooring', d.mooring]]
       .filter(([, v]) => v);
     sheet(`<div class="detail">${a.thumb ? `<img class="big" src="${a.thumb}" alt="">` : ''}<h2 style="margin-top:12px">${esc(a.name)}</h2>
       <div class="kv">${rows.map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${esc(v)}</div></div>`).join('')}</div>
       ${a.notes ? `<p style="white-space:pre-wrap">${esc(a.notes)}</p>` : ''}
-      <p class="muted small">${a.photos} photo${a.photos === 1 ? '' : 's'} and ${a.documents} document${a.documents === 1 ? '' : 's'} on the PC. To change anything, edit it in OpenSafe on the PC.</p>
+      ${updates.filter(u => u.itemId === a.id && !u.exportedAt).map(u => `<div class="waiting">⏳ Waiting to export: ${esc(u.summary)}</div>`).join('')}
+      <p class="muted small">${a.photos} photo${a.photos === 1 ? '' : 's'} and ${a.documents} document${a.documents === 1 ? '' : 's'} on the PC.</p>
+      <button class="btn primary" data-act="itemActions" data-id="${a.id}">Move, lend or report a problem…</button>
       <button class="btn" data-act="closeSheet">Close</button></div>`);
   }
 
@@ -372,7 +400,7 @@
       inv = await decryptInventory(file.text, e.target.pass.value);
       e.target.reset();
       showInv();
-      if (pendingItem) { const id = pendingItem; pendingItem = null; showInvItem(id); }
+      if (pendingItem) { const id = pendingItem; pendingItem = null; showActions(id); }
     } catch (ex) { err.textContent = ex.message; err.classList.remove('hidden'); }
     btn.disabled = false; btn.textContent = 'Open';
   };
@@ -382,9 +410,150 @@
     const m = location.hash.match(/item=([0-9a-f-]{36})/i);
     if (!m) return;
     history.replaceState(null, '', location.pathname);
-    const id = m[1].toLowerCase();
-    setTab('inv');
-    if (inv) showInvItem(id); else { pendingItem = id; toast('Open your inventory to see this item'); }
+    showActions(m[1].toLowerCase());
+  }
+
+  // ---------- changes from scanning an item's QR label ----------
+  const ACTIONS = [
+    ['move', '📦 Move it', 'Change where it\'s kept'],
+    ['lend', '🤝 Lend it', 'Who has it, and when it\'s due back'],
+    ['returned', '↩️ It\'s back', 'Returned after lending'],
+    ['needsRepair', '🔧 Needs repairing', 'Say what\'s wrong'],
+    ['inRepair', '🛠️ Gone for repair', 'It\'s with a repairer'],
+    ['repaired', '✅ Repaired', 'Working again'],
+    ['sold', '💷 Sold', 'Date, price and buyer'],
+    ['lost', '⚠️ Lost or stolen', 'Mark it missing'],
+    ['disposed', '🗑️ Got rid of it', 'Thrown, recycled or given away'],
+    ['note', '📝 Add a note', 'Anything else to remember']
+  ];
+  function itemInfo(id) {
+    const a = inv && inv.items.find(x => x.id === id);
+    if (a) return { name: a.name, location: a.location, status: a.status, lentTo: a.lentTo, known: true, inInv: true };
+    const l = items.find(x => x.id === id);
+    if (l) return { name: l.name, location: l.location, known: true };
+    return { name: 'Item ' + id.slice(0, 8), known: false };
+  }
+  // The PC copy, with any changes waiting on this phone applied on top.
+  function currentState(id) {
+    const st = Object.assign({}, itemInfo(id));
+    for (const u of updates.filter(x => x.itemId === id).sort((a, b) => a.at.localeCompare(b.at))) Object.assign(st, u.changes);
+    return st;
+  }
+  async function showActions(id, skipUnlock) {
+    await loadUpdates();
+    if (!inv && !skipUnlock && !items.some(x => x.id === id) && await kvGet('inventory')) {
+      sheet(`<form id="quickUnlock" data-id="${id}" autocomplete="off"><h2>🔒 Which item is this?</h2>
+        <p class="muted">Enter your inventory passphrase to see the item's name and details.</p>
+        <label>Passphrase<input type="password" name="pass" autocomplete="current-password"></label>
+        <div id="quErr" class="error hidden" role="alert"></div>
+        <button class="btn primary" type="submit">Open</button>
+        <button class="btn" type="button" data-act="skipUnlock" data-id="${id}">Skip, record a change without the name</button></form>`);
+      setTimeout(() => { const i = document.querySelector('#quickUnlock input'); if (i) i.focus(); }, 50);
+      return;
+    }
+    const st = currentState(id);
+    const haveFile = !!(await kvGet('inventory'));
+    const where = [st.location && `📍 ${st.location}`, st.status && st.status !== 'Owned' && (st.status === 'Lent out' && st.lentTo ? `Lent to ${st.lentTo}` : st.status)].filter(Boolean).join(' · ');
+    const waiting = updates.filter(u => u.itemId === id && !u.exportedAt);
+    learnedLists();
+    sheet(`<h2>${esc(st.name)}</h2>
+      ${where ? `<p class="muted" style="margin-top:-6px">${esc(where)}</p>` : ''}
+      ${st.known ? '' : `<p class="muted small">${haveFile ? 'Unlock your inventory to see this item\'s name.' : 'Load your inventory from the PC (My inventory tab) to see item names here.'} You can still record a change: the PC knows which item this label belongs to.</p>${haveFile ? `<button class="btn" data-act="itemActions" data-id="${id}">🔓 Unlock inventory</button>` : ''}`}
+      ${waiting.map(u => `<div class="waiting">⏳ Waiting to export: ${esc(u.summary)}</div>`).join('')}
+      <div class="actions">${ACTIONS.map(([k, t, d]) => `<button class="action" data-act="itemAction" data-kind="${k}" data-id="${id}">${t}<span>${esc(d)}</span></button>`).join('')}</div>
+      ${st.inInv ? `<button class="btn" data-act="itemDetails" data-id="${id}">See all details</button>` : ''}
+      <button class="btn" data-act="closeSheet">Close</button>`);
+  }
+  function actionForm(kind, id) {
+    const st = currentState(id);
+    const f = (name, label, attrs = '') => `<label>${label}<input name="${name}" ${attrs}></label>`;
+    const note = (label = 'Note (optional)') => `<label>${label}<textarea name="note" rows="2" maxlength="1000"></textarea></label>`;
+    const today = todayLocal();
+    const body = {
+      move: f('location', 'Where is it now?', `list="locs" maxlength="60" value="${esc(st.location || '')}"`) + note(),
+      lend: f('lentTo', 'Lent to', 'maxlength="200" autocapitalize="words"') + f('lentContact', 'Their phone number or email (optional)', 'maxlength="200"')
+        + `<div class="row2">${f('lentDate', 'Lent on', `type="date" value="${today}"`)}${f('dueBack', 'Due back (optional)', 'type="date"')}</div>` + note(),
+      returned: f('location', 'Where is it now? (optional)', 'list="locs" maxlength="60"') + note(),
+      needsRepair: note('What\'s wrong with it?'),
+      inRepair: f('repairer', 'Who is repairing it? (optional)', 'maxlength="200"') + note(),
+      repaired: note(),
+      sold: `<div class="row2">${f('soldDate', 'Sold on', `type="date" value="${today}"`)}${f('soldPrice', 'Price (£)', 'inputmode="decimal" placeholder="0.00"')}</div>` + f('soldTo', 'Sold to (optional)', 'maxlength="200"') + note(),
+      lost: note('What happened? (optional)'),
+      disposed: note(),
+      note: note('Note')
+    }[kind];
+    sheet(`<form id="actForm" data-kind="${kind}" data-id="${id}" novalidate autocomplete="off"><h2>${ACTIONS.find(a => a[0] === kind)[1]}</h2><p class="muted" style="margin-top:-6px">${esc(st.name)}</p>
+      ${body}<div id="actErr" class="error hidden" role="alert"></div>
+      <button class="btn primary" type="submit">Save change</button>
+      <button class="btn" type="button" data-act="itemActions" data-id="${id}">Back</button></form>`);
+  }
+  async function saveAction(form) {
+    const kind = form.dataset.kind, id = form.dataset.id;
+    const v = (n) => form.elements[n] ? form.elements[n].value.trim() : '';
+    const fail = (m) => { const e = $('actErr'); e.textContent = m; e.classList.remove('hidden'); };
+    const st = currentState(id);
+    let note = v('note'); const c = {}; let summary;
+    switch (kind) {
+      case 'move':
+        if (!v('location')) return fail('Enter where it is now.');
+        c.location = v('location'); summary = `Moved to ${c.location}`; break;
+      case 'lend':
+        if (!v('lentTo')) return fail('Enter who you lent it to.');
+        if (v('dueBack') && v('lentDate') && v('dueBack') < v('lentDate')) return fail('The due-back date is before the date you lent it.');
+        Object.assign(c, { status: 'Lent out', lentTo: v('lentTo'), lentContact: v('lentContact'), lentDate: v('lentDate'), dueBack: v('dueBack') });
+        summary = `Lent to ${c.lentTo}${c.lentContact ? ' (' + c.lentContact + ')' : ''}${c.dueBack ? ', due back ' + ukDate(c.dueBack) : ''}`; break;
+      case 'returned':
+        Object.assign(c, { status: 'Owned', lentTo: '', lentContact: '', lentDate: '', dueBack: '' });
+        if (v('location')) c.location = v('location');
+        summary = `Returned${st.status === 'Lent out' && st.lentTo ? ' by ' + st.lentTo : ''}${c.location ? ', now in ' + c.location : ''}`; break;
+      case 'needsRepair':
+        if (!note) return fail('Say what\'s wrong with it.');
+        c.status = 'Needs repair'; summary = 'Needs repairing'; break;
+      case 'inRepair': c.status = 'In repair'; summary = `Gone for repair${v('repairer') ? ' with ' + v('repairer') : ''}`; break;
+      case 'repaired': c.status = 'Owned'; summary = 'Repaired'; break;
+      case 'sold': {
+        const p = v('soldPrice').replace(/[£,\s]/g, '');
+        if (p && !Number.isFinite(Number(p))) return fail('Enter the price as a number, like 250 or 249.99.');
+        Object.assign(c, { status: 'Sold', soldDate: v('soldDate'), soldTo: v('soldTo') });
+        if (p) c.soldPrice = p;
+        summary = `Sold${c.soldTo ? ' to ' + c.soldTo : ''}${p ? ' for ' + gbp(p) : ''}`; break;
+      }
+      case 'lost': c.status = 'Lost / Stolen'; summary = 'Lost or stolen'; break;
+      case 'disposed': c.status = 'Disposed'; summary = 'Got rid of it'; break;
+      case 'note':
+        if (!note) return fail('Write the note.');
+        summary = note.slice(0, 300); note = ''; break;
+      default: return;
+    }
+    await loadUpdates();
+    const info = itemInfo(id);
+    updates.push({ id: uid(), itemId: id, itemName: info.known ? info.name : '', at: new Date().toISOString(), kind, changes: c, summary, note, exportedAt: null });
+    await kvSet('updates', updates);
+    closeSheet();
+    toast('✓ Saved. Tap Export to PC to send it.', 3500);
+    if (tab === 'inv') showInv(); else renderList();
+  }
+  document.addEventListener('submit', async (e) => {
+    if (e.target.id === 'actForm') { e.preventDefault(); saveAction(e.target); }
+    if (e.target.id === 'quickUnlock') {
+      e.preventDefault();
+      const f = e.target, btn = f.querySelector('button[type=submit]');
+      btn.disabled = true; btn.textContent = 'Opening…';
+      try {
+        inv = await decryptInventory((await kvGet('inventory')).text, f.pass.value);
+        showActions(f.dataset.id);
+        if (tab === 'inv') showInv(); else renderList();
+      } catch (ex) { $('quErr').textContent = ex.message; $('quErr').classList.remove('hidden'); btn.disabled = false; btn.textContent = 'Open'; }
+    }
+  });
+  async function scanItemLabel() {
+    try {
+      $('scanMsg').textContent = 'Point the camera at an OpenSafe label';
+      const text = await scan(['qr_code']);
+      if (!text) return;
+      const m = String(text).match(/item=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+      if (m) showActions(m[1].toLowerCase()); else toast('That QR code isn\'t an OpenSafe label.', 4000);
+    } catch (ex) { stopScan(); toast(ex.message, 5000); }
   }
   window.addEventListener('hashchange', openFromHash);
 
@@ -419,6 +588,13 @@
   document.addEventListener('click', async (e) => {
     const tabBtn = e.target.closest('#tabs button');
     if (tabBtn) { setTab(tabBtn.dataset.tab); return; }
+    const ch = e.target.closest('[data-change]');
+    if (ch) {
+      const u = updates.find(x => x.id === ch.dataset.change);
+      if (u && !u.exportedAt && confirm(`Undo this change?\n\n${u.summary}`)) { updates = updates.filter(x => x.id !== u.id); await kvSet('updates', updates); renderList(); toast('Change removed'); }
+      else if (u && u.exportedAt) toast('Already exported. Change it in OpenSafe on the PC if needed.', 4000);
+      return;
+    }
     const invCard = e.target.closest('[data-inv]');
     if (invCard) { showInvItem(invCard.dataset.inv); return; }
     const card = e.target.closest('.item');
@@ -444,15 +620,11 @@
           if (code) { $('form').elements.barcode.value = code; toast('Barcode added. OpenSafe on the PC can look up the product.'); }
         } catch (ex) { stopScan(); toast(ex.message, 5000); }
         break;
-      case 'scanLabel':
-        try {
-          $('scanMsg').textContent = 'Point the camera at an OpenSafe label';
-          const text = await scan(['qr_code']);
-          if (!text) break;
-          const m = String(text).match(/item=([0-9a-f-]{36})/i);
-          if (m) showInvItem(m[1].toLowerCase()); else toast('That QR code isn\'t an OpenSafe label.');
-        } catch (ex) { stopScan(); toast(ex.message, 5000); }
-        break;
+      case 'scanLabel': case 'scanItem': scanItemLabel(); break;
+      case 'itemActions': showActions(a.dataset.id); break;
+      case 'itemAction': actionForm(a.dataset.kind, a.dataset.id); break;
+      case 'itemDetails': showInvItem(a.dataset.id); break;
+      case 'skipUnlock': showActions(a.dataset.id, true); break;
       case 'lockInv': inv = null; toast('Inventory locked'); if (tab === 'inv') showInv(); break;
       case 'forgetInv':
         if (confirm('Remove the inventory copy from this phone? Your items on the PC aren\'t affected.')) { await kvSet('inventory', undefined); inv = null; toast('Removed'); if (tab === 'inv') showInv(); }
@@ -462,9 +634,13 @@
         break;
       case 'clearExported': {
         const done = items.filter(i => i.exportedAt);
-        if (!done.length) { toast('No exported items to remove'); break; }
-        if (confirm(`Remove ${done.length} exported item${done.length === 1 ? '' : 's'} from this device? Only do this once they're safely imported on your PC.`)) {
+        await loadUpdates();
+        const doneU = updates.filter(u => u.exportedAt);
+        if (!done.length && !doneU.length) { toast('Nothing exported to remove'); break; }
+        const what = [done.length && `${done.length} exported item${done.length === 1 ? '' : 's'}`, doneU.length && `${doneU.length} exported change${doneU.length === 1 ? '' : 's'}`].filter(Boolean).join(' and ');
+        if (confirm(`Remove ${what} from this device? Only do this once they're safely imported on your PC.`)) {
           for (const it of done) await delItem(it.id);
+          if (doneU.length) await kvSet('updates', updates.filter(u => !u.exportedAt));
           toast('Removed'); renderList();
         }
         break;

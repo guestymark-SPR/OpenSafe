@@ -26,6 +26,7 @@ Everything stays on your PC. There's no account, no cloud and no subscription.
 - **OpenSafe Capture:** an offline phone and tablet app for adding items with photos, imported on the PC from one file.
 - **Inventory on your phone:** a read-only, passphrase-encrypted copy of your PC inventory you can search on your phone.
 - **QR labels:** print A4 sheets of 21 labels (63.5 × 38.1 mm, Avery L7160 size). Scanning a label on the phone opens that item.
+- **Scan a label to update an item:** in Capture, tap **Scan an item's QR label** to move it, lend it (with the person's phone or email and a due-back date), mark it returned, needing repair, in repair, repaired, sold, lost or got rid of, or add a note. The changes go to the PC in your next export.
 - **Barcodes:** scan a product barcode with the phone camera, or type it in. On the PC, **Look up** fills in the product name and brand from UPCitemdb (free, about 100 lookups a day and 6 a minute, needs the internet).
 
 ## Password protection and the vault
@@ -60,6 +61,15 @@ OpenSafe Capture is a small app for your phone or tablet that works offline. You
 4. On the PC, click **Import from phone…**, double-click the `.opensafe` file, or drag it into the OpenSafe window.
 
 Importing the same file twice is safe. Items already imported are skipped, details you edited on the PC are kept, and only new photos or receipts are added.
+
+### Updating items by scanning their labels
+
+Tap **📷 Scan an item's QR label** on the **Add & export** tab (or scan the label with the phone's camera app). Choose what happened: moved, lent, back, needs repairing, gone for repair, repaired, sold, lost or stolen, got rid of, or a note. Changes wait on the phone (tap one to undo it) and go into the next **Export to PC**.
+
+When you import the file on the PC:
+- each change is applied once, in the order you made them, and added to the item's notes with the date, so the notes keep a history of moves and loans;
+- a change is skipped, and listed in the import summary, if you edited that item on the PC after making the change on the phone;
+- an export with changes needs OpenSafe 1.6 or later on the PC.
 
 ### Your inventory on the phone
 

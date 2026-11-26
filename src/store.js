@@ -15,13 +15,13 @@ const DEFAULT_CATEGORIES = [
   'Sports & Hobbies', 'Clothing', 'Other'
 ];
 const DEFAULT_LOCATIONS = ['Home', 'Garage', 'Car', 'Storage', 'Boat'];
-const STATUSES = ['Owned', 'Lent out', 'In repair', 'Sold', 'Disposed', 'Lost / Stolen'];
+const STATUSES = ['Owned', 'Lent out', 'Needs repair', 'In repair', 'Sold', 'Disposed', 'Lost / Stolen'];
 const CONDITIONS = ['New', 'Excellent', 'Good', 'Fair', 'Poor'];
 const DOC_TYPES = ['Receipt', 'Warranty', 'Manual', 'Insurance', 'Other'];
 
 const STRING_FIELDS = ['name', 'category', 'location', 'brand', 'model', 'serial', 'supplier',
   'condition', 'status', 'insurer', 'policyNumber', 'notes', 'purchaseDate', 'warrantyExpiry',
-  'barcode', 'policyId', 'lentTo', 'lentDate', 'dueBack', 'soldDate', 'soldTo'];
+  'barcode', 'policyId', 'lentTo', 'lentContact', 'lentDate', 'dueBack', 'soldDate', 'soldTo'];
 const DATE_FIELDS = new Set(['purchaseDate', 'warrantyExpiry', 'lentDate', 'dueBack', 'soldDate']);
 const MONEY_FIELDS = ['purchasePrice', 'currentValue', 'insuredValue', 'soldPrice'];
 // Extra details for vehicles (car, van, motorbike) and boats
@@ -398,8 +398,9 @@ class Store {
     if (!obj || obj.format !== 'opensafe-export' || !Array.isArray(obj.items)) {
       throw new Error('This file isn\'t an OpenSafe export. Export it from OpenSafe Capture on your phone or tablet.');
     }
-    if (Number(obj.version) > 1) throw new Error('This file was made by a newer version of OpenSafe Capture. Update OpenSafe on this PC and try again.');
-    const res = { added: 0, updated: 0, unchanged: 0, photos: 0, documents: 0, errors: [], names: [] };
+    if (Number(obj.version) > 2) throw new Error('This file was made by a newer version of OpenSafe Capture. Update OpenSafe on this PC and try again.');
+    const res = { added: 0, updated: 0, unchanged: 0, photos: 0, documents: 0, errors: [], names: [], changes: 0, changeLines: [], skippedChanges: [] };
+    const touched = new Map(); // item id -> when it was last edited before this import (null for new items)
     for (const it of obj.items.slice(0, 10000)) {
       try {
         if (!it || typeof it !== 'object') continue;
@@ -408,12 +409,14 @@ class Store {
         const incoming = this._normaliseAsset(Object.assign({}, it, { id: undefined, source: 'phone' }), null);
         let changed = false;
         const isNew = !asset;
+        const before = asset ? asset.updatedAt : null;
         if (isNew) {
           asset = incoming;
           if (id) asset.id = id;
           if (typeof it.createdAt === 'string' && !Number.isNaN(Date.parse(it.createdAt))) asset.createdAt = new Date(it.createdAt).toISOString();
           asset.photos = []; asset.documents = []; asset.service = [];
           this.data.assets.push(asset);
+          touched.set(asset.id, null);
           this._learnLists(asset);
           res.added++; res.names.push(asset.name);
         } else {
@@ -433,14 +436,66 @@ class Store {
           if (d && d.id && seen.has(d.id)) continue;
           try { this._writeAttachment(asset, 'document', d); res.documents++; changed = true; } catch (e) { res.errors.push(`${asset.name}: ${e.message}`); }
         }
-        if (changed) asset.updatedAt = nowIso();
+        if (changed) { asset.updatedAt = nowIso(); if (!touched.has(asset.id)) touched.set(asset.id, before); }
         if (!isNew) { if (changed) res.updated++; else res.unchanged++; }
       } catch (e) {
         res.errors.push(String(e.message || e));
       }
     }
+    if (Array.isArray(obj.updates)) this._applyPhoneUpdates(obj.updates, res, touched);
     this.save();
     return res;
+  }
+
+  /**
+   * Changes made on the phone by scanning an item's QR label (moved, lent, needs repair...).
+   * Each change has its own id and is applied once. A change made on the phone before the
+   * item was last edited on the PC is skipped, so a newer PC edit is never overwritten.
+   * Every applied change is added to the item's notes as a dated line.
+   */
+  _applyPhoneUpdates(updates, res, touched) {
+    const RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!Array.isArray(this.data.appliedUpdates)) this.data.appliedUpdates = [];
+    const applied = new Set(this.data.appliedUpdates);
+    const baseline = new Map();
+    const list = updates.slice(0, 5000)
+      .filter(u => u && typeof u === 'object' && RE.test(String(u.id)) && RE.test(String(u.itemId)) && !Number.isNaN(Date.parse(u.at)))
+      .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+    const ukd = (iso) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Europe/London' });
+    for (const u of list) {
+      const uidL = String(u.id).toLowerCase();
+      if (applied.has(uidL)) continue;
+      const asset = this.getAsset(String(u.itemId).toLowerCase());
+      const label = cleanString(u.itemName, 200) || 'Item ' + String(u.itemId).slice(0, 8);
+      if (!asset) {
+        res.skippedChanges.push(this.data.vault && !this.vaultUnlocked()
+          ? `${label}: not found. If it's in the vault, unlock the vault and import the file again.`
+          : `${label}: not found on this PC.`);
+        continue;
+      }
+      if (!baseline.has(asset.id)) baseline.set(asset.id, touched.has(asset.id) ? touched.get(asset.id) : asset.updatedAt);
+      const base = baseline.get(asset.id);
+      if (base && Date.parse(base) > Date.parse(u.at)) {
+        res.skippedChanges.push(`${asset.name}: "${cleanString(u.summary, 200) || 'change'}" was made on the phone before the item was last edited on this PC, so it wasn't applied.`);
+        applied.add(uidL); this.data.appliedUpdates.push(uidL);
+        continue;
+      }
+      const c = (u.changes && typeof u.changes === 'object') ? u.changes : {};
+      for (const f of ['location', 'lentTo', 'lentContact', 'soldTo']) if (typeof c[f] === 'string') asset[f] = cleanString(c[f], 200);
+      for (const f of ['lentDate', 'dueBack', 'soldDate']) if (typeof c[f] === 'string') asset[f] = cleanDate(c[f]);
+      if (c.soldPrice !== undefined) asset.soldPrice = cleanMoney(c.soldPrice);
+      if (typeof c.status === 'string' && STATUSES.includes(c.status)) asset.status = c.status;
+      const summary = cleanString(u.summary, 300) || 'Updated';
+      const note = cleanString(u.note, 1000);
+      const line = `${ukd(u.at)} (phone): ${summary}${note ? ' (' + note + ')' : ''}`;
+      const joined = (asset.notes ? asset.notes + '\n' : '') + line;
+      asset.notes = joined.length > MAX_STRING ? joined.slice(joined.length - MAX_STRING) : joined; // keep the newest lines
+      asset.updatedAt = nowIso();
+      this._learnLists(asset);
+      applied.add(uidL); this.data.appliedUpdates.push(uidL);
+      res.changes++; res.changeLines.push(`${asset.name}: ${summary}`);
+    }
+    if (this.data.appliedUpdates.length > 20000) this.data.appliedUpdates = this.data.appliedUpdates.slice(-20000);
   }
 
   // ---------- service log ----------
@@ -647,7 +702,7 @@ class Store {
   toCSV() {
     const cols = ['name', 'category', 'location', 'brand', 'model', 'serial', 'status', 'condition',
       'purchaseDate', 'purchasePrice', 'supplier', 'currentValue', 'warrantyExpiry', 'insurer',
-      'policyNumber', 'insuredValue', 'barcode', 'lentTo', 'lentDate', 'dueBack', 'soldDate', 'soldPrice', 'soldTo',
+      'policyNumber', 'insuredValue', 'barcode', 'lentTo', 'lentContact', 'lentDate', 'dueBack', 'soldDate', 'soldPrice', 'soldTo',
       'reg', 'vin', 'engineNo', 'mileage', 'motDue', 'taxDue', 'hin', 'engineHours', 'tags', 'notes', 'photos', 'documents'];
     const esc = (v) => {
       let s = v === null || v === undefined ? '' : String(v);
