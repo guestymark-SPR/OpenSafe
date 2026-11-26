@@ -7,6 +7,7 @@
   const FORMAT = 'opensafe-export';
   const FORMAT_VERSION = 1;          // items only
   const FORMAT_VERSION_CHANGES = 2;  // items plus changes from scanning labels (needs OpenSafe 1.6 or later)
+  const FORMAT_VERSION_FILES = 3;    // changes that carry photos or receipts (needs OpenSafe 1.8 or later)
   const DEFAULT_CATS = ['Vehicles', 'Electronics', 'Computers & Phones', 'Tools', 'Camping & Outdoor', 'Motorbike Gear', 'Marine', 'Furniture', 'Appliances', 'Jewellery & Watches', 'Sports & Hobbies', 'Clothing', 'Other'];
   const DEFAULT_LOCS = ['Home', 'Garage', 'Car', 'Storage', 'Boat'];
   const FIELDS = ['name', 'category', 'location', 'brand', 'model', 'serial', 'barcode', 'condition', 'purchasePrice', 'currentValue', 'purchaseDate', 'warrantyExpiry', 'supplier', 'notes', 'tags'];
@@ -225,7 +226,8 @@
   }
 
   async function buildExport(list, ups) {
-    const out = { format: FORMAT, version: ups.length ? FORMAT_VERSION_CHANGES : FORMAT_VERSION, app: 'OpenSafe Capture', exportedAt: new Date().toISOString(), device: navigator.userAgent.slice(0, 200), items: [] };
+    const hasFiles = ups.some(u => (u.photos && u.photos.length) || (u.documents && u.documents.length));
+    const out = { format: FORMAT, version: hasFiles ? FORMAT_VERSION_FILES : ups.length ? FORMAT_VERSION_CHANGES : FORMAT_VERSION, app: 'OpenSafe Capture', exportedAt: new Date().toISOString(), device: navigator.userAgent.slice(0, 200), items: [] };
     for (const it of list) {
       const x = { id: it.id, createdAt: it.createdAt, updatedAt: it.updatedAt };
       for (const k of FIELDS) x[k] = it[k] || '';
@@ -235,7 +237,12 @@
       for (const r of it.receipts) x.documents.push({ id: r.id, name: r.name, type: r.type, docType: 'Receipt', data: await blobToBase64(r.blob) });
       out.items.push(x);
     }
-    if (ups.length) out.updates = ups.map(u => ({ id: u.id, itemId: u.itemId, itemName: u.itemName, at: u.at, kind: u.kind, changes: u.changes, summary: u.summary, note: u.note }));
+    for (const u of ups) {
+      const x = { id: u.id, itemId: u.itemId, itemName: u.itemName, at: u.at, kind: u.kind, changes: u.changes, summary: u.summary, note: u.note };
+      if (u.photos && u.photos.length) { x.photos = []; for (const p of u.photos) x.photos.push({ id: p.id, name: p.name, type: p.type, data: await blobToBase64(p.blob) }); }
+      if (u.documents && u.documents.length) { x.documents = []; for (const d of u.documents) x.documents.push({ id: d.id, name: d.name, type: d.type, docType: 'Receipt', data: await blobToBase64(d.blob) }); }
+      (out.updates = out.updates || []).push(x);
+    }
     return out;
   }
 
@@ -262,7 +269,7 @@
       : canShareFile(base + '.opensafe.txt', 'text/plain') ? [base + '.opensafe.txt', 'text/plain'] : null;
     const what = [list.length && `${list.length} item${list.length === 1 ? '' : 's'}`, ups.length && `${ups.length} change${ups.length === 1 ? '' : 's'}`].filter(Boolean).join(' and ');
     sheet(`<h2>Export ${what}</h2>
-      <p class="muted">One file with everything, photos included (${mb}).</p>${ups.length ? '<p class="muted small">Changes from scanning labels need OpenSafe 1.6 or later on the PC.</p>' : ''}
+      <p class="muted">One file with everything, photos included (${mb}).</p>${ups.length ? `<p class="muted small">Changes from scanning labels need OpenSafe ${ups.some(u => (u.photos && u.photos.length) || (u.documents && u.documents.length)) ? '1.8' : '1.6'} or later on the PC.</p>` : ''}
       ${shareName ? '<button class="btn primary" data-act="share">Send to PC…</button><p class="muted" style="margin-top:-4px">Pick Quick Share, Bluetooth, email, Google Drive or OneDrive.</p>' : ''}
       <button class="btn ${shareName ? '' : 'primary'}" data-act="download">Save to Downloads</button>
       <p class="muted">Then on your PC, open OpenSafe and choose <b>Items → Import from phone</b>, or just double-click the file.</p>
@@ -450,8 +457,29 @@
     ['sold', '💷 Sold', 'Date, price and buyer'],
     ['lost', '⚠️ Lost or stolen', 'Mark it missing'],
     ['disposed', '🗑️ Got rid of it', 'Thrown, recycled or given away'],
-    ['note', '📝 Add a note', 'Anything else to remember']
+    ['note', '📝 Add a note', 'Anything else to remember'],
+    ['photos', '📷 Add photos', 'Of the item, or of damage'],
+    ['receipt', '🧾 Add a receipt', 'Photo or PDF']
   ];
+  let attPending = []; // files picked in the Add photos / Add a receipt form
+  const attUrls = [];
+  function renderAttPending() {
+    const el = $('attList'); if (!el) return;
+    while (attUrls.length) URL.revokeObjectURL(attUrls.pop());
+    const u = (b) => { const x = URL.createObjectURL(b); attUrls.push(x); return x; };
+    el.innerHTML = attPending.length ? attPending.map((f, i) => `<div class="attrow">${/^image\//.test(f.type) ? `<img src="${u(f.blob)}" alt="">` : '<span class="ph">📄</span>'}<span>${esc(f.name)}</span><button type="button" class="iconbtn" data-act="attRemove" data-i="${i}" aria-label="Remove">✕</button></div>`).join('') : '<p class="muted small">Nothing added yet.</p>';
+  }
+  document.addEventListener('change', async (e) => {
+    const inp = e.target.closest && e.target.closest('input[data-attach]');
+    if (!inp) return;
+    for (const f of [...inp.files]) {
+      if (inp.dataset.attach === 'doc' && (f.type === 'application/pdf' || /\.pdf$/i.test(f.name))) attPending.push({ id: uid(), kind: 'doc', name: f.name, type: 'application/pdf', blob: f });
+      else { const r = await shrink(f, inp.dataset.attach === 'doc' ? 2400 : 2000); attPending.push({ id: uid(), kind: inp.dataset.attach, name: (inp.dataset.attach === 'doc' ? 'receipt-' : '') + r.name, type: r.type, blob: r.blob }); }
+    }
+    inp.value = '';
+    if ($('actErr')) $('actErr').classList.add('hidden');
+    renderAttPending();
+  });
   function itemInfo(id) {
     const a = inv && inv.items.find(x => x.id === id);
     if (a) return { name: a.name, location: a.location, status: a.status, lentTo: a.lentTo, known: true, inInv: true };
@@ -507,12 +535,16 @@
       sold: `<div class="row2">${f('soldDate', 'Sold on', `type="date" value="${today}"`)}${f('soldPrice', 'Price (£)', 'inputmode="decimal" placeholder="0.00"')}</div>` + f('soldTo', 'Sold to (optional)', 'maxlength="200"') + note(),
       lost: note('What happened? (optional)'),
       disposed: note(),
-      note: note('Note')
+      note: note('Note'),
+      photos: `<div class="row2"><label class="btn primary">📷 Take photo<input type="file" accept="image/*" capture="environment" data-attach="photo" hidden></label><label class="btn">🖼️ From gallery<input type="file" accept="image/*" multiple data-attach="photo" hidden></label></div><div id="attList"></div>` + note(),
+      receipt: `<div class="row2"><label class="btn primary">📷 Take photo<input type="file" accept="image/*" capture="environment" data-attach="doc" hidden></label><label class="btn">📄 Choose file<input type="file" accept="image/*,application/pdf" multiple data-attach="doc" hidden></label></div><div id="attList"></div>` + note()
     }[kind];
+    attPending = [];
     sheet(`<form id="actForm" data-kind="${kind}" data-id="${id}" novalidate autocomplete="off"><h2>${ACTIONS.find(a => a[0] === kind)[1]}</h2><p class="muted" style="margin-top:-6px">${esc(st.name)}</p>
       ${body}<div id="actErr" class="error hidden" role="alert"></div>
       <button class="btn primary" type="submit">Save change</button>
       <button class="btn" type="button" data-act="itemActions" data-id="${id}">Back</button></form>`);
+    renderAttPending();
   }
   async function saveAction(form) {
     const kind = form.dataset.kind, id = form.dataset.id;
@@ -550,11 +582,21 @@
       case 'note':
         if (!note) return fail('Write the note.');
         summary = note.slice(0, 300); note = ''; break;
+      case 'photos': case 'receipt': {
+        if (!attPending.length) return fail(kind === 'photos' ? 'Take or choose at least one photo.' : 'Add the receipt first.');
+        const n = attPending.length;
+        summary = kind === 'photos' ? `Added ${n} photo${n === 1 ? '' : 's'}` : `Added ${n === 1 ? 'a receipt' : n + ' receipts'}`;
+        break;
+      }
       default: return;
     }
     await loadUpdates();
     const info = itemInfo(id);
-    updates.push({ id: uid(), itemId: id, itemName: info.known ? info.name : '', at: new Date().toISOString(), kind, changes: c, summary, note, exportedAt: null });
+    const rec = { id: uid(), itemId: id, itemName: info.known ? info.name : '', at: new Date().toISOString(), kind, changes: c, summary, note, exportedAt: null };
+    if (kind === 'photos') rec.photos = attPending.map(({ id, name, type, blob }) => ({ id, name, type, blob }));
+    if (kind === 'receipt') rec.documents = attPending.map(({ id, name, type, blob }) => ({ id, name, type, blob }));
+    attPending = [];
+    updates.push(rec);
     await kvSet('updates', updates);
     closeSheet();
     toast('✓ Saved. Tap Export to PC to send it.', 3500);
@@ -562,6 +604,7 @@
   }
   document.addEventListener('submit', async (e) => {
     if (e.target.id === 'actForm') { e.preventDefault(); saveAction(e.target); }
+    if (e.target.id === 'stockForm') { e.preventDefault(); stock = { loc: e.target.loc.value, found: new Set(), unknown: new Set() }; runStockScan(); }
     if (e.target.id === 'quickUnlock') {
       e.preventDefault();
       const f = e.target, btn = f.querySelector('button[type=submit]');
@@ -594,6 +637,7 @@
     const detector = new BarcodeDetector({ formats: want });
     scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
     const v = $('scanVideo'); v.srcObject = scanStream; await v.play();
+    $('scanCount').textContent = ''; $('scanCloseBtn').textContent = 'Cancel';
     $('scanner').classList.remove('hidden');
     return new Promise((resolve) => {
       scan.cancel = () => { stopScan(); resolve(null); };
@@ -604,6 +648,106 @@
       tick();
     });
   }
+  // Keeps the camera on and calls onCode for each code seen, until Finish is tapped.
+  async function scanMany(formats, onCode) {
+    if (!('BarcodeDetector' in window)) throw new Error('This browser can\'t scan codes. Use Chrome on Android.');
+    const supported = await BarcodeDetector.getSupportedFormats();
+    const want = formats.filter(f => supported.includes(f));
+    if (!want.length) throw new Error('This phone can\'t scan that kind of code.');
+    const detector = new BarcodeDetector({ formats: want });
+    scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+    const v = $('scanVideo'); v.srcObject = scanStream; await v.play();
+    $('scanCloseBtn').textContent = 'Finish';
+    $('scanner').classList.remove('hidden');
+    return new Promise((resolve) => {
+      let last = '', lastAt = 0;
+      scan.cancel = () => { stopScan(); resolve(); };
+      const tick = async () => {
+        if (!scanStream) return;
+        try {
+          for (const f of await detector.detect(v)) {
+            if (f.rawValue === last && Date.now() - lastAt < 3000) continue;
+            last = f.rawValue; lastAt = Date.now();
+            const msg = onCode(f.rawValue);
+            if (msg) { $('scanMsg').textContent = msg.text; $('scanCount').textContent = msg.count || ''; if (navigator.vibrate) navigator.vibrate(msg.warn ? [60, 80, 60] : 50); }
+          }
+        } catch (_) { /* keep trying */ }
+        scanTimer = setTimeout(tick, 250);
+      };
+      tick();
+    });
+  }
+
+  // ---------- stock check: scan every label in a place, see what's missing or misplaced ----------
+  const GONE = ['Sold', 'Disposed', 'Lost / Stolen'];
+  let stock = null;
+  const idFromLabel = (text) => { const m = String(text).match(/item=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i); return m ? m[1].toLowerCase() : null; };
+  async function startStockCheck() {
+    await loadUpdates();
+    if (!(await autoOpen())) {
+      const have = await kvGet('inventory');
+      toast(have ? 'Open My inventory first: the stock check compares your labels with it.' : 'Load your inventory from the PC first (My inventory tab).', 5000);
+      setTab('inv'); return;
+    }
+    const counts = {};
+    for (const a of inv.items) { const st = currentState(a.id); if (GONE.includes(st.status)) continue; const l = st.location || ''; counts[l] = (counts[l] || 0) + 1; }
+    sheet(`<form id="stockForm"><h2>📋 Stock check</h2>
+      <p class="muted">Choose the place you're checking, then scan every OpenSafe label you can find there. At the end you'll see what's missing and what's in the wrong place.</p>
+      <label>Place<select name="loc">${Object.keys(counts).sort((x, y) => x.localeCompare(y)).map(l => `<option value="${esc(l)}">${esc(l || 'No location set')} (${counts[l]} item${counts[l] === 1 ? '' : 's'})</option>`).join('')}<option value="*">Everywhere: just list what I find</option></select></label>
+      <button class="btn primary" type="submit">📷 Start scanning</button>
+      <button class="btn" type="button" data-act="closeSheet">Cancel</button></form>`);
+  }
+  async function runStockScan() {
+    closeSheet();
+    const loc = stock.loc;
+    try {
+      $('scanMsg').textContent = loc === '*' ? 'Scan each label' : `Scan each label in ${loc || 'items with no location'}`;
+      $('scanCount').textContent = stock.found.size ? `${stock.found.size} found` : '';
+      await scanMany(['qr_code'], (text) => {
+        const id = idFromLabel(text);
+        if (!id) return { text: 'That isn\'t an OpenSafe label', warn: true };
+        const a = inv.items.find(x => x.id === id);
+        if (!a) { stock.unknown.add(id); return { text: `? This label isn't in your inventory copy (${id.slice(0, 8)})`, warn: true, count: `${stock.found.size} found` }; }
+        stock.found.add(id);
+        const where = currentState(id).location || '';
+        const ok = loc === '*' || where === loc;
+        return { text: ok ? `✓ ${a.name}` : `⚠ ${a.name}: recorded in ${where || 'no location'}`, warn: !ok, count: `${stock.found.size} found` };
+      });
+    } catch (ex) { stopScan(); toast(ex.message, 5000); }
+    $('scanCloseBtn').textContent = 'Cancel';
+    showStockResults();
+  }
+  function showStockResults() {
+    const loc = stock.loc;
+    const row = (a, extra) => `<li data-act="itemActions" data-id="${a.id}">${esc(a.name)}${extra ? `<small>${esc(extra)}</small>` : ''}</li>`;
+    const found = [...stock.found].map(id => inv.items.find(x => x.id === id)).filter(Boolean);
+    const here = loc === '*' ? found : found.filter(a => (currentState(a.id).location || '') === loc);
+    const wrong = loc === '*' ? [] : found.filter(a => (currentState(a.id).location || '') !== loc);
+    const missing = loc === '*' ? [] : inv.items.filter(a => { const st = currentState(a.id); return (st.location || '') === loc && !GONE.includes(st.status) && st.status !== 'Lent out' && !stock.found.has(a.id); });
+    const lent = loc === '*' ? [] : inv.items.filter(a => { const st = currentState(a.id); return (st.location || '') === loc && st.status === 'Lent out' && !stock.found.has(a.id); });
+    const place = loc === '*' ? 'everywhere' : (loc || 'no location');
+    sheet(`<h2>📋 Stock check: ${esc(place)}</h2>
+      <p class="muted" style="margin-top:-6px">${found.length} label${found.length === 1 ? '' : 's'} scanned${loc === '*' ? '' : `, ${missing.length} not found`}.</p>
+      ${wrong.length ? `<h3 class="stockh">⚠ In the wrong place (${wrong.length})</h3><ul class="stocklist">${wrong.map(a => row(a, 'Recorded in ' + (currentState(a.id).location || 'no location'))).join('')}</ul>
+        <button class="btn primary" data-act="stockMove">Record ${wrong.length === 1 ? 'it' : 'all ' + wrong.length} as moved to ${esc(place)}</button>` : ''}
+      ${missing.length ? `<h3 class="stockh">✗ Not found (${missing.length})</h3><ul class="stocklist">${missing.map(a => row(a)).join('')}</ul><p class="muted small">Tap an item to move it, mark it lost, or add a note.</p>` : ''}
+      ${lent.length ? `<h3 class="stockh">🤝 Lent out, not expected here (${lent.length})</h3><ul class="stocklist">${lent.map(a => row(a, 'With ' + (currentState(a.id).lentTo || 'someone'))).join('')}</ul>` : ''}
+      ${here.length ? `<h3 class="stockh">✓ ${loc === '*' ? 'Found' : 'Where they should be'} (${here.length})</h3><ul class="stocklist">${here.map(a => row(a, loc === '*' ? (currentState(a.id).location || '') : '')).join('')}</ul>` : ''}
+      ${stock.unknown.size ? `<h3 class="stockh">? Labels not in your inventory copy (${stock.unknown.size})</h3><p class="muted small">They may be newer than the inventory file on this phone. Save a new one on the PC.</p>` : ''}
+      <button class="btn" data-act="stockMore">📷 Scan more</button>
+      <button class="btn" data-act="stockDone">Finish stock check</button>`);
+  }
+  async function stockMoveAll() {
+    const loc = stock.loc;
+    await loadUpdates();
+    const wrong = [...stock.found].map(id => inv.items.find(x => x.id === id)).filter(a => a && (currentState(a.id).location || '') !== loc);
+    const at = new Date().toISOString();
+    for (const a of wrong) updates.push({ id: uid(), itemId: a.id, itemName: a.name, at, kind: 'move', changes: { location: loc }, summary: `Moved to ${loc} (found in a stock check)`, note: '', exportedAt: null });
+    await kvSet('updates', updates);
+    toast(`✓ ${wrong.length} move${wrong.length === 1 ? '' : 's'} saved. Export to send them to your PC.`, 4000);
+    showStockResults();
+  }
+
   function stopScan() {
     clearTimeout(scanTimer);
     if (scanStream) scanStream.getTracks().forEach(t => t.stop());
@@ -652,6 +796,11 @@
       case 'itemAction': actionForm(a.dataset.kind, a.dataset.id); break;
       case 'itemDetails': showInvItem(a.dataset.id); break;
       case 'skipUnlock': showActions(a.dataset.id, true); break;
+      case 'stockCheck': startStockCheck(); break;
+      case 'stockMore': runStockScan(); break;
+      case 'stockMove': stockMoveAll(); break;
+      case 'stockDone': stock = null; closeSheet(); renderList(); break;
+      case 'attRemove': attPending.splice(Number(a.dataset.i), 1); renderAttPending(); break;
       case 'lockInv': inv = null; await kvSet('inventoryKey', undefined); toast('Inventory locked. It will ask for the passphrase next time.', 4000); if (tab === 'inv') showInv(); break;
       case 'forgetInv':
         if (confirm('Remove the inventory copy from this phone? Your items on the PC aren\'t affected.')) { await kvSet('inventory', undefined); await kvSet('inventoryKey', undefined); inv = null; toast('Removed'); if (tab === 'inv') showInv(); }

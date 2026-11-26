@@ -170,7 +170,7 @@ test('import from OpenSafe Capture: add, re-import, edits and bad files', () => 
   assert.deepStrictEqual([b.name, b.location, b.serial, b.photos.length], ['Family tent', 'Garage', 'SN-9', 2]);
   // bad input
   assert.throws(() => s.importCapture({ hello: 1 }), /isn't an OpenSafe export/);
-  assert.throws(() => s.importCapture({ format: 'opensafe-export', version: 3, items: [] }), /newer version/);
+  assert.throws(() => s.importCapture({ format: 'opensafe-export', version: 4, items: [] }), /newer version/);
   const r4 = s.importCapture({ format: 'opensafe-export', version: 1, items: [{ name: 'Bad file', photos: [{ name: 'x.exe', type: 'application/x-msdownload', data: png }] }] });
   assert.strictEqual(r4.added, 1); assert.strictEqual(r4.errors.length, 1);
 });
@@ -325,7 +325,7 @@ test('changes from scanning labels: applied once, PC edits win, history in notes
   assert.strictEqual(r4.added, 1); assert.strictEqual(r4.changes, 1);
   assert.strictEqual(s.getAsset(NEW).lentTo, 'Sam');
   // a newer file version is refused clearly
-  assert.throws(() => s.importCapture({ format: 'opensafe-export', version: 3, items: [] }), /newer version/);
+  assert.throws(() => s.importCapture({ format: 'opensafe-export', version: 4, items: [] }), /newer version/);
 });
 
 test('bulk change: location, category, status with details, policy; validation', () => {

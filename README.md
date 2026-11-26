@@ -73,6 +73,21 @@ When you import the file on the PC:
 - a change is skipped, and listed in the import summary, if you edited that item on the PC after making the change on the phone;
 - an export with changes needs OpenSafe 1.6 or later on the PC.
 
+### Photos and receipts for items you already have
+
+After scanning a label, **📷 Add photos** or **🧾 Add a receipt** (a photo or PDF) adds them to that item on the PC at the next import. They're added even if you've edited the item on the PC since, because adding a photo can't overwrite anything. This needs OpenSafe 1.8 or later on the PC.
+
+### Stock check
+
+Tap **📋 Stock check**, choose a place (for example Garage), and scan every label you can find. The camera stays on between labels. At the end you'll see:
+- what's in the wrong place, with a button to record it as moved there;
+- what wasn't found;
+- what's lent out;
+- what's where it should be;
+- any labels that aren't in the inventory copy on the phone.
+
+It uses the inventory copy on the phone plus any changes waiting to export, so load a recent inventory file first.
+
 ### Your inventory on the phone
 
 On the PC, go to **Import Files → See your inventory on your phone**, choose a passphrase (at least 6 characters) and click **Save inventory for phone…**. Send the `.opensafe-view` file to the phone the same way as an export, then in Capture open **My inventory**, load the file and enter the passphrase.

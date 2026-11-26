@@ -60,7 +60,8 @@
       <p>Add it to your home screen so it opens like an app and works without internet.</p>
       <button class="btn primary" data-act="install">Install</button>
     </div>
-    <button class="btn scanbtn" data-act="scanItem">📷 Scan an item's QR label<span>Move it, lend it, or say it needs repairing</span></button>
+    <div class="scanrow"><button class="btn scanbtn" data-act="scanItem">📷 Scan an item's QR label<span>Move it, lend it, add photos, or say it needs repairing</span></button>
+    <button class="btn stockbtn" data-act="stockCheck">📋 Stock check<span>Scan everything in a place</span></button></div>
     <div class="card exportcard">
       <div><b id="pendingCount">0 items</b> <span class="muted" id="pendingText">ready to export</span></div>
       <button class="btn primary" id="exportBtn" data-act="export">Export to PC</button>
@@ -131,7 +132,7 @@
 <button id="fab" class="fab" data-act="new">+ Add item</button>
 <div id="toast" class="toast hidden" role="status"></div>
 <div id="sheet" class="sheetwrap hidden"><div class="sheet" id="sheetBody"></div></div>
-<div id="scanner" class="scanner hidden"><video id="scanVideo" playsinline muted></video><div class="scanframe"></div><div class="scanmsg" id="scanMsg">Point the camera at the code</div><button class="btn" data-act="scanClose">Cancel</button></div>
+<div id="scanner" class="scanner hidden"><video id="scanVideo" playsinline muted></video><div class="scanframe"></div><div class="scanmsg" id="scanMsg">Point the camera at the code</div><div class="scancount" id="scanCount"></div><button class="btn" data-act="scanClose" id="scanCloseBtn">Cancel</button></div>
 <datalist id="cats"></datalist>
 <datalist id="locs"></datalist>
 <script src="app.js"></script>

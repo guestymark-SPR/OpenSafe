@@ -441,7 +441,7 @@ class Store {
     if (!obj || obj.format !== 'opensafe-export' || !Array.isArray(obj.items)) {
       throw new Error('This file isn\'t an OpenSafe export. Export it from OpenSafe Capture on your phone or tablet.');
     }
-    if (Number(obj.version) > 2) throw new Error('This file was made by a newer version of OpenSafe Capture. Update OpenSafe on this PC and try again.');
+    if (Number(obj.version) > 3) throw new Error('This file was made by a newer version of OpenSafe Capture. Update OpenSafe on this PC and try again.');
     const res = { added: 0, updated: 0, unchanged: 0, photos: 0, documents: 0, errors: [], names: [], changes: 0, changeLines: [], skippedChanges: [] };
     const touched = new Map(); // item id -> when it was last edited before this import (null for new items)
     for (const it of obj.items.slice(0, 10000)) {
@@ -518,16 +518,26 @@ class Store {
       }
       if (!baseline.has(asset.id)) baseline.set(asset.id, touched.has(asset.id) ? touched.get(asset.id) : asset.updatedAt);
       const base = baseline.get(asset.id);
-      if (base && Date.parse(base) > Date.parse(u.at)) {
+      const c = (u.changes && typeof u.changes === 'object') ? u.changes : {};
+      const files = [...(Array.isArray(u.photos) ? u.photos.slice(0, 100).map(p => ['photo', p]) : []), ...(Array.isArray(u.documents) ? u.documents.slice(0, 100).map(d => ['document', d]) : [])];
+      const stale = !!(base && Date.parse(base) > Date.parse(u.at));
+      if (stale && !files.length) {
         res.skippedChanges.push(`${asset.name}: "${cleanString(u.summary, 200) || 'change'}" was made on the phone before the item was last edited on this PC, so it wasn't applied.`);
         applied.add(uidL); this.data.appliedUpdates.push(uidL);
         continue;
       }
-      const c = (u.changes && typeof u.changes === 'object') ? u.changes : {};
-      for (const f of ['location', 'lentTo', 'lentContact', 'soldTo']) if (typeof c[f] === 'string') asset[f] = cleanString(c[f], 200);
-      for (const f of ['lentDate', 'dueBack', 'soldDate']) if (typeof c[f] === 'string') asset[f] = cleanDate(c[f]);
-      if (c.soldPrice !== undefined) asset.soldPrice = cleanMoney(c.soldPrice);
-      if (typeof c.status === 'string' && STATUSES.includes(c.status)) asset.status = c.status;
+      if (stale && Object.keys(c).length) res.skippedChanges.push(`${asset.name}: details from "${cleanString(u.summary, 200) || 'change'}" are older than your last edit on this PC, so only its photos and receipts were added.`);
+      if (!stale) {
+        for (const f of ['location', 'lentTo', 'lentContact', 'soldTo']) if (typeof c[f] === 'string') asset[f] = cleanString(c[f], 200);
+        for (const f of ['lentDate', 'dueBack', 'soldDate']) if (typeof c[f] === 'string') asset[f] = cleanDate(c[f]);
+        if (c.soldPrice !== undefined) asset.soldPrice = cleanMoney(c.soldPrice);
+        if (typeof c.status === 'string' && STATUSES.includes(c.status)) asset.status = c.status;
+      }
+      const seen = new Set([...asset.photos, ...asset.documents].map(x => x.captureId).filter(Boolean));
+      for (const [kind, f] of files) {
+        if (!f || (f.id && seen.has(String(f.id)))) continue;
+        try { this._writeAttachment(asset, kind, f); if (kind === 'photo') res.photos++; else res.documents++; } catch (e) { res.errors.push(`${asset.name}: ${e.message}`); }
+      }
       const summary = cleanString(u.summary, 300) || 'Updated';
       const note = cleanString(u.note, 1000);
       const line = `${ukd(u.at)} (phone): ${summary}${note ? ' (' + note + ')' : ''}`;
