@@ -93,6 +93,67 @@
     b.disabled = on; b.textContent = on ? text : b.dataset.label;
   }
 
+  // ---------- insurance policies ----------
+  function viewPolicies() {
+    const pols = state.snap.data.policies || [];
+    const items = state.snap.data.assets;
+    const unlinked = items.filter(a => !a.policyId && !a.insurer && !INACTIVE.includes(a.status) && value(a) > 0);
+    const card = (p) => {
+      const covered = items.filter(a => a.policyId === p.id);
+      const total = covered.reduce((t, a) => t + value(a), 0);
+      // A cover limit adds up across items for contents/gadget policies; vehicle and boat limits are per item.
+      const over = p.coverLimit && ['Home contents', 'Gadget', 'Travel', 'Other'].includes(p.type) && total > p.coverLimit;
+      const row = (k, v) => v ? `<div><div class="k">${k}</div><div class="v">${v}</div></div>` : '';
+      return `<div class="card" style="margin-bottom:14px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><h2 style="margin:0;flex:1">${esc(p.insurer)} <span class="muted" style="font-weight:500">· ${esc(p.type)}</span></h2>
+          <button class="btn small" data-action="polItems" data-pid="${p.id}">Items covered…</button><button class="btn small" data-action="polEdit" data-pid="${p.id}">Edit</button><button class="btn small danger" data-action="polDel" data-pid="${p.id}">Delete</button></div>
+        <div class="kv">${row('Policy number', p.policyNumber ? `<span class="mono">${esc(p.policyNumber)}</span>` : '')}${row('Renews', p.renewalDate ? ukDate(p.renewalDate) + dueSoon(p.renewalDate) : '')}${row('Premium', p.premium !== null ? money(p.premium) : '')}
+          ${row('Excess', p.excess !== null ? money(p.excess) : '')}${row('Cover limit', p.coverLimit !== null ? money(p.coverLimit) : '')}${row('Claims line', p.claimsPhone ? esc(p.claimsPhone) : '')}</div>
+        ${p.notes ? `<div class="notes">${esc(p.notes)}</div>` : ''}
+        <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line2)"><b>${covered.length} item${covered.length === 1 ? '' : 's'} covered</b> <span class="muted">worth ${money0(total)}</span>
+          ${over ? ` <span class="pill bad">Over the cover limit by ${money0(total - p.coverLimit)}</span>` : ''}
+          ${covered.length ? `<div class="meta" style="margin-top:4px">${covered.slice(0, 12).map(a => esc(a.name)).join(' · ')}${covered.length > 12 ? ' …' : ''}</div>` : ''}</div></div>`;
+    };
+    return `<div class="head"><h1>Insurance</h1><span class="sub">${pols.length} polic${pols.length === 1 ? 'y' : 'ies'}</span><span class="spacer"></span><button class="btn primary" data-action="polNew">+ Add policy</button></div>
+      ${pols.length ? pols.slice().sort((x, y) => (x.renewalDate || '9').localeCompare(y.renewalDate || '9')).map(card).join('')
+        : '<div class="card empty">No policies yet. Add your home contents, car, bike or boat insurance here. OpenSafe will remind you before each one renews, and you can link the items each policy covers.</div>'}
+      ${unlinked.length ? `<div class="card"><h2>Not covered by a policy</h2><div class="meta">${unlinked.slice(0, 30).map(a => `<a href="#" data-open="${a.id}">${esc(a.name)}</a>`).join(' · ')}${unlinked.length > 30 ? ' …' : ''}</div></div>` : ''}`;
+  }
+
+  function policyForm(p) {
+    const L = state.snap.lists;
+    p = p || { type: 'Home contents' };
+    const inp = (name, label, extra = '', cls = '') => `<label class="f ${cls}">${label}<input name="${name}" value="${esc(p[name] ?? '')}" ${extra}></label>`;
+    openModal(`<form class="dialog narrow" id="polForm" novalidate><div class="dh"><h2>${p.id ? 'Edit policy' : 'Add policy'}</h2></div>
+      <div class="db">${inp('insurer', 'Insurer *', 'maxlength="120"')}<label class="f">Type<select name="type">${L.policyTypes.map(t => opt(t, t, p.type)).join('')}</select></label>
+        ${inp('policyNumber', 'Policy number')}${inp('renewalDate', 'Renewal date', 'type="date"')}
+        ${inp('premium', 'Premium (£ a year)', 'inputmode="decimal"')}${inp('excess', 'Excess (£)', 'inputmode="decimal"')}
+        ${inp('coverLimit', 'Cover limit (£)', 'inputmode="decimal"')}${inp('claimsPhone', 'Claims phone number', 'inputmode="tel"')}
+        <label class="f s3">Notes<textarea name="notes" rows="3">${esc(p.notes || '')}</textarea></label><div class="err" id="polErr"></div></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Save</button></div></form>`);
+    $('#polForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const data = Object.fromEntries(new FormData(e.target).entries());
+      if (p.id) data.id = p.id;
+      try { await keep.savePolicy(data); closeModal(); toast('Policy saved'); await refresh(); }
+      catch (ex) { $('#polErr').textContent = ex.message; }
+    };
+  }
+
+  function policyItemsForm(p) {
+    const items = state.snap.data.assets.slice().sort((a, b) => a.name.localeCompare(b.name));
+    openModal(`<form class="dialog narrow" id="polItems"><div class="dh"><h2>Items covered by ${esc(p.insurer)}</h2></div>
+      <div class="db" style="display:block;max-height:60vh;overflow:auto">
+        ${items.length ? items.map(a => `<label class="switch" style="font-weight:500;display:flex;margin:6px 0"><input type="checkbox" name="i" value="${a.id}" ${a.policyId === p.id ? 'checked' : ''}> ${esc(a.name)} <span class="meta">${esc(a.category || '')}${a.policyId && a.policyId !== p.id ? ' · currently on another policy' : ''}</span></label>`).join('') : '<div class="muted">No items yet.</div>'}
+      </div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Save</button></div></form>`);
+    $('#polItems').onsubmit = async (e) => {
+      e.preventDefault();
+      const ids = $$('#polItems input[name=i]:checked').map(x => x.value);
+      await run(() => keep.setPolicyItems(p.id, ids), 'Saved'); closeModal(); await refresh();
+    };
+  }
+
   // ---------- vault screen ----------
   function viewVault() {
     const sec = state.snap.security;
@@ -145,6 +206,22 @@
     $('#rkOk').onchange = (e) => { $('#rkDone').disabled = !e.target.checked; };
   }
 
+  function autoBackupCard() {
+    const ab = state.snap.data.settings.autoBackup || {};
+    const when = ab.last ? new Date(ab.last).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : 'never';
+    return `<div class="card"><h2>Automatic backups</h2>
+      <p class="muted">A full backup, with photos and documents, made by itself to a folder you choose: ideally OneDrive or a USB stick, so it's safe if this laptop fails. ${state.snap.security.encrypted ? 'Backups stay encrypted.' : ''}</p>
+      <label class="switch" style="font-weight:500"><input type="checkbox" id="abOn" ${ab.enabled ? 'checked' : ''}> Back up automatically</label>
+      <div style="display:grid;grid-template-columns:1fr auto;gap:8px;margin:10px 0">
+        <input id="abFolder" readonly value="${esc(ab.folder || '')}" placeholder="No folder chosen"><button class="btn" data-action="abFolder">Choose folder…</button></div>
+      <div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">
+        <label class="f">How often<select id="abEvery">${[['daily', 'Every day'], ['weekly', 'Every week'], ['monthly', 'Every month']].map(([v, l]) => opt(v, l, ab.every || 'weekly')).join('')}</select></label>
+        <label class="f">Keep the newest<select id="abKeep">${[3, 5, 10, 20].map(n => opt(String(n), n + ' backups', String(ab.keep || 5))).join('')}</select></label>
+        <button class="btn" data-action="abSave">Save</button><button class="btn" data-action="abNow" ${ab.folder ? '' : 'disabled'}>Back up now</button></div>
+      <p class="muted" style="margin-bottom:0">Last automatic backup: <b>${esc(when)}</b>${ab.lastError ? `<br><span style="color:var(--bad)">Last attempt failed: ${esc(ab.lastError)}</span>` : ''}</p>
+      <p class="faint" style="margin:4px 0 0">Backups run while OpenSafe is open (and unlocked). Older ones in the folder are removed automatically.</p></div>`;
+  }
+
   function securityCard() {
     const sec = state.snap.security;
     if (!sec.encrypted) {
@@ -179,6 +256,12 @@
     if (n === 0) return 'due today';
     return `in ${n} day${n === 1 ? '' : 's'}`;
   }
+  function dueSoon(d) {
+    const n = Math.round((Date.parse(d + 'T00:00:00Z') - Date.UTC(new Date().getFullYear(), new Date().getMonth(), new Date().getDate())) / 864e5);
+    if (n < 0) return ` <span class="pill bad">${dueText(n)}</span>`;
+    if (n <= state.snap.data.settings.reminderDays) return ` <span class="pill warn">${dueText(n)}</span>`;
+    return '';
+  }
   function warrantyPill(a) {
     if (!a.warrantyExpiry) return '';
     const n = Math.round((Date.parse(a.warrantyExpiry + 'T00:00:00Z') - Date.UTC(new Date().getFullYear(), new Date().getMonth(), new Date().getDate())) / 864e5);
@@ -198,7 +281,7 @@
     if (!state.snap) return;
     $$('#nav button').forEach(b => b.classList.toggle('on', b.dataset.nav === (state.view === 'item' ? 'items' : state.view)));
     const v = $('#view');
-    const views = { dashboard: viewDashboard, items: viewItems, item: viewItem, reminders: viewReminders, phone: viewPhone, reports: viewReports, settings: viewSettings, vault: viewVault };
+    const views = { dashboard: viewDashboard, items: viewItems, item: viewItem, reminders: viewReminders, phone: viewPhone, reports: viewReports, settings: viewSettings, vault: viewVault, policies: viewPolicies };
     v.innerHTML = (views[state.view] || viewDashboard)();
     if (state.view === 'phone') { loadCapture(); loadPhone(); const d = $('#wifiDetails'); if (d) d.ontoggle = () => { state.wifiOpen = d.open; }; }
     if (state.view === 'item') wireDrop();
@@ -239,7 +322,7 @@
       </div>
       <div class="grid" style="align-content:start">
         <div class="card"><h2>Coming up</h2>
-          ${rem.length ? `<div class="rows">${rem.map(r => `<div class="rowi" data-open="${r.assetId}">
+          ${rem.length ? `<div class="rows">${rem.map(r => `<div class="rowi" ${r.policyId ? 'data-nav="policies"' : `data-open="${r.assetId}"`}>
               <span class="pill ${r.daysLeft < 0 ? 'bad' : 'warn'}">${esc(r.kind)}</span>
               <span style="flex:1">${esc(r.assetName)}</span><span class="meta nowrap">${dueText(r.daysLeft)}</span></div>`).join('')}</div>`
             : '<div class="muted">Nothing due in the next ' + state.snap.data.settings.reminderDays + ' days.</div>'}
@@ -270,7 +353,7 @@
       if (f.location && a.location !== f.location) return false;
       if (f.gap === 'serial' && a.serial) return false;
       if (f.gap === 'receipt' && a.documents.some(d => d.type === 'Receipt')) return false;
-      if (f.gap === 'insurer' && (a.insurer || !value(a))) return false;
+      if (f.gap === 'insurer' && (a.insurer || a.policyId || !value(a))) return false;
       if (f.gap === 'photo' && a.photos.length) return false;
       if (q) {
         const hay = [a.name, a.brand, a.model, a.serial, a.category, a.location, a.notes, a.supplier, a.tags.join(' ')].join(' ').toLowerCase();
@@ -347,9 +430,17 @@
         ${kv('Brand', esc(a.brand))}${kv('Model', esc(a.model))}${kv('Serial number', a.serial ? `<span class="mono">${esc(a.serial)}</span>` : '')}
         ${kv('Bought on', a.purchaseDate ? ukDate(a.purchaseDate) : '')}${kv('Bought from', esc(a.supplier))}${kv('Condition', esc(a.condition))}
         ${kv('Price paid', a.purchasePrice !== null ? money(a.purchasePrice) : '')}${kv('Value now', a.currentValue !== null ? money(a.currentValue) : '')}${kv('Warranty until', a.warrantyExpiry ? ukDate(a.warrantyExpiry) + ' ' + warrantyPill(a) : '')}
-        ${kv('Insurer', esc(a.insurer))}${kv('Policy number', esc(a.policyNumber))}${kv('Insured value', a.insuredValue !== null ? money(a.insuredValue) : '')}
+        ${(() => { const pol = (state.snap.data.policies || []).find(p => p.id === a.policyId); return pol
+          ? kv('Insured by', `<a href="#" data-nav="policies">${esc(pol.insurer)}</a>${pol.type ? ' · ' + esc(pol.type) : ''}`) + kv('Policy number', esc(pol.policyNumber)) + kv('Insured value', a.insuredValue !== null ? money(a.insuredValue) : '')
+          : kv('Insurer', esc(a.insurer)) + kv('Policy number', esc(a.policyNumber)) + kv('Insured value', a.insuredValue !== null ? money(a.insuredValue) : ''); })()}
         ${kv('Tags', a.tags.map(x => `<span class="pill">${esc(x)}</span>`).join(''))}${kv('Added', ukDate(a.createdAt.slice(0, 10)) + (a.source === 'phone' ? ' from phone' : ''))}${kv('Last changed', ukDate(a.updatedAt.slice(0, 10)))}
-      </div>${a.notes ? `<div class="notes">${esc(a.notes)}</div>` : ''}</div>`;
+      ${a.barcode ? kv('Barcode', `<span class="mono">${esc(a.barcode)}</span>`) : ''}
+      ${a.status === 'Lent out' ? kv('Lent to', esc(a.lentTo)) + kv('Lent on', a.lentDate ? ukDate(a.lentDate) : '') + kv('Due back', a.dueBack ? ukDate(a.dueBack) : '') : ''}
+      ${a.status === 'Sold' ? kv('Sold on', a.soldDate ? ukDate(a.soldDate) : '') + kv('Sold for', a.soldPrice !== null && a.soldPrice !== undefined ? money(a.soldPrice) : '') + kv('Sold to', esc(a.soldTo)) : ''}
+      </div>${a.notes ? `<div class="notes">${esc(a.notes)}</div>` : ''}</div>
+      ${a.details && a.details.kind ? `<div class="card" style="margin-top:14px"><h2>${a.details.kind === 'boat' ? 'Boat details' : 'Vehicle details'}</h2><div class="kv">
+        ${DETAIL_UI[a.details.kind].map(([k, label, type]) => kv(label, a.details[k] ? (type === 'date' ? ukDate(a.details[k]) + dueSoon(a.details[k]) : `<span class="${/vin|hin|engineNo|reg|sso|mmsi/.test(k) ? 'mono' : ''}">${esc(a.details[k])}</span>`) : '')).join('')}
+      </div></div>` : ''}`;
     } else if (t === 'photos') {
       body = `<div class="drop" id="drop">Drag photos here, or <button class="btn small" data-action="pick" data-kind="photo">Choose photos…</button></div>
       ${a.photos.length ? `<div class="gallery">${a.photos.map((p, i) => p.locked ? `<div class="ph-tile locked" data-nav="vault"><div>🔒<br>Vault photo<br><small>Unlock the vault to see it</small></div></div>` : `<div class="ph-tile">
@@ -391,7 +482,7 @@
     const r = state.snap.reminders;
     const over = r.filter(x => x.daysLeft < 0), soon = r.filter(x => x.daysLeft >= 0);
     const block = (title, list, cls) => `<div class="card" style="margin-bottom:16px"><h2>${title}</h2>${list.length ? `<div class="rows">${list.map(x => `
-      <div class="rowi" data-open="${x.assetId}" data-opentab="${x.kind === 'Warranty' ? 'overview' : 'service'}"><span class="pill ${cls}">${esc(x.kind)}</span><span style="flex:1"><b>${esc(x.assetName)}</b></span>
+      <div class="rowi" ${x.policyId ? 'data-nav="policies"' : `data-open="${x.assetId}" data-opentab="${x.source === 'item' ? 'overview' : 'service'}"`}><span class="pill ${cls}">${esc(x.kind)}</span><span style="flex:1"><b>${esc(x.assetName)}</b></span>
       <span class="meta">${ukDate(x.date)}</span><span class="nowrap" style="width:130px;text-align:right">${dueText(x.daysLeft)}</span></div>`).join('')}</div>` : '<div class="muted">None.</div>'}</div>`;
     return `<div class="head"><h1>Reminders</h1><span class="sub">Warranty end dates and "next due" dates from service logs, looking ${state.snap.data.settings.reminderDays} days ahead</span></div>
       ${block('Overdue', over, 'bad')}${block('Coming up', soon, 'warn')}`;
@@ -465,7 +556,7 @@
         ${s.attempts && s.attempts.length ? `<div class="rows">${s.attempts.map(a => `<div class="gap"><span><span class="pill ${a.kind === 'https' ? 'bad' : 'good'}">${esc(a.ip)}</span> ${esc(a.text)}</span><span class="meta nowrap">${new Date(a.time).toLocaleTimeString('en-GB')}</span></div>`).join('')}</div>`
           : '<div class="muted">Nothing has tried to connect yet. If your phone shows an error but nothing appears here, the phone\'s request never reached this PC: check the phone is on the same Wi-Fi, and that the router isn\'t keeping devices apart.</div>'}</div>
       <button class="btn" data-action="phoneReset">New pairing code</button>
-      ${state.snap.platform === 'win32' ? `<div class="card" style="margin-top:16px;box-shadow:none;background:#fbfaf7">
+      ${state.snap.platform === 'win32' ? `<div class="card" style="margin-top:16px;box-shadow:none;background:var(--surface2)">
         <h2>Phone can't connect?</h2>
         <p class="muted">Windows Firewall can block your phone, even when OpenSafe looks allowed. This button removes any firewall rules blocking OpenSafe and adds one rule that lets your phone in on your home Wi-Fi (private networks only). Windows will ask for permission: click <b>Yes</b>.</p>
         <p id="fwState" class="muted"></p>
@@ -506,6 +597,10 @@
         <p><button class="btn primary" data-action="backup">Back up to a folder…</button> <button class="btn" data-action="restore">Restore from backup…</button></p>
         <p class="muted" style="margin-bottom:6px">Data folder: <span class="mono">${esc(state.snap.dataDir)}</span></p>
         <button class="btn small" data-action="openData">Open data folder</button></div>
+      ${autoBackupCard()}
+      <div class="card"><h2>Appearance</h2>
+        <p class="muted">Light or dark colours. "Match Windows" follows your Windows setting.</p>
+        <span class="seg">${['system', 'light', 'dark'].map(t => `<button data-action="theme" data-theme="${t}" class="${(state.snap.theme || 'system') === t ? 'on' : ''}">${{ system: 'Match Windows', light: 'Light', dark: 'Dark' }[t]}</button>`).join('')}</span></div>
       <div class="card"><h2>Updates</h2>
         <p>You're running version <b>${esc(state.snap.version)}</b>.</p>
         <p class="muted" id="updMsg">${esc(updText())}</p>
@@ -550,24 +645,43 @@
   function openModal(html) { const m = $('#modal'); m.innerHTML = html; m.classList.remove('hidden'); const first = $('input,select,textarea', m); first && first.focus(); }
   function closeModal() { const m = $('#modal'); m.classList.add('hidden'); m.innerHTML = ''; }
 
+  const DETAIL_UI = {
+    vehicle: [['reg', 'Registration'], ['vin', 'VIN / frame number'], ['engineNo', 'Engine number'], ['mileage', 'Mileage'], ['fuel', 'Fuel'], ['colour', 'Colour'], ['motDue', 'MOT due', 'date'], ['taxDue', 'Road tax due', 'date'], ['serviceDue', 'Next service due', 'date']],
+    boat: [['boatName', 'Boat name'], ['hin', 'Hull ID (HIN / CIN)'], ['sso', 'Registration (SSR / Part 1)'], ['mmsi', 'MMSI'], ['callSign', 'Call sign'], ['lengthM', 'Length (m)'], ['engine', 'Engine'], ['engineHours', 'Engine hours'], ['mooring', 'Mooring / marina'], ['serviceDue', 'Next service due', 'date']]
+  };
+  const guessKind = (cat) => /vehicle|car|van|motorbike|motorcycle|bike/i.test(cat || '') && !/gear|clothing/i.test(cat || '') ? 'vehicle' : (/marine|boat|yacht/i.test(cat || '') ? 'boat' : '');
+
   function itemForm(a) {
     const d = state.snap.data, L = state.snap.lists;
-    a = a || { status: 'Owned', tags: [] };
+    a = a || { status: 'Owned', tags: [], details: { kind: '' } };
+    const det = a.details || { kind: '' };
     const inp = (name, label, extra = '', cls = '') => `<label class="f ${cls}">${label}<input name="${name}" value="${esc(a[name] ?? '')}" ${extra}></label>`;
+    const detInp = ([k, label, type]) => `<label class="f">${label}<input name="det_${k}" value="${esc(det[k] || '')}" ${type === 'date' ? 'type="date"' : ''}></label>`;
+    const policies = d.policies || [];
     openModal(`<form class="dialog" id="itemForm" novalidate>
       <div class="dh"><h2>${a.id ? 'Edit item' : 'Add item'}</h2></div>
       <div class="db">
         ${inp('name', 'Name *', 'required maxlength="200" placeholder="e.g. Makita cordless drill"', 's2')}
-        <label class="f">Status<select name="status">${L.statuses.map(s => opt(s, s, a.status)).join('')}</select></label>
-        <label class="f">Category<input name="category" list="dlCats" value="${esc(a.category || '')}"></label>
+        <label class="f">Status<select name="status" id="fStatus">${L.statuses.map(s => opt(s, s, a.status)).join('')}</select></label>
+        <label class="f">Category<input name="category" id="fCat" list="dlCats" value="${esc(a.category || '')}"></label>
         <label class="f">Location<input name="location" list="dlLocs" value="${esc(a.location || '')}"></label>
         <label class="f">Condition<select name="condition">${opt('', '—', a.condition || '')}${L.conditions.map(s => opt(s, s, a.condition)).join('')}</select></label>
         ${inp('brand', 'Brand')}${inp('model', 'Model')}${inp('serial', 'Serial number')}
+        <div id="lendBox" class="s3 subgrid ${a.status === 'Lent out' ? '' : 'hidden'}"><h3>Lent out</h3>
+          ${inp('lentTo', 'Lent to')}${inp('lentDate', 'Lent on', 'type="date"')}${inp('dueBack', 'Due back (reminder)', 'type="date"')}</div>
+        <div id="soldBox" class="s3 subgrid ${a.status === 'Sold' ? '' : 'hidden'}"><h3>Sold</h3>
+          ${inp('soldDate', 'Sold on', 'type="date"')}${inp('soldPrice', 'Sold for (£)', 'inputmode="decimal"')}${inp('soldTo', 'Sold to / where')}</div>
         <h3>Purchase and value</h3>
         ${inp('purchaseDate', 'Bought on', 'type="date"')}${inp('purchasePrice', 'Price paid (£)', 'inputmode="decimal"')}${inp('supplier', 'Bought from')}
-        ${inp('currentValue', 'Value now (£)', 'inputmode="decimal"')}${inp('warrantyExpiry', 'Warranty until', 'type="date"')}<div></div>
+        ${inp('currentValue', 'Value now (£)', 'inputmode="decimal"')}${inp('warrantyExpiry', 'Warranty until', 'type="date"')}${inp('barcode', 'Barcode', 'inputmode="numeric"')}
+        <h3>Vehicle or boat</h3>
+        <label class="f">Extra details for<select name="det_kind" id="fKind">${opt('', 'Nothing (general item)', det.kind)}${opt('vehicle', 'A vehicle (car, van, motorbike)', det.kind)}${opt('boat', 'A boat', det.kind)}</select></label>
+        <div class="s2 muted" style="align-self:end;font-size:12.5px" id="kindHint">${det.kind ? '' : 'Choose this for cars, motorbikes and boats to record registration, VIN, MOT and more.'}</div>
+        <div id="detBox" class="s3 subgrid">${det.kind ? DETAIL_UI[det.kind].map(detInp).join('') : ''}</div>
         <h3>Insurance</h3>
-        ${inp('insurer', 'Insurer')}${inp('policyNumber', 'Policy number')}${inp('insuredValue', 'Insured value (£)', 'inputmode="decimal"')}
+        <label class="f s2">Policy<select name="policyId">${opt('', policies.length ? '— Not linked to a policy —' : '— No policies yet (add them under Insurance) —', a.policyId || '')}${policies.map(p => opt(p.id, `${p.insurer}${p.type ? ' · ' + p.type : ''}${p.policyNumber ? ' · ' + p.policyNumber : ''}`, a.policyId || '')).join('')}</select></label>
+        ${inp('insuredValue', 'Insured value (£)', 'inputmode="decimal"')}
+        ${inp('insurer', 'Insurer (if no policy above)')}${inp('policyNumber', 'Policy number (if no policy above)')}<div></div>
         <h3>Other</h3>
         <label class="f s3">Tags (comma separated)<input name="tags" value="${esc((a.tags || []).join(', '))}"></label>
         <label class="f s3">Notes<textarea name="notes" rows="4">${esc(a.notes || '')}</textarea></label>
@@ -577,11 +691,24 @@
       <datalist id="dlCats">${d.categories.map(c => `<option value="${esc(c)}">`).join('')}</datalist>
       <datalist id="dlLocs">${d.locations.map(c => `<option value="${esc(c)}">`).join('')}</datalist>
     </form>`);
-    $('#itemForm').onsubmit = async (e) => {
+    const f = $('#itemForm');
+    $('#fStatus').onchange = (e) => { $('#lendBox').classList.toggle('hidden', e.target.value !== 'Lent out'); $('#soldBox').classList.toggle('hidden', e.target.value !== 'Sold'); };
+    const showKind = (k) => {
+      const cur = {}; for (const el of $$('#detBox input')) cur[el.name.slice(4)] = el.value;
+      $('#detBox').innerHTML = k ? DETAIL_UI[k].map(([key, label, type]) => detInp([key, label, type])).join('') : '';
+      for (const el of $$('#detBox input')) if (cur[el.name.slice(4)]) el.value = cur[el.name.slice(4)];
+      $('#kindHint').textContent = k ? '' : 'Choose this for cars, motorbikes and boats to record registration, VIN, MOT and more.';
+    };
+    $('#fKind').onchange = (e) => showKind(e.target.value);
+    $('#fCat').onchange = (e) => { if (!$('#fKind').value) { const k = guessKind(e.target.value); if (k) { $('#fKind').value = k; showKind(k); } } };
+    f.onsubmit = async (e) => {
       e.preventDefault();
-      const data = Object.fromEntries(new FormData(e.target).entries());
+      const raw = Object.fromEntries(new FormData(e.target).entries());
+      const data = {}; const details = {};
+      for (const [k, v] of Object.entries(raw)) { if (k.startsWith('det_')) details[k.slice(4)] = v; else data[k] = v; }
+      data.details = details;
       if (!data.name.trim()) { $('#formErr').textContent = 'Give the item a name.'; return; }
-      for (const k of ['purchasePrice', 'currentValue', 'insuredValue']) {
+      for (const k of ['purchasePrice', 'currentValue', 'insuredValue', 'soldPrice']) {
         if (data[k] && !Number.isFinite(Number(String(data[k]).replace(/[£,\s]/g, '')))) { $('#formErr').textContent = 'Money amounts must be numbers, e.g. 249.99'; return; }
       }
       if (a.id) data.id = a.id;
@@ -750,6 +877,21 @@
           if (!state.snap.security.vault.unlocked) { toast('Unlock the vault first'); go('vault'); break; }
           if (confirm('Remove the vault? It must be empty. You can set it up again later.')) { await run(() => keep.vaultRemove(), 'Vault removed'); await refresh(); }
           break;
+        case 'polNew': policyForm(null); break;
+        case 'polEdit': policyForm((state.snap.data.policies || []).find(p => p.id === act.dataset.pid)); break;
+        case 'polItems': policyItemsForm((state.snap.data.policies || []).find(p => p.id === act.dataset.pid)); break;
+        case 'polDel': { const ok = await run(() => keep.deletePolicy(act.dataset.pid)); if (ok) { toast('Policy deleted'); await refresh(); } break; }
+        case 'abFolder': { const f = await run(() => keep.chooseBackupFolder()); if (f) { $('#abFolder').value = f; } break; }
+        case 'abSave':
+          await run(() => keep.setAutoBackup({ enabled: $('#abOn').checked, folder: $('#abFolder').value, every: $('#abEvery').value, keep: $('#abKeep').value }), 'Backup settings saved');
+          await refresh(); break;
+        case 'abNow': {
+          if ($('#abFolder').value !== (state.snap.data.settings.autoBackup.folder || '')) await run(() => keep.setAutoBackup({ folder: $('#abFolder').value }));
+          act.disabled = true; act.textContent = 'Backing up…';
+          try { await run(() => keep.backupNow(), '✓ Backup made'); } catch (_) {}
+          await refresh(); break;
+        }
+        case 'theme': await keep.setTheme(act.dataset.theme); await refresh(); break;
         case 'importPick': { await run(() => keep.importPick()); await refresh(); break; }
         case 'phoneReset': await run(() => keep.phoneReset()); loadPhone(); break;
         case 'report': { const p = await run(() => keep.exportReport({ includePhotos: $('#rPhotos').checked, includeInactive: $('#rInactive').checked })); if (p) toast('Report saved'); break; }

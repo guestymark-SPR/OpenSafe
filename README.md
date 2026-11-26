@@ -10,6 +10,11 @@ Everything stays on your PC. There's no account, no cloud and no subscription.
 
 - **Items:** name, category, location, brand, model, serial number, condition, status (owned, lent out, in repair, sold, disposed, lost/stolen), purchase date and price, supplier, current value, warranty end date, insurer, policy number, insured value, tags and notes.
 - **Photos and documents:** drag in photos, receipts, manuals and warranty cards (PDF, images, Office files). Choose a cover photo and click any photo to enlarge it.
+- **Vehicles and boats:** registration, VIN/frame number, engine number, mileage, MOT, road tax and service dates for cars, vans and motorbikes. Hull ID, registration, MMSI, call sign, engine hours and mooring for boats. MOT, tax and service dates come with reminders.
+- **Lending and selling:** who has an item and when it's due back (with a reminder), or the sale date, price and buyer.
+- **Insurance policies:** record each policy once (insurer, number, renewal date, premium, excess, cover limit, claims line), link the items it covers, and get a reminder before renewal.
+- **Automatic backups:** a full backup, photos included, made daily, weekly or monthly to a folder such as OneDrive or a USB stick, keeping the newest few.
+- **Dark mode:** light, dark, or match Windows.
 - **Service log:** MOTs, services, repairs, batteries and inspections, with cost, mileage and a "next due" date.
 - **Reminders:** warranty end dates and next-due service dates, looking ahead a number of days you choose, plus a Windows notification at start-up for anything due within 7 days.
 - **Dashboard:** total value, amount paid, insured value, value by category, what's coming up, and gaps to fill (no serial number, no receipt, no insurer, no photo).

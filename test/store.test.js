@@ -174,3 +174,65 @@ test('import from OpenSafe Capture: add, re-import, edits and bad files', () => 
   const r4 = s.importCapture({ format: 'opensafe-export', version: 1, items: [{ name: 'Bad file', photos: [{ name: 'x.exe', type: 'application/x-msdownload', data: png }] }] });
   assert.strictEqual(r4.added, 1); assert.strictEqual(r4.errors.length, 1);
 });
+
+test('vehicle/boat details, lending and selling, and their reminders', () => {
+  const s = tmpStore();
+  const car = s.saveAsset({ name: 'Mercedes', category: 'Vehicles', details: { kind: 'vehicle', reg: ' AB12 CDE ', vin: 'WDD123', motDue: addDays(12), taxDue: addDays(200), bogus: 'x' } });
+  assert.deepStrictEqual(car.details, { kind: 'vehicle', reg: 'AB12 CDE', vin: 'WDD123', motDue: addDays(12), taxDue: addDays(200) });
+  const boat = s.saveAsset({ name: 'Yacht', details: { kind: 'boat', hin: 'GB-MOD123', engineHours: '1450', motDue: addDays(1) } });
+  assert.deepStrictEqual(boat.details, { kind: 'boat', hin: 'GB-MOD123', engineHours: '1450' }); // MOT is not a boat field
+  const drill = s.saveAsset({ name: 'Drill', status: 'Lent out', lentTo: 'Dave', lentDate: addDays(-10), dueBack: addDays(-2) });
+  s.saveAsset({ name: 'Old phone', status: 'Sold', soldDate: addDays(-5), soldPrice: '£120', soldTo: 'eBay' });
+  const r = s.reminders();
+  assert.ok(r.some(x => x.kind === 'MOT' && x.assetId === car.id && x.daysLeft === 12));
+  assert.ok(!r.some(x => x.kind === 'Road tax')); // 200 days away
+  assert.ok(r.some(x => x.kind === 'Due back from Dave' && x.assetId === drill.id && x.daysLeft === -2));
+  const sold = s.data.assets.find(a => a.name === 'Old phone');
+  assert.strictEqual(sold.soldPrice, 120);
+  // clearing the kind removes the details
+  assert.deepStrictEqual(s.saveAsset({ id: car.id, details: { kind: '' } }).details, { kind: '' });
+});
+
+test('insurance policies: link items, renewal reminder, delete unlinks', () => {
+  const s = tmpStore();
+  assert.throws(() => s.savePolicy({ type: 'Vehicle' }), /insurer/);
+  const pol = s.savePolicy({ insurer: 'Admiral', type: 'Vehicle', policyNumber: 'P-1', renewalDate: addDays(20), premium: '£612.40' });
+  assert.strictEqual(pol.premium, 612.4);
+  const a = s.saveAsset({ name: 'Car', currentValue: 9000 });
+  const b = s.saveAsset({ name: 'Van', currentValue: 4000 });
+  assert.strictEqual(s.summary().uninsured, 2);
+  s.setPolicyItems(pol.id, [a.id, b.id]);
+  assert.strictEqual(s.summary().uninsured, 0);
+  assert.ok(s.reminders().some(x => x.kind === 'Insurance renewal' && x.policyId === pol.id));
+  s.setPolicyItems(pol.id, [a.id]);
+  assert.strictEqual(s.getAsset(b.id).policyId, '');
+  const again = new Store(s.dir); again.load();
+  assert.strictEqual(again.data.policies[0].insurer, 'Admiral');
+  again.deletePolicy(pol.id);
+  assert.strictEqual(again.getAsset(a.id).policyId, '');
+});
+
+test('automatic backups: due logic, rotation, missing folder', () => {
+  const s = tmpStore();
+  const a = s.saveAsset({ name: 'Item' });
+  s.addPhoto(a.id, 'a.png', Buffer.from('png'));
+  assert.throws(() => s.setAutoBackup({ enabled: true }), /Choose a folder/);
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'osab-'));
+  s.setAutoBackup({ enabled: true, folder: out, every: 'weekly', keep: 2 });
+  assert.ok(s.autoBackupDue());
+  for (let i = 0; i < 3; i++) {
+    const r = s.runAutoBackup();
+    assert.ok(r.ok, r.error);
+    // make the next backup's folder name different (names are per minute)
+    fs.renameSync(r.dest, path.join(out, `OpenSafe-backup-2026-01-0${i + 1}-10-00`));
+  }
+  const kept = fs.readdirSync(out).sort();
+  assert.strictEqual(kept.length, 2);
+  assert.deepStrictEqual(kept, ['OpenSafe-backup-2026-01-02-10-00', 'OpenSafe-backup-2026-01-03-10-00']);
+  assert.ok(!s.autoBackupDue());
+  assert.ok(s.autoBackupDue(new Date(Date.now() + 8 * 86400000)));
+  s.setAutoBackup({ folder: path.join(out, 'missing-usb') });
+  const bad = s.runAutoBackup();
+  assert.ok(!bad.ok && /isn't available/.test(bad.error));
+  assert.ok(s.data.settings.autoBackup.lastError);
+});

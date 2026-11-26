@@ -1,11 +1,11 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, protocol, Notification, Menu, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, protocol, Notification, Menu, clipboard, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
 const QRCode = require('qrcode');
-const { Store, STATUSES, CONDITIONS, DOC_TYPES } = require('./store');
+const { Store, STATUSES, CONDITIONS, DOC_TYPES, POLICY_TYPES } = require('./store');
 const { PhoneServer } = require('./phoneServer');
 const { buildReportHtml } = require('./report');
 const updater = require('./updater');
@@ -30,6 +30,21 @@ let pendingImport = null; // a .opensafe file opened while OpenSafe was locked
 const OPEN_DIR = path.join(os.tmpdir(), 'OpenSafe-open'); // decrypted copies of documents you open
 const MIME = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif', '.pdf': 'application/pdf' };
 
+// Small, unencrypted preferences that are needed before unlocking (the colour theme).
+const PREFS = path.join(DATA_DIR, 'prefs.json');
+function readPrefs() { try { return JSON.parse(fs.readFileSync(PREFS, 'utf8')); } catch (_) { return {}; } }
+function writePrefs(p) { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(PREFS, JSON.stringify(p, null, 2)); }
+function applyTheme() { const t = readPrefs().theme; nativeTheme.themeSource = ['light', 'dark'].includes(t) ? t : 'system'; }
+
+// Automatic backups: checked after unlocking and every hour while OpenSafe is open.
+let backupTimer = null;
+function checkAutoBackup() {
+  if (!store || store.isLocked() || !store.autoBackupDue()) return;
+  const r = store.runAutoBackup();
+  if (!r.ok && Notification.isSupported()) new Notification({ title: 'OpenSafe backup didn\'t run', body: r.error }).show();
+  notifyChanged();
+}
+
 function cleanOpenDir() { try { fs.rmSync(OPEN_DIR, { recursive: true, force: true }); } catch (_) { /* a file may still be open in another app */ } }
 
 function sendSecurity() {
@@ -39,6 +54,8 @@ function sendSecurity() {
 /** Everything that should happen once the data is readable (at start-up, or after unlocking). */
 function afterUnlock() {
   if (store.data.settings.phoneLinkEnabled && !phone.running) startPhone().catch(() => {});
+  setTimeout(checkAutoBackup, 20000);
+  if (!backupTimer) backupTimer = setInterval(checkAutoBackup, 60 * 60 * 1000);
   setTimeout(remindOnStartup, 1500);
   if (pendingImport) { const f = pendingImport; pendingImport = null; setTimeout(() => importFromPath(f).catch(() => {}), 500); }
 }
@@ -75,6 +92,7 @@ async function startPhone() {
 }
 
 async function init() {
+  applyTheme();
   store = new Store(DATA_DIR);
   if (!store.isEncrypted()) store.load(); // with protection on, data is read after the password
   phone = new PhoneServer({ store, onChange: notifyChanged });
@@ -182,9 +200,10 @@ function snapshot() {
   return {
     data,
     security: store.securityState(),
+    theme: readPrefs().theme || 'system',
     summary: store.summary(),
     reminders: store.reminders(),
-    lists: { statuses: STATUSES, conditions: CONDITIONS, docTypes: DOC_TYPES },
+    lists: { statuses: STATUSES, conditions: CONDITIONS, docTypes: DOC_TYPES, policyTypes: POLICY_TYPES },
     dataDir: DATA_DIR,
     platform: process.platform,
     version: require('../package.json').version
@@ -244,6 +263,27 @@ function registerIpc() {
       throw e;
     }
   };
+
+  // ---- insurance policies ----
+  h('policy:save', (p) => store.savePolicy(p));
+  h('policy:delete', async (id) => {
+    const p = store.data.policies.find(x => x.id === id);
+    if (!p) return false;
+    const r = await dialog.showMessageBox(win, { type: 'warning', buttons: ['Delete', 'Cancel'], defaultId: 1, cancelId: 1, title: 'Delete policy', message: `Delete the ${p.insurer} policy?`, detail: 'Items covered by it are kept; they just won\'t be linked to a policy any more.' });
+    if (r.response !== 0) return false;
+    return store.deletePolicy(id);
+  });
+  h('policy:setItems', (id, ids) => store.setPolicyItems(id, Array.isArray(ids) ? ids.map(String) : []));
+
+  // ---- automatic backups & appearance ----
+  h('autobackup:chooseFolder', async () => {
+    const r = await dialog.showOpenDialog(win, { title: 'Choose a folder for automatic backups (e.g. OneDrive or a USB stick)', properties: ['openDirectory', 'createDirectory'] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    return r.filePaths[0];
+  });
+  h('autobackup:set', (patch) => store.setAutoBackup(patch || {}));
+  h('autobackup:runNow', () => { const r = store.runAutoBackup(); if (!r.ok) throw new Error(r.error); return r.dest; });
+  h('theme:set', (t) => { const p = readPrefs(); p.theme = ['light', 'dark', 'system'].includes(t) ? t : 'system'; writePrefs(p); applyTheme(); return p.theme; });
 
   // ---- security ----
   h('sec:state', () => store.securityState());

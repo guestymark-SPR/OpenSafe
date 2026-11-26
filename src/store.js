@@ -20,8 +20,17 @@ const CONDITIONS = ['New', 'Excellent', 'Good', 'Fair', 'Poor'];
 const DOC_TYPES = ['Receipt', 'Warranty', 'Manual', 'Insurance', 'Other'];
 
 const STRING_FIELDS = ['name', 'category', 'location', 'brand', 'model', 'serial', 'supplier',
-  'condition', 'status', 'insurer', 'policyNumber', 'notes', 'purchaseDate', 'warrantyExpiry'];
-const MONEY_FIELDS = ['purchasePrice', 'currentValue', 'insuredValue'];
+  'condition', 'status', 'insurer', 'policyNumber', 'notes', 'purchaseDate', 'warrantyExpiry',
+  'barcode', 'policyId', 'lentTo', 'lentDate', 'dueBack', 'soldDate', 'soldTo'];
+const DATE_FIELDS = new Set(['purchaseDate', 'warrantyExpiry', 'lentDate', 'dueBack', 'soldDate']);
+const MONEY_FIELDS = ['purchasePrice', 'currentValue', 'insuredValue', 'soldPrice'];
+// Extra details for vehicles (car, van, motorbike) and boats
+const DETAIL_KINDS = ['', 'vehicle', 'boat'];
+const DETAIL_FIELDS = {
+  vehicle: { reg: 20, vin: 40, engineNo: 40, mileage: 20, fuel: 30, colour: 30, motDue: 'date', taxDue: 'date', serviceDue: 'date' },
+  boat: { boatName: 80, hin: 40, sso: 40, mmsi: 20, callSign: 20, lengthM: 10, engine: 80, engineHours: 20, mooring: 120, serviceDue: 'date' }
+};
+const POLICY_TYPES = ['Home contents', 'Vehicle', 'Motorbike', 'Boat', 'Gadget', 'Travel', 'Other'];
 const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 const DOC_EXT = new Set(['.pdf', '.jpg', '.jpeg', '.png', '.webp', '.gif', '.txt', '.doc', '.docx', '.xls', '.xlsx', '.csv']);
 
@@ -62,6 +71,18 @@ function safeFileName(name) {
   return base.replace(/[^\w.\- ()]/g, '_') || 'file';
 }
 
+function cleanDetails(d) {
+  if (!d || typeof d !== 'object') return { kind: '' };
+  const kind = DETAIL_KINDS.includes(d.kind) ? d.kind : '';
+  const out = { kind };
+  if (!kind) return out;
+  for (const [k, spec] of Object.entries(DETAIL_FIELDS[kind])) {
+    const v = spec === 'date' ? cleanDate(d[k]) : cleanString(d[k], spec);
+    if (v) out[k] = v;
+  }
+  return out;
+}
+
 function emptyData() {
   return {
     version: DATA_VERSION,
@@ -70,8 +91,10 @@ function emptyData() {
       reminderDays: 30,
       phoneLinkEnabled: false,
       phoneToken: '',
-      phonePort: 47820
+      phonePort: 47820,
+      autoBackup: { enabled: false, folder: '', every: 'weekly', keep: 5, last: '', lastError: '' }
     },
+    policies: [],
     categories: DEFAULT_CATEGORIES.slice(),
     locations: DEFAULT_LOCATIONS.slice(),
     assets: []
@@ -155,6 +178,8 @@ class Store {
     if (!Array.isArray(out.locations) || !out.locations.length) out.locations = DEFAULT_LOCATIONS.slice();
     out.assets = Array.isArray(out.assets) ? out.assets.map(a => this._normaliseAsset(a, a, true)) : [];
     if (out.vault && typeof out.vault !== 'object') delete out.vault;
+    out.settings.autoBackup = Object.assign(emptyData().settings.autoBackup, (d && d.settings && d.settings.autoBackup) || {});
+    out.policies = Array.isArray(out.policies) ? out.policies.map(p => this._normalisePolicy(p, p)) : [];
     out.version = DATA_VERSION;
     return out;
   }
@@ -199,13 +224,14 @@ class Store {
     };
     for (const f of STRING_FIELDS) {
       const v = input[f] !== undefined ? input[f] : existing && existing[f];
-      a[f] = (f === 'purchaseDate' || f === 'warrantyExpiry') ? cleanDate(v) : cleanString(v, f === 'notes' ? MAX_STRING : 200);
+      a[f] = DATE_FIELDS.has(f) ? cleanDate(v) : cleanString(v, f === 'notes' ? MAX_STRING : 200);
     }
     for (const f of MONEY_FIELDS) {
       const v = input[f] !== undefined ? input[f] : existing && existing[f];
       a[f] = cleanMoney(v);
     }
     a.tags = cleanTags(input.tags !== undefined ? input.tags : existing && existing.tags);
+    a.details = cleanDetails(input.details !== undefined ? input.details : existing && existing.details);
     if (!a.name) a.name = 'Untitled item';
     if (!STATUSES.includes(a.status)) a.status = 'Owned';
     if (a.condition && !CONDITIONS.includes(a.condition)) a.condition = '';
@@ -480,7 +506,18 @@ class Store {
       if (['Sold', 'Disposed', 'Lost / Stolen'].includes(a.status)) continue;
       if (a.warrantyExpiry) {
         const n = diff(a.warrantyExpiry);
-        if (n <= days && n >= -30) out.push({ assetId: a.id, assetName: a.name, kind: 'Warranty', date: a.warrantyExpiry, daysLeft: n });
+        if (n <= days && n >= -30) out.push({ assetId: a.id, assetName: a.name, kind: 'Warranty', date: a.warrantyExpiry, daysLeft: n, source: 'item' });
+      }
+      const det = a.details || {};
+      const dueLabels = { motDue: 'MOT', taxDue: 'Road tax', serviceDue: 'Service' };
+      for (const [k, label] of Object.entries(dueLabels)) {
+        if (!det[k]) continue;
+        const n = diff(det[k]);
+        if (n <= days) out.push({ assetId: a.id, assetName: a.name, kind: label, date: det[k], daysLeft: n, source: 'item' });
+      }
+      if (a.status === 'Lent out' && a.dueBack) {
+        const n = diff(a.dueBack);
+        if (n <= days) out.push({ assetId: a.id, assetName: a.name, kind: 'Due back' + (a.lentTo ? ` from ${a.lentTo}` : ''), date: a.dueBack, daysLeft: n, source: 'item' });
       }
       // only the latest entry's next-due counts per service type
       const latestByType = new Map();
@@ -494,7 +531,93 @@ class Store {
         if (n <= days) out.push({ assetId: a.id, assetName: a.name, kind: s.type || 'Service', date: s.nextDueDate, daysLeft: n });
       }
     }
+    for (const p of this.data.policies || []) {
+      if (!p.renewalDate) continue;
+      const n = diff(p.renewalDate);
+      if (n <= days && n >= -60) out.push({ policyId: p.id, assetName: `${p.insurer || 'Insurance'}${p.type ? ' (' + p.type + ')' : ''}`, kind: 'Insurance renewal', date: p.renewalDate, daysLeft: n });
+    }
     return out.sort((x, y) => x.daysLeft - y.daysLeft);
+  }
+
+  // ---------- insurance policies ----------
+  _normalisePolicy(input, existing) {
+    const p = { id: (existing && existing.id) || uid(), createdAt: (existing && existing.createdAt) || nowIso() };
+    const get = (k) => input[k] !== undefined ? input[k] : existing && existing[k];
+    p.insurer = cleanString(get('insurer'), 120);
+    p.type = POLICY_TYPES.includes(get('type')) ? get('type') : 'Other';
+    p.policyNumber = cleanString(get('policyNumber'), 80);
+    p.renewalDate = cleanDate(get('renewalDate'));
+    p.premium = cleanMoney(get('premium'));
+    p.excess = cleanMoney(get('excess'));
+    p.coverLimit = cleanMoney(get('coverLimit'));
+    p.claimsPhone = cleanString(get('claimsPhone'), 40);
+    p.notes = cleanString(get('notes'), 2000);
+    return p;
+  }
+  savePolicy(input) {
+    if (!input || typeof input !== 'object') throw new Error('Invalid policy');
+    const existing = input.id ? this.data.policies.find(p => p.id === input.id) : null;
+    if (input.id && !existing) throw new Error('Policy not found');
+    const p = this._normalisePolicy(input, existing);
+    if (!p.insurer) throw new Error('Enter the insurer\'s name.');
+    if (existing) Object.assign(existing, p); else this.data.policies.push(p);
+    this.save();
+    return existing || p;
+  }
+  deletePolicy(id) {
+    const i = this.data.policies.findIndex(p => p.id === id);
+    if (i < 0) return false;
+    this.data.policies.splice(i, 1);
+    for (const a of this.allAssets()) if (a.policyId === id) a.policyId = '';
+    this.save();
+    return true;
+  }
+  /** Link or unlink items to a policy. */
+  setPolicyItems(policyId, assetIds) {
+    const pol = this.data.policies.find(p => p.id === policyId);
+    if (!pol) throw new Error('Policy not found');
+    const want = new Set(assetIds || []);
+    for (const a of this.allAssets()) {
+      if (want.has(a.id)) a.policyId = policyId;
+      else if (a.policyId === policyId) a.policyId = '';
+    }
+    this.save();
+  }
+
+  // ---------- automatic backups ----------
+  setAutoBackup(patch) {
+    const ab = this.data.settings.autoBackup;
+    if (patch.enabled !== undefined) ab.enabled = !!patch.enabled;
+    if (patch.folder !== undefined) ab.folder = cleanString(patch.folder, 500);
+    if (patch.every !== undefined && ['daily', 'weekly', 'monthly'].includes(patch.every)) ab.every = patch.every;
+    if (patch.keep !== undefined) { const n = parseInt(patch.keep, 10); if (n >= 1 && n <= 50) ab.keep = n; }
+    if (ab.enabled && !ab.folder) throw new Error('Choose a folder for automatic backups.');
+    this.save();
+    return ab;
+  }
+  autoBackupDue(now = new Date()) {
+    const ab = this.data.settings.autoBackup;
+    if (!ab.enabled || !ab.folder) return false;
+    if (!ab.last) return true;
+    const gap = { daily: 1, weekly: 7, monthly: 30 }[ab.every] || 7;
+    return (now - new Date(ab.last)) >= gap * 86400000 - 3600000; // an hour's slack
+  }
+  /** Make a full backup into the chosen folder and keep only the newest N. */
+  runAutoBackup() {
+    const ab = this.data.settings.autoBackup;
+    try {
+      if (!fs.existsSync(ab.folder)) throw new Error(`The backup folder isn't available: ${ab.folder}. If it's on a USB stick, plug it in.`);
+      const dest = this.backupTo(ab.folder);
+      const ours = fs.readdirSync(ab.folder).filter(f => /^OpenSafe-backup-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}/.test(f) && fs.statSync(path.join(ab.folder, f)).isDirectory()).sort();
+      while (ours.length > ab.keep) fs.rmSync(path.join(ab.folder, ours.shift()), { recursive: true, force: true });
+      ab.last = nowIso(); ab.lastError = '';
+      this.save();
+      return { ok: true, dest };
+    } catch (e) {
+      ab.lastError = e.message; ab.lastErrorAt = nowIso();
+      try { this.save(); } catch (_) { /* ignore */ }
+      return { ok: false, error: e.message };
+    }
   }
 
   summary() {
@@ -508,7 +631,7 @@ class Store {
       byCategory[c].count++;
       byCategory[c].value += (a.currentValue ?? a.purchasePrice ?? 0);
     }
-    const uninsured = active.filter(a => !a.insurer && (a.currentValue ?? a.purchasePrice ?? 0) > 0).length;
+    const uninsured = active.filter(a => !a.insurer && !a.policyId && (a.currentValue ?? a.purchasePrice ?? 0) > 0).length;
     const noSerial = active.filter(a => !a.serial).length;
     const noReceipt = active.filter(a => !a.documents.some(d => d.type === 'Receipt')).length;
     return {
@@ -524,7 +647,8 @@ class Store {
   toCSV() {
     const cols = ['name', 'category', 'location', 'brand', 'model', 'serial', 'status', 'condition',
       'purchaseDate', 'purchasePrice', 'supplier', 'currentValue', 'warrantyExpiry', 'insurer',
-      'policyNumber', 'insuredValue', 'tags', 'notes', 'photos', 'documents'];
+      'policyNumber', 'insuredValue', 'barcode', 'lentTo', 'lentDate', 'dueBack', 'soldDate', 'soldPrice', 'soldTo',
+      'reg', 'vin', 'engineNo', 'mileage', 'motDue', 'taxDue', 'hin', 'engineHours', 'tags', 'notes', 'photos', 'documents'];
     const esc = (v) => {
       let s = v === null || v === undefined ? '' : String(v);
       if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; // stop spreadsheet formula injection
@@ -534,6 +658,9 @@ class Store {
     for (const a of this.allAssets()) {
       rows.push(cols.map(c => {
         if (c === 'tags') return esc(a.tags.join('; '));
+        if (['reg', 'vin', 'engineNo', 'mileage', 'motDue', 'taxDue', 'hin', 'engineHours'].includes(c)) return esc((a.details || {})[c]);
+        if (c === 'insurer' && !a.insurer && a.policyId) { const p = (this.data.policies || []).find(x => x.id === a.policyId); return esc(p ? p.insurer : ''); }
+        if (c === 'policyNumber' && !a.policyNumber && a.policyId) { const p = (this.data.policies || []).find(x => x.id === a.policyId); return esc(p ? p.policyNumber : ''); }
         if (c === 'photos') return esc(a.photos.length);
         if (c === 'documents') return esc(a.documents.length);
         return esc(a[c]);
@@ -940,4 +1067,4 @@ class Store {
   }
 }
 
-module.exports = { Store, STATUSES, CONDITIONS, DOC_TYPES, cleanMoney, cleanDate, emptyData };
+module.exports = { Store, STATUSES, CONDITIONS, DOC_TYPES, POLICY_TYPES, DETAIL_FIELDS, cleanMoney, cleanDate, emptyData };
