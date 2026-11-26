@@ -351,3 +351,109 @@ test('bulk change: location, category, status with details, policy; validation',
   assert.strictEqual(s.getAsset(a.id).policyId, '');
   assert.throws(() => s.bulkUpdate([a.id], { policyId: 'missing' }), /no longer exists/);
 });
+
+test('locations with levels: tidy paths, totals include places inside places', () => {
+  const { cleanLocation, inLocation } = require('../src/store');
+  assert.strictEqual(cleanLocation('  Home/Garage //  Shelf   2 '), 'Home / Garage / Shelf 2');
+  assert.strictEqual(cleanLocation('/'), '');
+  assert.ok(inLocation('Home / Garage / Shelf 2', 'Home / Garage'));
+  assert.ok(!inLocation('Home / Garages', 'Home / Garage'));
+  const s = tmpStore();
+  s.saveAsset({ name: 'Drill', location: 'home/garage/shelf 2', currentValue: 100 });
+  s.saveAsset({ name: 'Saw', location: 'home / garage', currentValue: 50 });
+  s.saveAsset({ name: 'Sofa', location: 'home/lounge', currentValue: 400 });
+  s.saveAsset({ name: 'Old TV', location: 'home/lounge', currentValue: 999, status: 'Sold' });
+  const b = s.summary().byLocation;
+  assert.deepStrictEqual(b.home, { count: 3, value: 550 });
+  assert.deepStrictEqual(b['home / garage'], { count: 2, value: 150 });
+  assert.deepStrictEqual(b['home / garage / shelf 2'], { count: 1, value: 100 });
+  assert.strictEqual(s.data.assets[0].location, 'home / garage / shelf 2');
+  s.setLists(['Tools'], ['Home/Loft ', 'Home / Loft', 'Boat']);
+  assert.deepStrictEqual(s.data.locations, ['Home / Loft', 'Boat']);
+});
+
+test('item sets: parts, one level only, claim pack expansion, delete clears', () => {
+  const s = tmpStore();
+  const drill = s.saveAsset({ name: 'Drill' });
+  const bat = s.saveAsset({ name: 'Battery' });
+  const chg = s.saveAsset({ name: 'Charger' });
+  const boat = s.saveAsset({ name: 'Boat' });
+  assert.strictEqual(s.setParts(drill.id, [bat.id, chg.id, drill.id]), 2);
+  assert.deepStrictEqual(s.withParts([drill.id, bat.id]), [drill.id, bat.id, chg.id]);
+  assert.throws(() => s.setParts(bat.id, [boat.id]), /part of another set/);
+  assert.throws(() => s.setParts(boat.id, [drill.id]), /has parts of its own/);
+  assert.throws(() => s.saveAsset({ id: boat.id, partOf: bat.id }), /itself part of a set/);
+  assert.throws(() => s.saveAsset({ id: drill.id, partOf: boat.id }), /has parts of its own/);
+  s.saveAsset({ id: bat.id, partOf: 'no-such-item' });
+  assert.strictEqual(s.getAsset(bat.id).partOf, '');
+  s.setParts(drill.id, [chg.id]);
+  assert.deepStrictEqual(s.partsOf(drill.id).map(a => a.name), ['Charger']);
+  s.deleteAsset(drill.id);
+  assert.strictEqual(s.getAsset(chg.id).partOf, '');
+});
+
+test('value over time: history on change, valuations, yearly drop estimate', () => {
+  const { estimateValue, valueNow } = require('../src/store');
+  const s = tmpStore();
+  const ring = s.saveAsset({ name: 'Ring', category: 'Jewellery & Watches', currentValue: 1000 });
+  s.saveAsset({ id: ring.id, name: 'Ring', currentValue: 1000 });           // unchanged: no new entry
+  s.saveAsset({ id: ring.id, name: 'Ring', currentValue: 1200 });
+  assert.deepStrictEqual(s.getAsset(ring.id).valueHistory.map(v => v.value), [1000, 1200]);
+  assert.throws(() => s.addValuation(ring.id, { date: '2099-01-01', value: 5 }), /future/);
+  assert.throws(() => s.addValuation(ring.id, { date: '2026-01-01', value: 'lots' }), /in pounds/);
+  s.addValuation(ring.id, { date: '2020-01-01', value: '£800', note: 'Old valuation' });
+  assert.strictEqual(s.getAsset(ring.id).currentValue, 1200);              // older entry doesn't replace value now
+  const v = s.addValuation(ring.id, { date: '2099-01-01'.replace('2099', String(new Date().getFullYear())).slice(0, 4) + '-01-01', value: 1500 });
+  assert.ok(v.id);
+  // yearly drop: 20% a year for 2 years from £1000 = £640
+  const twoYearsAgo = new Date(Date.now() - 2 * 365.25 * 86400000).toISOString().slice(0, 10);
+  const est = estimateValue({ category: 'Tools', purchasePrice: 1000, purchaseDate: twoYearsAgo }, { Tools: 20 });
+  assert.ok(Math.abs(est - 640) < 1, String(est));
+  assert.strictEqual(estimateValue({ category: 'Tools', purchasePrice: 1000, purchaseDate: twoYearsAgo }, {}), null);
+  assert.strictEqual(valueNow({ category: 'Tools', currentValue: 50, purchasePrice: 1000, purchaseDate: twoYearsAgo }, { Tools: 20 }), 50);
+  assert.throws(() => s.updateSettings({ depreciation: { Tools: '150' } }), /between 0 and 100/);
+  s.updateSettings({ depreciation: { Tools: '20%', Furniture: '' } });
+  assert.deepStrictEqual(s.data.settings.depreciation, { Tools: 20 });
+  s.saveAsset({ name: 'Saw', category: 'Tools', purchasePrice: 1000, purchaseDate: twoYearsAgo });
+  const sum = s.summary();
+  assert.strictEqual(sum.estimatedCount, 1);
+  assert.ok(Math.abs(sum.byCategory.Tools.value - 640) < 1);
+});
+
+test('spreadsheet import: mapping, UK dates, money, duplicates, round trip of own CSV', () => {
+  const csv = require('../src/csv');
+  const s = tmpStore();
+  const text = 'Item,Make,Serial No,Price Paid,Bought,Room,Status,Condition,Tags\n' +
+    '"Drill, cordless",Makita,MK1,"£1,299.50",14/03/2025,Home/Garage,lent out,good,"diy; tools"\n' +
+    'Ladder,,,40,1 Jun 2024,Garage,,,\n' +
+    ',,,,,,,,\n' +
+    'Kettle,,,abc,31/02/2025,Kitchen,Exploded,Shiny,\n';
+  const rows = csv.parseCSV(text);
+  const map = csv.guessMapping(rows[0]);
+  assert.deepStrictEqual(map, ['name', 'brand', 'serial', 'purchasePrice', 'purchaseDate', 'location', 'status', 'condition', 'tags']);
+  const { items, problems } = csv.rowsToItems(rows.slice(1), map);
+  assert.strictEqual(items.length, 3);
+  assert.deepStrictEqual(problems, ['Kettle: couldn\'t read the date "31/02/2025", so it was left blank']);
+  const r = s.importItems(items);
+  assert.strictEqual(r.added, 3);
+  const drill = s.data.assets.find(a => a.name === 'Drill, cordless');
+  assert.strictEqual(drill.purchasePrice, 1299.5);
+  assert.strictEqual(drill.purchaseDate, '2025-03-14');
+  assert.strictEqual(drill.location, 'Home / Garage');
+  assert.strictEqual(drill.status, 'Lent out');
+  assert.strictEqual(drill.condition, 'Good');
+  assert.deepStrictEqual(drill.tags, ['diy', 'tools']);
+  const kettle = s.data.assets.find(a => a.name === 'Kettle');
+  assert.strictEqual(kettle.status, 'Owned');
+  assert.strictEqual(kettle.purchasePrice, null);
+  // importing again: all three are duplicates
+  assert.deepStrictEqual([s.importItems(items).added, s.importItems(items).duplicates], [0, 3]);
+  assert.strictEqual(s.importItems(items, { skipDuplicates: false }).added, 3);
+  // OpenSafe's own export imports back into a new store
+  const s2 = tmpStore();
+  const own = csv.parseCSV(s.toCSV());
+  const back = csv.rowsToItems(own.slice(1), csv.guessMapping(own[0]));
+  assert.strictEqual(s2.importItems(back.items).added, 3); // the export holds each item twice; duplicates skipped
+  const d2 = s2.data.assets.find(a => a.name === 'Drill, cordless');
+  assert.deepStrictEqual([d2.serial, d2.purchasePrice, d2.purchaseDate, d2.location, d2.status], ['MK1', 1299.5, '2025-03-14', 'Home / Garage', 'Lent out']);
+});

@@ -681,6 +681,7 @@
   // ---------- stock check: scan every label in a place, see what's missing or misplaced ----------
   const GONE = ['Sold', 'Disposed', 'Lost / Stolen'];
   let stock = null;
+  const inLoc = (loc, place) => place === '' ? !loc : !!loc && (loc === place || loc.startsWith(place + ' / '));
   const idFromLabel = (text) => { const m = String(text).match(/item=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i); return m ? m[1].toLowerCase() : null; };
   async function startStockCheck() {
     await loadUpdates();
@@ -690,10 +691,16 @@
       setTab('inv'); return;
     }
     const counts = {};
-    for (const a of inv.items) { const st = currentState(a.id); if (GONE.includes(st.status)) continue; const l = st.location || ''; counts[l] = (counts[l] || 0) + 1; }
+    for (const a of inv.items) {
+      const st = currentState(a.id); if (GONE.includes(st.status)) continue;
+      const parts = (st.location || '').split(' / ').filter(Boolean);
+      const paths = parts.length ? parts.map((_, i) => parts.slice(0, i + 1).join(' / ')) : [''];
+      for (const l of paths) counts[l] = (counts[l] || 0) + 1;
+    }
+    const label = (l) => { if (!l) return 'No location set'; const p = l.split(' / '); return '\u00a0\u00a0'.repeat(p.length - 1) + (p.length > 1 ? '└ ' : '') + p[p.length - 1]; };
     sheet(`<form id="stockForm"><h2>📋 Stock check</h2>
       <p class="muted">Choose the place you're checking, then scan every OpenSafe label you can find there. At the end you'll see what's missing and what's in the wrong place.</p>
-      <label>Place<select name="loc">${Object.keys(counts).sort((x, y) => x.localeCompare(y)).map(l => `<option value="${esc(l)}">${esc(l || 'No location set')} (${counts[l]} item${counts[l] === 1 ? '' : 's'})</option>`).join('')}<option value="*">Everywhere: just list what I find</option></select></label>
+      <label>Place<select name="loc">${Object.keys(counts).sort((x, y) => x.localeCompare(y)).map(l => `<option value="${esc(l)}">${esc(label(l))} (${counts[l]} item${counts[l] === 1 ? '' : 's'})</option>`).join('')}<option value="*">Everywhere: just list what I find</option></select></label>
       <button class="btn primary" type="submit">📷 Start scanning</button>
       <button class="btn" type="button" data-act="closeSheet">Cancel</button></form>`);
   }
@@ -710,7 +717,7 @@
         if (!a) { stock.unknown.add(id); return { text: `? This label isn't in your inventory copy (${id.slice(0, 8)})`, warn: true, count: `${stock.found.size} found` }; }
         stock.found.add(id);
         const where = currentState(id).location || '';
-        const ok = loc === '*' || where === loc;
+        const ok = loc === '*' || inLoc(where, loc);
         return { text: ok ? `✓ ${a.name}` : `⚠ ${a.name}: recorded in ${where || 'no location'}`, warn: !ok, count: `${stock.found.size} found` };
       });
     } catch (ex) { stopScan(); toast(ex.message, 5000); }
@@ -721,10 +728,10 @@
     const loc = stock.loc;
     const row = (a, extra) => `<li data-act="itemActions" data-id="${a.id}">${esc(a.name)}${extra ? `<small>${esc(extra)}</small>` : ''}</li>`;
     const found = [...stock.found].map(id => inv.items.find(x => x.id === id)).filter(Boolean);
-    const here = loc === '*' ? found : found.filter(a => (currentState(a.id).location || '') === loc);
-    const wrong = loc === '*' ? [] : found.filter(a => (currentState(a.id).location || '') !== loc);
-    const missing = loc === '*' ? [] : inv.items.filter(a => { const st = currentState(a.id); return (st.location || '') === loc && !GONE.includes(st.status) && st.status !== 'Lent out' && !stock.found.has(a.id); });
-    const lent = loc === '*' ? [] : inv.items.filter(a => { const st = currentState(a.id); return (st.location || '') === loc && st.status === 'Lent out' && !stock.found.has(a.id); });
+    const here = loc === '*' ? found : found.filter(a => inLoc(currentState(a.id).location || '', loc));
+    const wrong = loc === '*' ? [] : found.filter(a => !inLoc(currentState(a.id).location || '', loc));
+    const missing = loc === '*' ? [] : inv.items.filter(a => { const st = currentState(a.id); return inLoc(st.location || '', loc) && !GONE.includes(st.status) && st.status !== 'Lent out' && !stock.found.has(a.id); });
+    const lent = loc === '*' ? [] : inv.items.filter(a => { const st = currentState(a.id); return inLoc(st.location || '', loc) && st.status === 'Lent out' && !stock.found.has(a.id); });
     const place = loc === '*' ? 'everywhere' : (loc || 'no location');
     sheet(`<h2>📋 Stock check: ${esc(place)}</h2>
       <p class="muted" style="margin-top:-6px">${found.length} label${found.length === 1 ? '' : 's'} scanned${loc === '*' ? '' : `, ${missing.length} not found`}.</p>
@@ -732,7 +739,7 @@
         <button class="btn primary" data-act="stockMove">Record ${wrong.length === 1 ? 'it' : 'all ' + wrong.length} as moved to ${esc(place)}</button>` : ''}
       ${missing.length ? `<h3 class="stockh">✗ Not found (${missing.length})</h3><ul class="stocklist">${missing.map(a => row(a)).join('')}</ul><p class="muted small">Tap an item to move it, mark it lost, or add a note.</p>` : ''}
       ${lent.length ? `<h3 class="stockh">🤝 Lent out, not expected here (${lent.length})</h3><ul class="stocklist">${lent.map(a => row(a, 'With ' + (currentState(a.id).lentTo || 'someone'))).join('')}</ul>` : ''}
-      ${here.length ? `<h3 class="stockh">✓ ${loc === '*' ? 'Found' : 'Where they should be'} (${here.length})</h3><ul class="stocklist">${here.map(a => row(a, loc === '*' ? (currentState(a.id).location || '') : '')).join('')}</ul>` : ''}
+      ${here.length ? `<h3 class="stockh">✓ ${loc === '*' ? 'Found' : 'Where they should be'} (${here.length})</h3><ul class="stocklist">${here.map(a => { const w = currentState(a.id).location || ''; return row(a, loc === '*' || w !== loc ? w : ''); }).join('')}</ul>` : ''}
       ${stock.unknown.size ? `<h3 class="stockh">? Labels not in your inventory copy (${stock.unknown.size})</h3><p class="muted small">They may be newer than the inventory file on this phone. Save a new one on the PC.</p>` : ''}
       <button class="btn" data-act="stockMore">📷 Scan more</button>
       <button class="btn" data-act="stockDone">Finish stock check</button>`);
@@ -740,7 +747,7 @@
   async function stockMoveAll() {
     const loc = stock.loc;
     await loadUpdates();
-    const wrong = [...stock.found].map(id => inv.items.find(x => x.id === id)).filter(a => a && (currentState(a.id).location || '') !== loc);
+    const wrong = [...stock.found].map(id => inv.items.find(x => x.id === id)).filter(a => a && !inLoc(currentState(a.id).location || '', loc));
     const at = new Date().toISOString();
     for (const a of wrong) updates.push({ id: uid(), itemId: a.id, itemName: a.name, at, kind: 'move', changes: { location: loc }, summary: `Moved to ${loc} (found in a stock check)`, note: '', exportedAt: null });
     await kvSet('updates', updates);

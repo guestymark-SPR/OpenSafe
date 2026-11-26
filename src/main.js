@@ -12,6 +12,7 @@ const { buildClaimPack } = require('./claim');
 const ocr = require('./ocr');
 const phoneview = require('./phoneview');
 const { buildLabelsHtml } = require('./labels');
+const csv = require('./csv');
 const updater = require('./updater');
 const firewall = require('./firewall');
 
@@ -343,6 +344,37 @@ function registerIpc() {
     return store.deleteAsset(id);
   });
   h('asset:duplicate', (id) => store.duplicateAsset(id));
+  // Spreadsheet import: pick a CSV, show its columns with a suggested mapping, then import.
+  let pendingCsv = null;
+  h('import:csvPick', async () => {
+    const r = await dialog.showOpenDialog(win, { title: 'Choose a spreadsheet saved as CSV', properties: ['openFile'], filters: [{ name: 'CSV spreadsheet', extensions: ['csv', 'txt', 'tsv'] }, { name: 'All files', extensions: ['*'] }] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    const file = r.filePaths[0];
+    if (/\.(xlsx|xlsm|xls|ods|numbers)$/i.test(file)) throw new Error('That is a spreadsheet file, not CSV. In Excel choose File → Save As (or Save a Copy) and pick "CSV UTF-8 (Comma delimited)", then import that file.');
+    if (fs.statSync(file).size > 50 * 1024 * 1024) throw new Error('That file is over 50 MB.');
+    const buf = fs.readFileSync(file);
+    let text = buf.toString('utf8');
+    if (text.includes('\uFFFD')) { try { text = new TextDecoder('windows-1252').decode(buf); } catch (_) { /* keep UTF-8 */ } } // Excel's older "CSV (Comma delimited)"
+    const rows = csv.parseCSV(text);
+    if (rows.length < 2) throw new Error('That file has no rows under its headings.');
+    const headers = rows[0].map((h, i) => String(h).trim() || `Column ${i + 1}`);
+    pendingCsv = { rows: rows.slice(1), headers };
+    return { name: path.basename(file), headers, mapping: csv.guessMapping(headers), sample: rows.slice(1, 4), total: rows.length - 1, labels: csv.FIELD_LABELS, capped: rows.length > csv.MAX_ROWS };
+  });
+  h('import:csvRun', async (mapping, opts) => {
+    if (!pendingCsv) throw new Error('Choose the file again.');
+    if (!Array.isArray(mapping) || !mapping.includes('name')) throw new Error('Choose which column holds the item names.');
+    const allowed = new Set(Object.keys(csv.FIELD_LABELS));
+    const map = pendingCsv.headers.map((_, i) => allowed.has(mapping[i]) ? mapping[i] : '');
+    const { items, problems } = csv.rowsToItems(pendingCsv.rows, map);
+    const res = store.importItems(items, { skipDuplicates: !(opts && opts.skipDuplicates === false) });
+    pendingCsv = null;
+    return Object.assign(res, { problems: problems.slice(0, 30), problemCount: problems.length });
+  });
+
+  h('value:add', (id, v) => store.addValuation(String(id), v || {}));
+  h('value:remove', (id, vid) => store.removeValuation(String(id), String(vid)));
+  h('asset:setParts', (id, ids) => store.setParts(String(id), Array.isArray(ids) ? ids.map(String) : []));
   h('asset:bulk', (ids, changes) => store.bulkUpdate(Array.isArray(ids) ? ids.map(String) : [], changes));
 
   h('attach:pick', async (assetId, kind, docType) => {
@@ -378,7 +410,7 @@ function registerIpc() {
   h('service:save', (assetId, entry) => store.saveService(assetId, entry));
   h('service:delete', (assetId, id) => store.deleteService(assetId, id));
   h('settings:update', (patch) => {
-    const safe = { reminderDays: patch.reminderDays };
+    const safe = { reminderDays: patch.reminderDays, depreciation: patch.depreciation };
     return store.updateSettings(safe);
   });
   h('lists:set', (cats, locs) => store.setLists(cats, locs));
@@ -421,7 +453,7 @@ function registerIpc() {
 
   h('export:claim', async (ids, info) => {
     if (!Array.isArray(ids) || !ids.length) throw new Error('Choose at least one item.');
-    const pack = buildClaimPack(store, ids.map(String), info || {});
+    const pack = buildClaimPack(store, store.withParts(ids.map(String)), info || {});
     const r = await dialog.showSaveDialog(win, {
       title: 'Save claim pack',
       defaultPath: path.join(app.getPath('documents'), `OpenSafe-claim-pack-${new Date().toISOString().slice(0, 10)}.pdf`),

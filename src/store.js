@@ -21,7 +21,7 @@ const DOC_TYPES = ['Receipt', 'Warranty', 'Manual', 'Insurance', 'Other'];
 
 const STRING_FIELDS = ['name', 'category', 'location', 'brand', 'model', 'serial', 'supplier',
   'condition', 'status', 'insurer', 'policyNumber', 'notes', 'purchaseDate', 'warrantyExpiry',
-  'barcode', 'policyId', 'lentTo', 'lentContact', 'lentDate', 'dueBack', 'soldDate', 'soldTo'];
+  'barcode', 'policyId', 'partOf', 'lentTo', 'lentContact', 'lentDate', 'dueBack', 'soldDate', 'soldTo'];
 const DATE_FIELDS = new Set(['purchaseDate', 'warrantyExpiry', 'lentDate', 'dueBack', 'soldDate']);
 const MONEY_FIELDS = ['purchasePrice', 'currentValue', 'insuredValue', 'soldPrice'];
 // Extra details for vehicles (car, van, motorbike) and boats
@@ -42,6 +42,32 @@ function nowIso() { return new Date().toISOString(); }
 function cleanString(v, max = MAX_STRING) {
   if (v === undefined || v === null) return '';
   return String(v).replace(/\u0000/g, '').trim().slice(0, max);
+}
+// Locations can have levels, written as a path: "Home / Garage / Shelf 2".
+function cleanLocation(v) {
+  return cleanString(v, 400).split('/').map(x => x.replace(/\s+/g, ' ').trim()).filter(Boolean).join(' / ').slice(0, 200);
+}
+// True if location `loc` is `place` or inside it.
+function inLocation(loc, place) {
+  return !!loc && (loc === place || loc.startsWith(place + ' / '));
+}
+const today = () => { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
+/**
+ * Estimated value from the price paid, the purchase date and the category's yearly drop
+ * (settings.depreciation, e.g. { Tools: 15 } = 15% a year, compounded). null if it can't be worked out.
+ */
+function estimateValue(a, rates, now = new Date()) {
+  const r = rates && rates[a.category];
+  if (!r || a.purchasePrice === null || a.purchasePrice === undefined || !a.purchaseDate) return null;
+  const years = (now - new Date(a.purchaseDate + 'T00:00:00Z')) / (365.25 * 86400000);
+  if (!(years > 0)) return a.purchasePrice;
+  return Math.round(a.purchasePrice * Math.pow(1 - r / 100, years) * 100) / 100;
+}
+/** Value now: the value you entered, else the estimate, else the price paid. */
+function valueNow(a, rates) {
+  if (a.currentValue !== null && a.currentValue !== undefined) return a.currentValue;
+  const e = estimateValue(a, rates);
+  return e !== null ? e : (a.purchasePrice ?? 0);
 }
 function cleanMoney(v) {
   if (v === undefined || v === null || v === '') return null;
@@ -92,7 +118,8 @@ function emptyData() {
       phoneLinkEnabled: false,
       phoneToken: '',
       phonePort: 47820,
-      autoBackup: { enabled: false, folder: '', every: 'weekly', keep: 5, last: '', lastError: '' }
+      autoBackup: { enabled: false, folder: '', every: 'weekly', keep: 5, last: '', lastError: '' },
+      depreciation: {} // category -> percent lost per year
     },
     policies: [],
     categories: DEFAULT_CATEGORIES.slice(),
@@ -220,11 +247,12 @@ class Store {
       photos: (existing && Array.isArray(existing.photos)) ? existing.photos : [],
       documents: (existing && Array.isArray(existing.documents)) ? existing.documents : [],
       service: (existing && Array.isArray(existing.service)) ? existing.service : [],
+      valueHistory: (existing && Array.isArray(existing.valueHistory)) ? existing.valueHistory.filter(v => v && cleanDate(v.date) && Number.isFinite(v.value)).slice(-500) : [],
       source: (existing && existing.source) || cleanString(input.source, 20) || 'pc'
     };
     for (const f of STRING_FIELDS) {
       const v = input[f] !== undefined ? input[f] : existing && existing[f];
-      a[f] = DATE_FIELDS.has(f) ? cleanDate(v) : cleanString(v, f === 'notes' ? MAX_STRING : 200);
+      a[f] = DATE_FIELDS.has(f) ? cleanDate(v) : f === 'location' ? cleanLocation(v) : cleanString(v, f === 'notes' ? MAX_STRING : 200);
     }
     for (const f of MONEY_FIELDS) {
       const v = input[f] !== undefined ? input[f] : existing && existing[f];
@@ -248,6 +276,10 @@ class Store {
     const existing = input.id ? this.getAsset(input.id) : null;
     if (input.id && !existing) throw new Error('Item not found');
     const asset = this._normaliseAsset(input, existing);
+    this._checkPartOf(asset);
+    if (asset.currentValue !== null && (!existing || existing.currentValue !== asset.currentValue)) {
+      asset.valueHistory = asset.valueHistory.concat({ id: uid(), date: today(), value: asset.currentValue, note: existing ? 'Value changed' : 'First value' });
+    }
     if (existing) Object.assign(existing, asset);
     else this.data.assets.push(asset);
     this._learnLists(asset);
@@ -263,7 +295,7 @@ class Store {
     if (!Array.isArray(ids) || !ids.length) throw new Error('Choose at least one item.');
     const c = changes && typeof changes === 'object' ? changes : {};
     const set = {};
-    if (typeof c.location === 'string' && c.location.trim()) set.location = cleanString(c.location, 200);
+    if (typeof c.location === 'string' && cleanLocation(c.location)) set.location = cleanLocation(c.location);
     if (typeof c.category === 'string' && c.category.trim()) set.category = cleanString(c.category, 200);
     if (typeof c.status === 'string' && c.status) {
       if (!STATUSES.includes(c.status)) throw new Error('Unknown status.');
@@ -308,11 +340,100 @@ class Store {
     const i = list.findIndex(a => a.id === id);
     if (i < 0) return false;
     const [gone] = list.splice(i, 1);
+    for (const a of this.allAssets()) if (a.partOf === id) a.partOf = '';
     if (this.vault) for (const r of [...gone.photos, ...gone.documents]) delete this.vault.fileMeta[r.id];
     const dir = this._assetDir(id);
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
     this.save();
     return true;
+  }
+
+  // ---------- spreadsheet import ----------
+  /** Add items read from a spreadsheet. Duplicates: same name and serial number, or (with no
+   *  serial) same name, location and purchase date. Saves once. */
+  importItems(list, { skipDuplicates = true } = {}) {
+    const key = (a) => {
+      const n = String(a.name || '').trim().toLowerCase();
+      return a.serial ? `${n}|s|${String(a.serial).trim().toLowerCase()}` : `${n}|${cleanLocation(a.location).toLowerCase()}|${cleanDate(a.purchaseDate)}`;
+    };
+    const have = new Set(this.allAssets().map(key));
+    const res = { added: 0, duplicates: 0, names: [] };
+    for (const it of (Array.isArray(list) ? list : []).slice(0, 20000)) {
+      if (!it || !cleanString(it.name)) continue;
+      const k = key(it);
+      if (skipDuplicates && have.has(k)) { res.duplicates++; continue; }
+      const st = STATUSES.find(x => x.toLowerCase() === String(it.status || '').trim().toLowerCase());
+      const cond = CONDITIONS.find(x => x.toLowerCase() === String(it.condition || '').trim().toLowerCase());
+      const a = this._normaliseAsset(Object.assign({}, it, { id: undefined, partOf: '', policyId: '', status: st || 'Owned', condition: cond || '', source: 'csv' }), null);
+      if (a.currentValue !== null) a.valueHistory = [{ id: uid(), date: today(), value: a.currentValue, note: 'Imported from a spreadsheet' }];
+      this.data.assets.push(a);
+      this._learnLists(a);
+      have.add(k);
+      res.added++; if (res.names.length < 20) res.names.push(a.name);
+    }
+    this.save();
+    return res;
+  }
+
+  // ---------- value over time ----------
+  /** Add a dated valuation. If it's the newest one, it becomes the item's current value. */
+  addValuation(id, v) {
+    const a = this.getAsset(id);
+    if (!a) throw new Error('Item not found');
+    const date = cleanDate(v && v.date);
+    const value = cleanMoney(v && v.value);
+    if (!date) throw new Error('Enter the date of the valuation.');
+    if (date > today()) throw new Error('The valuation date is in the future.');
+    if (value === null) throw new Error('Enter the value in pounds, like 250 or 249.99.');
+    const rec = { id: uid(), date, value, note: cleanString(v.note, 300) };
+    a.valueHistory = (a.valueHistory || []).concat(rec).sort((x, y) => x.date.localeCompare(y.date));
+    if (a.valueHistory[a.valueHistory.length - 1] === rec) a.currentValue = value;
+    a.updatedAt = nowIso();
+    this.save();
+    return rec;
+  }
+  removeValuation(id, vid) {
+    const a = this.getAsset(id);
+    if (!a) throw new Error('Item not found');
+    a.valueHistory = (a.valueHistory || []).filter(v => v.id !== vid);
+    this.save();
+  }
+
+  // ---------- item sets: an item can be a part of one main item (one level only) ----------
+  partsOf(id) { return this.allAssets().filter(a => a.partOf === id); }
+  _checkPartOf(asset) {
+    if (!asset.partOf) return;
+    const main = this.getAsset(asset.partOf);
+    if (!main || main.id === asset.id) { asset.partOf = ''; return; }
+    if (main.partOf) throw new Error(`"${main.name}" is itself part of a set. Choose the main item of that set instead.`);
+    if (this.partsOf(asset.id).length) throw new Error('This item has parts of its own, so it can\'t be part of another set.');
+  }
+  /** Make exactly these items the parts of `mainId` (items no longer listed stop being parts). */
+  setParts(mainId, ids) {
+    const main = this.getAsset(mainId);
+    if (!main) throw new Error('Item not found');
+    if (main.partOf) throw new Error(`"${main.name}" is part of another set, so it can't have parts.`);
+    const want = new Set((Array.isArray(ids) ? ids : []).map(String).filter(id => id !== mainId));
+    for (const id of want) {
+      const a = this.getAsset(id);
+      if (!a) continue;
+      if (this.partsOf(id).length) throw new Error(`"${a.name}" has parts of its own, so it can't be part of this set.`);
+    }
+    for (const a of this.allAssets()) {
+      if (want.has(a.id) && a.partOf !== mainId) { a.partOf = mainId; a.updatedAt = nowIso(); }
+      else if (!want.has(a.id) && a.partOf === mainId) { a.partOf = ''; a.updatedAt = nowIso(); }
+    }
+    this.save();
+    return this.partsOf(mainId).length;
+  }
+  /** ids plus the parts of any main item among them, without repeats. */
+  withParts(ids) {
+    const out = [];
+    for (const id of ids) {
+      if (!out.includes(id)) out.push(id);
+      for (const p of this.partsOf(id)) if (!out.includes(p.id)) out.push(p.id);
+    }
+    return out;
   }
 
   duplicateAsset(id) {
@@ -528,7 +649,8 @@ class Store {
       }
       if (stale && Object.keys(c).length) res.skippedChanges.push(`${asset.name}: details from "${cleanString(u.summary, 200) || 'change'}" are older than your last edit on this PC, so only its photos and receipts were added.`);
       if (!stale) {
-        for (const f of ['location', 'lentTo', 'lentContact', 'soldTo']) if (typeof c[f] === 'string') asset[f] = cleanString(c[f], 200);
+        if (typeof c.location === 'string') asset.location = cleanLocation(c.location);
+        for (const f of ['lentTo', 'lentContact', 'soldTo']) if (typeof c[f] === 'string') asset[f] = cleanString(c[f], 200);
         for (const f of ['lentDate', 'dueBack', 'soldDate']) if (typeof c[f] === 'string') asset[f] = cleanDate(c[f]);
         if (c.soldPrice !== undefined) asset.soldPrice = cleanMoney(c.soldPrice);
         if (typeof c.status === 'string' && STATUSES.includes(c.status)) asset.status = c.status;
@@ -593,6 +715,16 @@ class Store {
       if (p >= 1024 && p <= 65535) s.phonePort = p;
     }
     if (patch.phoneToken !== undefined) s.phoneToken = cleanString(patch.phoneToken, 100);
+    if (patch.depreciation && typeof patch.depreciation === 'object') {
+      const d = {};
+      for (const [cat, v] of Object.entries(patch.depreciation)) {
+        if (v === '' || v === null || v === undefined) continue;
+        const n = Number(String(v).replace('%', '').trim());
+        if (!Number.isFinite(n) || n <= 0 || n >= 100) throw new Error(`${cat}: enter a percentage between 0 and 100, or leave it blank.`);
+        d[cleanString(cat, 200)] = Math.round(n * 10) / 10;
+      }
+      s.depreciation = d;
+    }
     this.save();
     return s;
   }
@@ -600,7 +732,8 @@ class Store {
   setLists(categories, locations) {
     const tidy = (arr) => [...new Set(arr.map(c => cleanString(c, 60)).filter(Boolean))];
     if (Array.isArray(categories) && tidy(categories).length) this.data.categories = tidy(categories);
-    if (Array.isArray(locations) && tidy(locations).length) this.data.locations = tidy(locations);
+    const tidyLoc = (arr) => [...new Set(arr.map(cleanLocation).filter(Boolean))];
+    if (Array.isArray(locations) && tidyLoc(locations).length) this.data.locations = tidyLoc(locations);
     this.save();
   }
 
@@ -729,6 +862,8 @@ class Store {
   }
 
   summary() {
+    const rates = this.data.settings.depreciation || {};
+    const vn = (a) => valueNow(a, rates);
     const all = this.allAssets();
     const active = all.filter(a => !['Sold', 'Disposed', 'Lost / Stolen'].includes(a.status));
     const sum = (k) => active.reduce((t, a) => t + (a[k] || 0), 0);
@@ -737,7 +872,18 @@ class Store {
       const c = a.category || 'Uncategorised';
       byCategory[c] = byCategory[c] || { count: 0, value: 0 };
       byCategory[c].count++;
-      byCategory[c].value += (a.currentValue ?? a.purchasePrice ?? 0);
+      byCategory[c].value += vn(a);
+    }
+    // Value and count for every place, including the places that contain it ("Home" includes "Home / Garage").
+    const byLocation = {};
+    for (const a of active) {
+      const parts = (a.location || '').split(' / ').filter(Boolean);
+      const paths = parts.length ? parts.map((_, i) => parts.slice(0, i + 1).join(' / ')) : ['No location'];
+      for (const p of paths) {
+        byLocation[p] = byLocation[p] || { count: 0, value: 0 };
+        byLocation[p].count++;
+        byLocation[p].value += vn(a);
+      }
     }
     const uninsured = active.filter(a => !a.insurer && !a.policyId && (a.currentValue ?? a.purchasePrice ?? 0) > 0).length;
     const noSerial = active.filter(a => !a.serial).length;
@@ -746,9 +892,10 @@ class Store {
       count: active.length,
       totalCount: all.length,
       purchaseTotal: sum('purchasePrice'),
-      currentTotal: active.reduce((t, a) => t + (a.currentValue ?? a.purchasePrice ?? 0), 0),
+      currentTotal: active.reduce((t, a) => t + vn(a), 0),
+      estimatedCount: active.filter(a => (a.currentValue === null || a.currentValue === undefined) && estimateValue(a, rates) !== null).length,
       insuredTotal: sum('insuredValue'),
-      byCategory, uninsured, noSerial, noReceipt
+      byCategory, byLocation, uninsured, noSerial, noReceipt
     };
   }
 
@@ -1175,4 +1322,4 @@ class Store {
   }
 }
 
-module.exports = { Store, STATUSES, CONDITIONS, DOC_TYPES, POLICY_TYPES, DETAIL_FIELDS, cleanMoney, cleanDate, emptyData };
+module.exports = { Store, STATUSES, CONDITIONS, DOC_TYPES, POLICY_TYPES, DETAIL_FIELDS, cleanMoney, cleanDate, cleanLocation, inLocation, estimateValue, valueNow, emptyData };

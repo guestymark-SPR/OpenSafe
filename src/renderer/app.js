@@ -12,7 +12,26 @@
   const ukDate = (s) => s ? new Date(s + (s.length === 10 ? 'T00:00:00Z' : '')).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: s.length === 10 ? 'UTC' : undefined }) : '—';
   const img = (a, p) => `keep://file/${encodeURIComponent(a.id)}/${encodeURIComponent(p.file)}`;
   const INACTIVE = ['Sold', 'Disposed', 'Lost / Stolen'];
-  const value = (a) => a.currentValue ?? a.purchasePrice ?? 0;
+  // Value now: the value entered, else an estimate from the category's yearly drop, else the price paid.
+  function estimate(a) {
+    const r = ((state.snap && state.snap.data.settings.depreciation) || {})[a.category];
+    if (!r || a.purchasePrice === null || a.purchasePrice === undefined || !a.purchaseDate) return null;
+    const years = (Date.now() - new Date(a.purchaseDate + 'T00:00:00Z')) / (365.25 * 86400000);
+    if (!(years > 0)) return a.purchasePrice;
+    return Math.round(a.purchasePrice * Math.pow(1 - r / 100, years) * 100) / 100;
+  }
+  const value = (a) => { if (a.currentValue !== null && a.currentValue !== undefined) return a.currentValue; const e = estimate(a); return e !== null ? e : (a.purchasePrice ?? 0); };
+  // Locations can have levels: "Home / Garage / Shelf 2". A place includes everything inside it.
+  const inLoc = (loc, place) => !!loc && (loc === place || loc.startsWith(place + ' / '));
+  function locPaths() {
+    const set = new Set();
+    for (const l of [...state.snap.data.locations, ...state.snap.data.assets.map(a => a.location)]) {
+      const parts = (l || '').split(' / ').filter(Boolean);
+      parts.forEach((_, i) => set.add(parts.slice(0, i + 1).join(' / ')));
+    }
+    return [...set].sort((a, b) => a.localeCompare(b, 'en-GB'));
+  }
+  const locLabel = (p) => { const parts = p.split(' / '); return '\u00a0\u00a0\u00a0'.repeat(parts.length - 1) + (parts.length > 1 ? '└ ' : '') + parts[parts.length - 1]; };
 
   const state = {
     snap: null,
@@ -160,7 +179,7 @@
     const names = ids.map(id => (asset(id) || {}).name).filter(Boolean);
     const vaultNote = state.snap.security.vault.exists && !state.snap.security.vault.unlocked ? '<p class="s3 note" style="margin:0">The vault is locked, so files in it won\'t be included. Unlock it first if you need them.</p>' : '';
     openModal(`<form class="dialog narrow" id="claimForm"><div class="dh"><h2>Claim pack</h2></div>
-      <div class="db"><p class="s3 muted" style="margin:0">One PDF for your insurer with ${names.length === 1 ? `<b>${esc(names[0])}</b>` : `<b>${names.length} items</b>`}: every photo, serial numbers, purchase details, receipt photos, and receipt PDFs added at the end. All boxes below are optional.</p>
+      <div class="db"><p class="s3 muted" style="margin:0">One PDF for your insurer with ${names.length === 1 ? `<b>${esc(names[0])}</b>` : `<b>${names.length} items</b>`}: every photo, serial numbers, purchase details, receipt photos, and receipt PDFs added at the end. Parts of any set are included too. All boxes below are optional.</p>
         <label class="f">Date of incident<input name="incidentDate" type="date"></label>
         <label class="f">Claim number<input name="claimNumber" maxlength="60"></label>
         <label class="f s3">Police / crime reference<input name="crimeRef" maxlength="60" placeholder="e.g. a crime reference number for theft"></label>
@@ -416,11 +435,12 @@
     }
     const cats = Object.entries(s.byCategory).sort((a, b) => b[1].value - a[1].value);
     const max = Math.max(1, ...cats.map(c => c[1].value));
+    const locs = Object.entries(s.byLocation || {}).filter(([p]) => p !== 'No location').sort((a, b) => a[0].localeCompare(b[0], 'en-GB'));
     const recent = assets.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 6);
     const rem = state.snap.reminders.slice(0, 6);
     return `<div class="head"><h1>Dashboard</h1><span class="sub">${s.count} active item${s.count === 1 ? '' : 's'}</span></div>
     <div class="grid g4" style="margin-bottom:16px">
-      <div class="card stat"><div class="lbl">Value now</div><div class="num">${money0(s.currentTotal)}</div><div class="foot">Uses price paid where no current value is set</div></div>
+      <div class="card stat"><div class="lbl">Value now</div><div class="num">${money0(s.currentTotal)}</div><div class="foot">${s.estimatedCount ? `${s.estimatedCount} estimated from the yearly drop; others use price paid if no value is set` : 'Uses price paid where no value is set'}</div></div>
       <div class="card stat"><div class="lbl">Total paid</div><div class="num">${money0(s.purchaseTotal)}</div><div class="foot">Active items only</div></div>
       <div class="card stat"><div class="lbl">Insured value recorded</div><div class="num">${money0(s.insuredTotal)}</div><div class="foot">${s.uninsured} item${s.uninsured === 1 ? '' : 's'} with no insurer</div></div>
       <div class="card stat"><div class="lbl">Items</div><div class="num">${s.count}</div><div class="foot">${s.totalCount - s.count} sold, disposed or lost</div></div>
@@ -435,6 +455,7 @@
         </div>
       </div>
       <div class="grid" style="align-content:start">
+        ${locs.length ? `<div class="card"><h2>Where things are</h2><div class="loctree">${locs.map(([p, d]) => `<div class="rowi" data-action="filterLoc" data-loc="${esc(p)}" title="Show items in ${esc(p)}"><span style="flex:1">${esc(locLabel(p))}</span><span class="meta nowrap">${d.count} · ${money0(d.value)}</span></div>`).join('')}</div></div>` : ''}
         <div class="card"><h2>Coming up</h2>
           ${rem.length ? `<div class="rows">${rem.map(r => `<div class="rowi" ${r.policyId ? 'data-nav="policies"' : `data-open="${r.assetId}"`}>
               <span class="pill ${r.daysLeft < 0 ? 'bad' : 'warn'}">${esc(r.kind)}</span>
@@ -464,7 +485,7 @@
       if (f.status === 'active' && INACTIVE.includes(a.status)) return false;
       if (f.status && f.status !== 'active' && f.status !== 'all' && a.status !== f.status) return false;
       if (f.category && a.category !== f.category) return false;
-      if (f.location && a.location !== f.location) return false;
+      if (f.location && !inLoc(a.location, f.location)) return false;
       if (f.gap === 'serial' && a.serial) return false;
       if (f.gap === 'receipt' && a.documents.some(d => d.type === 'Receipt')) return false;
       if (f.gap === 'insurer' && (a.insurer || a.policyId || !value(a))) return false;
@@ -497,7 +518,7 @@
     const toolbar = `<div class="toolbar">
       <input type="search" id="q" placeholder="Search name, serial, barcode, reg, who has it, notes…" value="${esc(f.q)}">
       <select data-f="category">${opt('', 'All categories', f.category)}${d.categories.map(c => opt(c, c, f.category)).join('')}</select>
-      <select data-f="location">${opt('', 'All locations', f.location)}${d.locations.map(c => opt(c, c, f.location)).join('')}</select>
+      <select data-f="location">${opt('', 'All locations', f.location)}${locPaths().map(c => opt(c, locLabel(c), f.location)).join('')}</select>
       <select data-f="status">${opt('active', 'Active items', f.status)}${opt('all', 'All statuses', f.status)}${state.snap.lists.statuses.map(s => opt(s, s, f.status)).join('')}</select>
       <select data-f="sort">${opt('added', 'Newest first', f.sort)}${opt('name', 'Name A–Z', f.sort)}${opt('value', 'Highest value', f.sort)}${opt('bought', 'Recently bought', f.sort)}${opt('category', 'Category', f.sort)}</select>
       <span class="spacer"></span>
@@ -517,7 +538,7 @@
     const selBar = state.sel.size ? `<div class="selbar"><b>${state.sel.size} selected</b><button class="btn primary small" data-action="bulkSel">Change…</button><button class="btn small" data-action="claimSel">Claim pack…</button><button class="btn small" data-action="labelsSel">QR labels…</button><button class="btn small" data-action="selClear">Clear selection</button></div>` : '';
     return head + toolbar + selBar + `<table class="list"><thead><tr><th style="width:34px"><input type="checkbox" class="selall" title="Select all shown" ${allOn ? 'checked' : ''}></th><th style="width:60px"></th><th>Item</th><th>Category</th><th>Location</th><th>Serial no.</th><th>Bought</th><th class="r">Value now</th><th></th></tr></thead><tbody>
       ${list.map(a => `<tr data-open="${a.id}"><td><input type="checkbox" class="selbox" data-id="${a.id}" ${state.sel.has(a.id) ? 'checked' : ''} aria-label="Select ${esc(a.name)}"></td><td>${thumb(a)}</td>
-        <td><div class="name">${esc(a.name)}</div><div class="meta">${esc([a.brand, a.model].filter(Boolean).join(' '))}</div></td>
+        <td><div class="name">${esc(a.name)}${partsOf(a.id).length ? ` <span class="pill">Set of ${partsOf(a.id).length + 1}</span>` : ''}</div><div class="meta">${esc([a.brand, a.model].filter(Boolean).join(' '))}${a.partOf && asset(a.partOf) ? `${a.brand || a.model ? ' · ' : ''}Part of ${esc(asset(a.partOf).name)}` : ''}</div></td>
         <td>${esc(a.category)}</td><td>${esc(a.location)}</td><td class="mono">${esc(a.serial) || '<span class="faint">—</span>'}</td>
         <td class="nowrap">${ukDate(a.purchaseDate)}</td><td class="r nowrap">${value(a) ? money(value(a)) : '—'}</td>
         <td>${vaultPill(a)}${a.status !== 'Owned' ? `<span class="pill">${esc(a.status)}</span>` : ''}${a.source === 'phone' ? '<span class="pill acc">phone</span>' : ''}${warrantyPill(a).includes('warn') ? warrantyPill(a) : ''}</td></tr>`).join('')}
@@ -537,6 +558,91 @@
     return r.vaultFile ? `<button class="${cls}" data-action="fileVaultOut" data-att="${r.id}">Out of vault</button> ` : `<button class="${cls}" data-action="fileVaultIn" data-att="${r.id}">🔒 To vault</button> `;
   }
 
+  const partsOf = (id) => state.snap.data.assets.filter(x => x.partOf === id);
+  function setCard(a) {
+    if (a.partOf) {
+      const main = asset(a.partOf);
+      return `<div class="card" style="margin-top:14px"><h2>Part of a set</h2>${main ? `<div class="rows"><div class="rowi" data-open="${main.id}">${thumb(main)}<span style="flex:1"><b>${esc(main.name)}</b></span><span class="meta">${partsOf(main.id).length + 1} items in the set</span></div></div>` : '<div class="muted">The main item is in the locked vault.</div>'}</div>`;
+    }
+    const parts = partsOf(a.id);
+    if (!parts.length) return `<div class="card" style="margin-top:14px;display:flex;align-items:center;gap:12px"><span class="muted" style="flex:1">Group the things that go with this item, such as batteries and a charger, or a tender and outboard. Claim packs then include them all.</span><button class="btn small" data-action="pickParts">Add parts…</button></div>`;
+    const total = parts.reduce((t, x) => t + value(x), value(a));
+    return `<div class="card" style="margin-top:14px"><h2 style="display:flex;align-items:center">Parts in this set (${parts.length})<span class="spacer"></span><span class="meta" style="font-weight:500;margin-right:10px">Whole set: ${money(total)}</span><button class="btn small" data-action="pickParts">Change parts…</button></h2>
+      <div class="rows">${parts.map(x => `<div class="rowi" data-open="${x.id}">${thumb(x)}<span style="flex:1"><b>${esc(x.name)}</b> <span class="meta">${esc([x.brand, x.model].filter(Boolean).join(' '))}</span>${x.serial ? ` <span class="mono meta">${esc(x.serial)}</span>` : ''}</span><span class="meta">${value(x) ? money(value(x)) : ''}</span></div>`).join('')}</div></div>`;
+  }
+  function valueCard(a) {
+    const h = (a.valueHistory || []).map((v, i) => Object.assign({ i }, v)).sort((x, y) => y.date.localeCompare(x.date) || y.i - x.i); // newest first; same day: latest added first
+    const paid = a.purchasePrice !== null && a.purchasePrice !== undefined && a.purchaseDate ? { date: a.purchaseDate, value: a.purchasePrice } : null;
+    if (!h.length) return `<div class="card" style="margin-top:14px;display:flex;align-items:center;gap:12px"><span class="muted" style="flex:1">Value history: none yet. Each time you change the value it's recorded here with the date. You can also add a valuation, for example from a jeweller or dealer.</span><button class="btn small" data-action="addValuation">Add valuation…</button></div>`;
+    return `<div class="card" style="margin-top:14px"><h2 style="display:flex;align-items:center">Value history<span class="spacer"></span><button class="btn small" data-action="addValuation">Add valuation…</button></h2>
+      <table class="list"><thead><tr><th>Date</th><th class="r">Value</th><th class="r">Change</th><th>Note</th><th></th></tr></thead><tbody>
+      ${h.map((v, i) => { const prev = h[i + 1] || paid; const ch = prev ? v.value - prev.value : null; return `<tr><td class="nowrap">${ukDate(v.date)}</td><td class="r nowrap">${money(v.value)}</td><td class="r nowrap ${ch < 0 ? 'neg' : ''}">${ch === null || ch === 0 ? '' : (ch > 0 ? '+' : '−') + money(Math.abs(ch))}</td><td>${esc(v.note)}</td><td class="r"><button class="btn small danger" data-action="rmValuation" data-vid="${v.id}">Delete</button></td></tr>`; }).join('')}
+      ${paid ? `<tr class="faint"><td class="nowrap">${ukDate(paid.date)}</td><td class="r nowrap">${money(paid.value)}</td><td></td><td>Price paid</td><td></td></tr>` : ''}
+      </tbody></table></div>`;
+  }
+  function valuationForm(a) {
+    openModal(`<form class="dialog narrow" id="valForm"><div class="dh"><h2>Add valuation</h2></div>
+      <div class="db"><p class="s3 muted" style="margin:0">${esc(a.name)}. If this is the newest valuation, it becomes the item's value now.</p>
+        <label class="f">Date<input name="date" type="date" value="${new Date().toISOString().slice(0, 10)}"></label>
+        <label class="f">Value (£)<input name="value" inputmode="decimal" placeholder="0.00"></label>
+        <label class="f s3">Note<input name="note" maxlength="300" placeholder="e.g. Valued by the jeweller for insurance"></label>
+        <div class="err" id="valErr"></div></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Add</button></div></form>`);
+    $('#valForm').onsubmit = async (e) => {
+      e.preventDefault();
+      busy(e.target, true, 'Saving…');
+      try { await keep.addValuation(a.id, Object.fromEntries(new FormData(e.target).entries())); closeModal(); toast('✓ Valuation added'); await refresh(); }
+      catch (ex) { $('#valErr').textContent = ex.message; busy(e.target, false); }
+    };
+  }
+
+  function csvForm(r) {
+    const fields = Object.entries(r.labels);
+    openModal(`<form class="dialog wide" id="csvForm"><div class="dh"><h2>Import ${esc(r.name)}</h2></div>
+      <div class="db"><p class="s3 muted" style="margin:0">${r.total} row${r.total === 1 ? '' : 's'}${r.capped ? ' (only the first 20,000 are read)' : ''}. Check what each column holds. Columns set to "Don't import" are left out. Dates are read the UK way, day first (14/03/2025).</p>
+        <div class="s3" style="overflow:auto;max-height:52vh"><table class="list csvmap"><thead><tr><th>Column</th><th>First rows</th><th>Import as</th></tr></thead><tbody>
+        ${r.headers.map((h, i) => `<tr><td><b>${esc(h)}</b></td><td class="meta">${r.sample.map(row => esc(String(row[i] ?? '').slice(0, 40))).filter(Boolean).join('<br>') || '<span class="faint">(empty)</span>'}</td>
+          <td><select data-col="${i}">${opt('', "Don't import", r.mapping[i])}${fields.map(([k, l]) => opt(k, l, r.mapping[i])).join('')}</select></td></tr>`).join('')}
+        </tbody></table></div>
+        <label class="switch s3" style="font-weight:500"><input type="checkbox" name="skipDup" checked> Skip rows that are already in OpenSafe (same name and serial number, or same name, location and date bought)</label>
+        <div class="err" id="csvErr"></div></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Import</button></div></form>`);
+    $('#csvForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const mapping = [...document.querySelectorAll('#csvForm [data-col]')].map(sel => sel.value);
+      const dup = mapping.filter(Boolean).find((f, i, arr) => arr.indexOf(f) !== i);
+      if (!mapping.includes('name')) { $('#csvErr').textContent = 'Choose which column holds the item names.'; return; }
+      if (dup) { $('#csvErr').textContent = `Two columns are set to "${r.labels[dup]}". Choose one.`; return; }
+      busy(e.target, true, 'Importing…');
+      try {
+        const x = await keep.csvRun(mapping, { skipDuplicates: e.target.skipDup.checked });
+        closeModal(); await refresh();
+        openModal(`<div class="dialog narrow"><div class="dh"><h2>Spreadsheet imported</h2></div><div class="db"><p class="s3" style="margin:0"><b>${x.added}</b> item${x.added === 1 ? '' : 's'} added${x.duplicates ? `, <b>${x.duplicates}</b> already in OpenSafe so skipped` : ''}.</p>
+          ${x.problemCount ? `<div class="s3"><p class="muted" style="margin:6px 0">Worth checking (${x.problemCount}):</p><ul class="s3 meta" style="margin:0;padding-left:18px">${x.problems.map(p => `<li>${esc(p)}</li>`).join('')}</ul></div>` : ''}</div>
+          <div class="df"><button class="btn primary" data-action="close">OK</button></div></div>`);
+      } catch (ex) { $('#csvErr').textContent = ex.message; busy(e.target, false); }
+    };
+  }
+
+  function partsForm(a) {
+    const chosen = new Set(partsOf(a.id).map(x => x.id));
+    const candidates = state.snap.data.assets.filter(x => x.id !== a.id && !partsOf(x.id).length).sort((x, y) => x.name.localeCompare(y.name, 'en-GB'));
+    openModal(`<form class="dialog" id="partsForm"><div class="dh"><h2>Parts of ${esc(a.name)}</h2></div>
+      <div class="db"><p class="s3 muted" style="margin:0">Tick the items that belong with it. Each part keeps its own details, photos and serial number. Items with parts of their own aren't listed.</p>
+        <input type="search" id="partsQ" class="s3" placeholder="Search…">
+        <div class="s3 partlist">${candidates.map(x => { const other = x.partOf && x.partOf !== a.id ? asset(x.partOf) : null; return `<label class="partrow" data-name="${esc((x.name + ' ' + x.brand + ' ' + x.model + ' ' + x.serial).toLowerCase())}"><input type="checkbox" name="part" value="${x.id}" ${chosen.has(x.id) ? 'checked' : ''}> <span style="flex:1"><b>${esc(x.name)}</b> <span class="meta">${esc([x.category, x.location].filter(Boolean).join(' · '))}</span>${other ? ` <span class="pill">now part of ${esc(other.name)}</span>` : ''}</span></label>`; }).join('') || '<div class="muted">No other items yet.</div>'}</div>
+        <div class="err" id="partsErr"></div></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Save parts</button></div></form>`);
+    $('#partsQ').oninput = (e) => { const q = e.target.value.trim().toLowerCase(); for (const r of document.querySelectorAll('.partrow')) r.style.display = !q || r.dataset.name.includes(q) ? '' : 'none'; };
+    $('#partsForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const ids = [...e.target.querySelectorAll('input[name=part]:checked')].map(i => i.value);
+      busy(e.target, true, 'Saving…');
+      try { const n = await keep.setParts(a.id, ids); closeModal(); toast(n ? `✓ ${n} part${n === 1 ? '' : 's'} in this set` : 'This item no longer has parts'); await refresh(); }
+      catch (ex) { $('#partsErr').textContent = ex.message; busy(e.target, false); }
+    };
+  }
+
   function viewItem() {
     const a = asset(state.itemId);
     if (!a) { state.view = 'items'; return viewItems(); }
@@ -549,7 +655,7 @@
         ${kv('Category', esc(a.category))}${kv('Location', esc(a.location))}${kv('Status', esc(a.status))}
         ${kv('Brand', esc(a.brand))}${kv('Model', esc(a.model))}${kv('Serial number', a.serial ? `<span class="mono">${esc(a.serial)}</span>` : '')}
         ${kv('Bought on', a.purchaseDate ? ukDate(a.purchaseDate) : '')}${kv('Bought from', esc(a.supplier))}${kv('Condition', esc(a.condition))}
-        ${kv('Price paid', a.purchasePrice !== null ? money(a.purchasePrice) : '')}${kv('Value now', a.currentValue !== null ? money(a.currentValue) : '')}${kv('Warranty until', a.warrantyExpiry ? ukDate(a.warrantyExpiry) + ' ' + warrantyPill(a) : '')}
+        ${kv('Price paid', a.purchasePrice !== null ? money(a.purchasePrice) : '')}${kv('Value now', a.currentValue !== null ? money(a.currentValue) : estimate(a) !== null ? `≈ ${money(estimate(a))} <span class="faint">estimated (${esc(a.category)}: ${state.snap.data.settings.depreciation[a.category]}% a year)</span>` : '')}${kv('Warranty until', a.warrantyExpiry ? ukDate(a.warrantyExpiry) + ' ' + warrantyPill(a) : '')}
         ${(() => { const pol = (state.snap.data.policies || []).find(p => p.id === a.policyId); return pol
           ? kv('Insured by', `<a href="#" data-nav="policies">${esc(pol.insurer)}</a>${pol.type ? ' · ' + esc(pol.type) : ''}`) + kv('Policy number', esc(pol.policyNumber)) + kv('Insured value', a.insuredValue !== null ? money(a.insuredValue) : '')
           : kv('Insurer', esc(a.insurer)) + kv('Policy number', esc(a.policyNumber)) + kv('Insured value', a.insuredValue !== null ? money(a.insuredValue) : ''); })()}
@@ -558,6 +664,8 @@
       ${a.status === 'Lent out' ? kv('Lent to', esc(a.lentTo)) + kv('Contact', esc(a.lentContact)) + kv('Lent on', a.lentDate ? ukDate(a.lentDate) : '') + kv('Due back', a.dueBack ? ukDate(a.dueBack) : '') : ''}
       ${a.status === 'Sold' ? kv('Sold on', a.soldDate ? ukDate(a.soldDate) : '') + kv('Sold for', a.soldPrice !== null && a.soldPrice !== undefined ? money(a.soldPrice) : '') + kv('Sold to', esc(a.soldTo)) : ''}
       </div>${a.notes ? `<div class="notes">${esc(a.notes)}</div>` : ''}</div>
+      ${setCard(a)}
+      ${valueCard(a)}
       ${a.details && a.details.kind ? `<div class="card" style="margin-top:14px"><h2>${a.details.kind === 'boat' ? 'Boat details' : 'Vehicle details'}</h2><div class="kv">
         ${DETAIL_UI[a.details.kind].map(([k, label, type]) => kv(label, a.details[k] ? (type === 'date' ? ukDate(a.details[k]) + dueSoon(a.details[k]) : `<span class="${/vin|hin|engineNo|reg|sso|mmsi/.test(k) ? 'mono' : ''}">${esc(a.details[k])}</span>`) : '')).join('')}
       </div></div>` : ''}`;
@@ -631,6 +739,9 @@
         <button class="btn primary" data-action="importPick">Import from phone…</button>
         <p class="muted">Importing the same file twice is safe: items already here are skipped, and only new photos are added.</p>
       </div>
+      <div class="card" style="grid-column:1/-1"><h2>Import from a spreadsheet</h2>
+        <p class="muted">Bring in a list you already keep in Excel, Google Sheets or Numbers. Save it as CSV first: in Excel use <b>File → Save As</b> and choose <b>CSV UTF-8 (Comma delimited)</b>; in Google Sheets use <b>File → Download → Comma-separated values</b>. You'll choose which column is which before anything is added.</p>
+        <button class="btn" data-action="csvPick">Choose CSV file…</button></div>
       <div class="card" style="grid-column:1/-1"><h2>3. See your inventory on your phone</h2>
         <p class="muted">Save a read-only copy of your items (with small photos) for OpenSafe Capture. Open it there with <b>My inventory → Load file</b>, then search your things, or scan an item's QR label to see its details. The file is encrypted with a passphrase you choose here, which you'll type on the phone.</p>
         <div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">
@@ -733,9 +844,12 @@
         <p class="muted" id="updMsg">${esc(updText())}</p>
         <p>${state.upd && state.upd.canUpdate ? '<button class="btn" data-action="updCheck">Check now</button> ' : ''}${state.upd && state.upd.state === 'ready' ? '<button class="btn primary" data-action="updInstall">Restart and update</button>' : ''}</p>
         <p class="faint">OpenSafe checks for new versions when it starts and every 4 hours, and downloads them quietly. Your items, photos and settings are kept when it updates.</p></div>
+      <div class="card"><h2>Value drop per year</h2><p class="muted">Optional. For items with no "value now", OpenSafe estimates it from the price paid and the purchase date, losing this percentage each year. Leave a category blank to use the price paid. The estimate is used on the dashboard and item pages, not in claim packs or reports.</p>
+        <div class="deplist">${[...new Set([...d.categories, ...d.assets.map(x => x.category).filter(Boolean)])].map(c => `<label class="deprow"><span>${esc(c)}</span><input data-dep="${esc(c)}" inputmode="decimal" value="${esc((d.settings.depreciation || {})[c] ?? '')}" placeholder="—"><span class="faint">% a year</span></label>`).join('')}</div>
+        <p><button class="btn primary" data-action="saveDep">Save</button></p></div>
       <div class="card"><h2>Categories</h2><p class="muted">One per line. Existing items keep their category.</p>
         <textarea id="catsTa" rows="12">${esc(d.categories.join('\n'))}</textarea></div>
-      <div class="card"><h2>Locations</h2><p class="muted">One per line.</p>
+      <div class="card"><h2>Locations</h2><p class="muted">One per line. Use <b>/</b> for places inside places, for example <i>Home / Garage / Shelf 2</i>. Choosing <i>Home / Garage</i> in Items then includes everything on its shelves.</p>
         <textarea id="locsTa" rows="12">${esc(d.locations.join('\n'))}</textarea>
         <p><button class="btn primary" data-action="saveLists">Save categories and locations</button></p></div>
     </div>
@@ -791,7 +905,7 @@
         ${inp('name', 'Name *', 'required maxlength="200" placeholder="e.g. Makita cordless drill"', 's2')}
         <label class="f">Status<select name="status" id="fStatus">${L.statuses.map(s => opt(s, s, a.status)).join('')}</select></label>
         <label class="f">Category<input name="category" id="fCat" list="dlCats" value="${esc(a.category || '')}"></label>
-        <label class="f">Location<input name="location" list="dlLocs" value="${esc(a.location || '')}"></label>
+        <label class="f">Location<input name="location" list="dlLocs" value="${esc(a.location || '')}" placeholder="e.g. Home / Garage / Shelf 2"></label>
         <label class="f">Condition<select name="condition">${opt('', '—', a.condition || '')}${L.conditions.map(s => opt(s, s, a.condition)).join('')}</select></label>
         ${inp('brand', 'Brand')}${inp('model', 'Model')}${inp('serial', 'Serial number')}
         <div id="lendBox" class="s3 subgrid ${a.status === 'Lent out' ? '' : 'hidden'}"><h3>Lent out</h3>
@@ -935,6 +1049,7 @@
         case 'newService': serviceForm(a); break;
         case 'editService': if (!e.target.closest('button')) serviceForm(a, a.service.find(s => s.id === act.dataset.sid)); break;
         case 'rmService': e.stopPropagation(); if (confirm('Delete this service entry?')) { await run(() => keep.deleteService(a.id, act.dataset.sid), 'Deleted'); await refresh(); } break;
+        case 'filterLoc': state.f = Object.assign(state.f, { location: act.dataset.loc, category: '', status: 'active', gap: '', q: '' }); go('items'); break;
         case 'filterCat': state.f = Object.assign(state.f, { category: act.dataset.cat === 'Uncategorised' ? '' : act.dataset.cat, status: 'active', gap: '', q: '' }); go('items'); break;
         case 'gap': state.f = Object.assign(state.f, { gap: act.dataset.gap, status: 'active', category: '', location: '', q: '' }); go('items'); break;
         case 'clearGap': state.f.gap = ''; render(); break;
@@ -1025,6 +1140,9 @@
         case 'labelsSel': labelsForm([...state.sel]); break;
         case 'bulkSel': bulkForm([...state.sel]); break;
         case 'labelOne': labelsForm([a.id]); break;
+        case 'pickParts': partsForm(a); break;
+        case 'addValuation': valuationForm(a); break;
+        case 'rmValuation': if (confirm('Delete this valuation from the history? The item\'s value now isn\'t changed.')) { await run(() => keep.removeValuation(a.id, act.dataset.vid), 'Deleted'); await refresh(); } break;
         case 'bcLookup': barcodeLookup(a); break;
         case 'phoneView': {
           const pass = $('#pvPass').value;
@@ -1036,10 +1154,12 @@
         case 'claimOne': claimForm([a.id]); break;
         case 'selClear': state.sel.clear(); render(); break;
         case 'ocr': readReceipt(a, act.dataset.file); break;
+        case 'csvPick': { try { const r = await keep.csvPick(); if (r) csvForm(r); } catch (ex) { toast('⚠ ' + ex.message, 8000); } break; }
         case 'importPick': { await run(() => keep.importPick()); await refresh(); break; }
         case 'phoneReset': await run(() => keep.phoneReset()); loadPhone(); break;
         case 'report': { const p = await run(() => keep.exportReport({ includePhotos: $('#rPhotos').checked, includeInactive: $('#rInactive').checked })); if (p) toast('Report saved'); break; }
         case 'csv': { const p = await run(() => keep.exportCsv()); if (p) toast('CSV saved'); break; }
+        case 'saveDep': { const dep = {}; for (const i of document.querySelectorAll('[data-dep]')) if (i.value.trim()) dep[i.dataset.dep] = i.value.trim(); try { await run(() => keep.updateSettings({ depreciation: dep }), 'Saved'); await refresh(); } catch (_) {} break; }
         case 'saveRem': await run(() => keep.updateSettings({ reminderDays: $('#remDays').value }), 'Saved'); await refresh(); break;
         case 'saveLists': await run(() => keep.setLists($('#catsTa').value.split('\n'), $('#locsTa').value.split('\n')), 'Saved'); await refresh(); break;
         case 'backup': { const p = await run(() => keep.backup()); if (p) toast('Backup saved'); break; }

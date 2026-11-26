@@ -13,6 +13,11 @@ contextBridge.exposeInMainWorld('keep', {
   deleteAsset: (id) => call('asset:delete', id),
   duplicateAsset: (id) => call('asset:duplicate', id),
   bulkUpdate: (ids, changes) => call('asset:bulk', ids, changes),
+  setParts: (id, ids) => call('asset:setParts', id, ids),
+  addValuation: (id, v) => call('value:add', id, v),
+  csvPick: () => call('import:csvPick'),
+  csvRun: (mapping, opts) => call('import:csvRun', mapping, opts),
+  removeValuation: (id, vid) => call('value:remove', id, vid),
   pickFiles: (assetId, kind, docType) => call('attach:pick', assetId, kind, docType),
   addFiles: (assetId, kind, docType, files) =>
     call('attach:addPaths', assetId, kind, docType, Array.from(files).map(f => webUtils.getPathForFile(f)).filter(Boolean)),
