@@ -2,7 +2,7 @@ name: Build Windows app
 
 # Every push to main builds the installer.
 # If package.json has a version that hasn't been released yet, the build is also
-# published as a GitHub release (tag v<version>). Installed copies of OpenSafe
+# published as a GitHub release (tag v<version>), including latest.yml for auto-update. Installed copies of OpenSafe
 # find it and update themselves.
 # To release an update: bump "version" in package.json and push to main.
 
@@ -31,31 +31,27 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Is this a new version?
-        id: ver
+      - name: Build installer and portable exe
+        run: npx electron-builder --win nsis portable --x64 --publish never
+
+      - name: Publish release if this version is new (or incomplete)
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           v=$(node -p "require('./package.json').version")
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-          if gh release view "v$v" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Version v$v is already released - building only."
-            echo "release=false" >> "$GITHUB_OUTPUT"
+          files=("dist/OpenSafe-Setup-$v.exe" "dist/OpenSafe-Setup-$v.exe.blockmap" "dist/OpenSafe-Portable-$v.exe" dist/latest.yml)
+          ls -la "${files[@]}"
+          if ! gh release view "v$v" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Creating release v$v"
+            gh release create "v$v" "${files[@]}" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --title "OpenSafe $v" --generate-notes
+          elif ! gh release view "v$v" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -qx latest.yml; then
+            echo "Release v$v exists but is missing latest.yml - uploading files"
+            gh release upload "v$v" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
           else
-            echo "Version v$v is new - building and publishing a release."
-            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "Release v$v already complete - nothing to publish"
           fi
-
-      - name: Build (no release)
-        if: steps.ver.outputs.release != 'true'
-        run: npx electron-builder --win nsis portable --x64 --publish never
-
-      - name: Build and publish release
-        if: steps.ver.outputs.release == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win nsis portable --x64 --publish always
 
       - name: Upload build
         uses: actions/upload-artifact@v4
