@@ -270,7 +270,10 @@
     </div>`;
   }
 
+  let phoneTimer = null;
   async function loadPhone() {
+    clearTimeout(phoneTimer);
+    phoneTimer = setTimeout(() => { if (state.view === 'phone' && $('#modal').classList.contains('hidden')) loadPhone(); }, 3000);
     let s;
     try { s = await keep.phoneStatus(); } catch (e) { $('#phoneBody').textContent = e.message; return; }
     if (state.view !== 'phone') return;
@@ -285,13 +288,20 @@
       <div class="qrs">${shown.map(u => `<div class="qr"><img src="${u.qr}" alt="QR code to pair your phone"><div><b>${esc(u.name)}</b></div><div class="u">${esc(u.url.replace(/#.*/, ''))}</div></div>`).join('')}</div>
       ${shown.length > 1 ? '<p class="muted">More than one network was found. Use the code for the network your phone is on (usually Wi-Fi).</p>' : ''}
       <p class="muted">Running on port ${s.port}. ${s.lastSeen ? 'Phone last connected ' + new Date(s.lastSeen).toLocaleString('en-GB') + '.' : 'No phone has connected since OpenSafe started.'}</p>
+      <div style="margin:4px 0 14px"><b>Connection log</b> <span class="faint">(updates by itself)</span>
+        ${s.attempts && s.attempts.length ? `<div class="rows">${s.attempts.map(a => `<div class="gap"><span><span class="pill ${a.kind === 'https' ? 'bad' : 'good'}">${esc(a.ip)}</span> ${esc(a.text)}</span><span class="meta nowrap">${new Date(a.time).toLocaleTimeString('en-GB')}</span></div>`).join('')}</div>`
+          : '<div class="muted">Nothing has tried to connect yet. If your phone shows an error but nothing appears here, the phone\'s request never reached this PC: check the phone is on the same Wi-Fi, and that the router isn\'t keeping devices apart.</div>'}</div>
       <button class="btn" data-action="phoneReset">New pairing code</button>
       ${state.snap.platform === 'win32' ? `<div class="card" style="margin-top:16px;box-shadow:none;background:#fbfaf7">
         <h2>Phone can't connect?</h2>
         <p class="muted">Windows Firewall can block your phone, even when OpenSafe looks allowed. This button removes any firewall rules blocking OpenSafe and adds one rule that lets your phone in on your home Wi-Fi (private networks only). Windows will ask for permission: click <b>Yes</b>.</p>
         <p id="fwState" class="muted"></p>
         <button class="btn primary" data-action="fixFirewall">Fix Windows Firewall</button></div>` : ''}`;
-    if (state.snap.platform === 'win32') keep.firewallRule().then(ok => { const el = $('#fwState'); if (el) el.innerHTML = ok ? '✓ OpenSafe\'s firewall rule is in place.' : 'OpenSafe\'s own firewall rule isn\'t set up yet.'; }).catch(() => {});
+    const fwText = (ok) => ok ? '✓ OpenSafe\'s firewall rule is in place.' : 'OpenSafe\'s own firewall rule isn\'t set up yet.';
+    if (state.snap.platform === 'win32') {
+      if (state.fw && Date.now() - state.fw.at < 60000) { const el = $('#fwState'); if (el) el.innerHTML = fwText(state.fw.ok); }
+      else keep.firewallRule().then(ok => { state.fw = { ok, at: Date.now() }; const el = $('#fwState'); if (el) el.innerHTML = fwText(ok); }).catch(() => {});
+    }
   }
 
   function viewReports() {
@@ -480,6 +490,7 @@
         case 'clearGap': state.f.gap = ''; render(); break;
         case 'fixFirewall': {
           act.disabled = true; act.textContent = 'Waiting for Windows…';
+          state.fw = null;
           try { await run(() => keep.fixFirewall(), '✓ Firewall fixed. Try your phone again.'); } catch (_) {}
           loadPhone(); break;
         }

@@ -129,3 +129,14 @@ test('firewall commands remove old rules and allow private TCP only', () => {
   assert.ok(del.includes('delete rule name=all program="D:\\OpenSafe\\OpenSafe.exe"'));
   assert.ok(add.includes('action=allow') && add.includes('protocol=TCP') && add.includes('localport=47820-47829') && add.includes('profile=private'));
 });
+
+test('phone server logs plain and https connection attempts', async () => {
+  const s = tmpStore();
+  const ps = new PhoneServer({ store: s });
+  const port = await ps.start(47998);
+  ps._note('192.168.1.50', 'request', 'x'); // simulate a LAN entry (localhost is ignored)
+  const net = require('net');
+  await new Promise((resolve) => { const c = net.connect(port, '127.0.0.1', () => { c.write(Buffer.from([0x16, 0x03, 0x01, 0, 5])); setTimeout(() => { c.destroy(); resolve(); }, 200); }); });
+  await ps.stop();
+  assert.strictEqual(ps.attempts[0].ip, '192.168.1.50');
+});

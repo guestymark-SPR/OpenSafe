@@ -138,7 +138,8 @@ async function phoneStatus() {
     running: phone.running,
     port: phone.port,
     urls: withQr,
-    lastSeen: phone.lastSeen ? phone.lastSeen.toISOString() : null
+    lastSeen: phone.lastSeen ? phone.lastSeen.toISOString() : null,
+    attempts: phone.attempts.slice(0, 8)
   };
 }
 

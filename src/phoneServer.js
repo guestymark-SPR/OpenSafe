@@ -84,6 +84,7 @@ class PhoneServer {
     this.server = null;
     this.port = null;
     this.lastSeen = null;
+    this.attempts = []; // recent connection attempts, newest first, for the Phone screen
   }
 
   get running() { return !!this.server; }
@@ -96,6 +97,21 @@ class PhoneServer {
         this._handle(req, res).catch((e) => {
           if (!res.headersSent) send(res, e.status || 400, { error: e.message || 'Server error' });
         });
+      });
+      // Diagnostics: record every incoming connection and how it went.
+      srv.on('connection', (sock) => {
+        const ip = String(sock.remoteAddress || '').replace(/^::ffff:/, '');
+        sock.once('data', (buf) => {
+          if (buf && buf[0] === 0x16) this._note(ip, 'https', 'The phone\'s browser tried a secure (https://) connection. The page only works as http://.');
+        });
+        this._note(ip, 'connect', 'Connected');
+      });
+      srv.on('request', (req) => {
+        const ip = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+        this._note(ip, 'request', `Asked for ${req.method} ${String(req.url).split('?')[0].slice(0, 40)}`);
+      });
+      srv.on('clientError', (err, sock) => {
+        try { sock.end('HTTP/1.1 400 Bad Request\r\n\r\n'); } catch (_) {}
       });
       srv.on('error', reject);
       srv.listen(port, '0.0.0.0', () => {
@@ -115,6 +131,15 @@ class PhoneServer {
       this.server = null;
       this.port = null;
     });
+  }
+
+  _note(ip, kind, text) {
+    if (ip === '127.0.0.1' || ip === '::1') return;
+    const now = new Date().toISOString();
+    const last = this.attempts[0];
+    if (last && last.ip === ip && last.kind === kind && last.text === text && Date.parse(now) - Date.parse(last.time) < 2000) { last.time = now; return; }
+    this.attempts.unshift({ ip, kind, text, time: now });
+    this.attempts.length = Math.min(this.attempts.length, 8);
   }
 
   resetToken() {
