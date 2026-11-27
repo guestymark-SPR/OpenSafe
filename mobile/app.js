@@ -8,6 +8,7 @@
   const FORMAT_VERSION = 1;          // items only
   const FORMAT_VERSION_CHANGES = 2;  // items plus changes from scanning labels (needs OpenSafe 1.6 or later)
   const FORMAT_VERSION_FILES = 3;    // changes that carry photos or receipts (needs OpenSafe 1.8 or later)
+  const FORMAT_VERSION_DOCS = 4;     // scanned documents (needs OpenSafe 2.6 or later)
   const DEFAULT_CATS = ['Vehicles', 'Electronics', 'Computers & Phones', 'Tools', 'Camping & Outdoor', 'Motorbike Gear', 'Marine', 'Furniture', 'Appliances', 'Jewellery & Watches', 'Sports & Hobbies', 'Clothing', 'Other'];
   const DEFAULT_LOCS = ['Home', 'Garage', 'Car', 'Storage', 'Boat'];
   const FIELDS = ['name', 'category', 'location', 'brand', 'model', 'serial', 'barcode', 'webLink', 'condition', 'purchasePrice', 'currentValue', 'purchaseDate', 'warrantyExpiry', 'supplier', 'notes', 'tags'];
@@ -16,11 +17,12 @@
   let dbp = null;
   function db() {
     if (!dbp) dbp = new Promise((resolve, reject) => {
-      const r = indexedDB.open('opensafe-capture', 2);
+      const r = indexedDB.open('opensafe-capture', 3);
       r.onupgradeneeded = () => {
         const d = r.result;
         if (!d.objectStoreNames.contains('items')) d.createObjectStore('items', { keyPath: 'id' });
         if (!d.objectStoreNames.contains('kv')) d.createObjectStore('kv'); // the encrypted inventory file from the PC
+        if (!d.objectStoreNames.contains('docs')) d.createObjectStore('docs', { keyPath: 'id' }); // scanned documents (pages as pictures)
       };
       r.onsuccess = () => resolve(r.result);
       r.onerror = () => reject(r.error);
@@ -144,12 +146,20 @@
     items = (await allItems()).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     freeUrls();
     await loadUpdates();
+    docs = (await allDocs().catch(() => [])).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const pending = items.filter(i => !i.exportedAt);
     const pendU = updates.filter(u => !u.exportedAt);
-    $('pendingCount').textContent = `${pending.length} item${pending.length === 1 ? '' : 's'}` + (pendU.length ? ` and ${pendU.length} change${pendU.length === 1 ? '' : 's'}` : '');
-    $('pendingText').textContent = (pending.length || pendU.length) ? 'ready to export' : ((items.length || updates.length) ? 'everything has been exported' : 'ready to export');
-    $('exportBtn').disabled = !pending.length && !pendU.length;
-    $('empty').classList.toggle('hidden', items.length > 0 || updates.length > 0);
+    const pendD = docs.filter(d => !d.exportedAt);
+    $('pendingCount').textContent = [`${pending.length} item${pending.length === 1 ? '' : 's'}`, pendU.length && `${pendU.length} change${pendU.length === 1 ? '' : 's'}`, pendD.length && `${pendD.length} document${pendD.length === 1 ? '' : 's'}`].filter(Boolean).join(', ').replace(/, ([^,]*)$/, ' and $1');
+    $('pendingText').textContent = (pending.length || pendU.length || pendD.length) ? 'ready to export' : ((items.length || updates.length || docs.length) ? 'everything has been exported' : 'ready to export');
+    $('exportBtn').disabled = !pending.length && !pendU.length && !pendD.length;
+    $('empty').classList.toggle('hidden', items.length > 0 || updates.length > 0 || docs.length > 0);
+    $('docsBox').classList.toggle('hidden', !docs.length);
+    $('docList').replaceChildren(...docs.map(d => {
+      const el = document.createElement('div'); el.className = 'item'; el.dataset.doc = d.id;
+      el.innerHTML = `${d.pages[0] ? `<img src="${blobUrl(d.pages[0].blob)}" alt="">` : '<div class="ph">📄</div>'}<div class="t"><div class="n">${esc(d.title)}</div><div class="m">${esc([d.docType, d.from].filter(Boolean).join(' · ')) || '&nbsp;'}</div><div class="m">${d.pages.length} page${d.pages.length === 1 ? '' : 's'}</div></div>${d.exportedAt ? '<span class="pill done">Exported</span>' : '<span class="pill">New</span>'}`;
+      return el;
+    }));
     $('changes').classList.toggle('hidden', !updates.length);
     $('itemsHead').classList.toggle('hidden', !items.length);
     $('changeList').replaceChildren(...updates.slice().sort((a, b) => b.at.localeCompare(a.at)).map(u => {
@@ -254,9 +264,17 @@
     });
   }
 
-  async function buildExport(list, ups) {
+  async function buildExport(list, ups, dlist = []) {
     const hasFiles = ups.some(u => (u.photos && u.photos.length) || (u.documents && u.documents.length));
-    const out = { format: FORMAT, version: hasFiles ? FORMAT_VERSION_FILES : ups.length ? FORMAT_VERSION_CHANGES : FORMAT_VERSION, app: 'OpenSafe Capture', exportedAt: new Date().toISOString(), device: navigator.userAgent.slice(0, 200), items: [] };
+    const out = { format: FORMAT, version: dlist.length ? FORMAT_VERSION_DOCS : hasFiles ? FORMAT_VERSION_FILES : ups.length ? FORMAT_VERSION_CHANGES : FORMAT_VERSION, app: 'OpenSafe Capture', exportedAt: new Date().toISOString(), device: navigator.userAgent.slice(0, 200), items: [] };
+    if (dlist.length) {
+      out.documents = [];
+      for (const d of dlist) {
+        const x = { id: d.id, createdAt: d.createdAt, title: d.title, docType: d.docType, from: d.from, docDate: d.docDate, ref: d.ref, actBy: d.actBy, notes: d.notes, pages: [] };
+        for (const p of d.pages) x.pages.push({ type: 'image/jpeg', data: await blobToBase64(p.blob) });
+        out.documents.push(x);
+      }
+    }
     for (const it of list) {
       const x = { id: it.id, createdAt: it.createdAt, updatedAt: it.updatedAt };
       for (const k of FIELDS) x[k] = it[k] || '';
@@ -284,31 +302,33 @@
     await loadUpdates();
     const list = all ? items : items.filter(i => !i.exportedAt);
     const ups = all ? updates : updates.filter(u => !u.exportedAt);
-    if (!list.length && !ups.length) { toast('Nothing to export'); return; }
+    const dlist = all ? docs : docs.filter(d => !d.exportedAt);
+    if (!list.length && !ups.length && !dlist.length) { toast('Nothing to export'); return; }
     const btn = $('exportBtn'); btn.disabled = true; btn.textContent = 'Preparing…';
     let data;
-    try { data = JSON.stringify(await buildExport(list, ups)); }
+    try { data = JSON.stringify(await buildExport(list, ups, dlist)); }
     catch (ex) { toast('Export failed: ' + ex.message, 5000); btn.disabled = false; btn.textContent = 'Export to PC'; return; }
     btn.textContent = 'Export to PC'; btn.disabled = false;
     const base = `OpenSafe-${stamp()}`;
     const mb = data.length < 1048576 ? Math.max(1, Math.round(data.length / 1024)) + ' KB' : (data.length / 1048576).toFixed(1) + ' MB';
-    pendingExport = { list, ups, data, base };
+    pendingExport = { list, ups, dlist, data, base };
     const canShareFile = (name, type) => { try { return !!(navigator.canShare && navigator.canShare({ files: [new File(['x'], name, { type })] })); } catch (_) { return false; } };
     shareName = canShareFile(base + '.opensafe', 'application/octet-stream') ? [base + '.opensafe', 'application/octet-stream']
       : canShareFile(base + '.opensafe.txt', 'text/plain') ? [base + '.opensafe.txt', 'text/plain'] : null;
-    const what = [list.length && `${list.length} item${list.length === 1 ? '' : 's'}`, ups.length && `${ups.length} change${ups.length === 1 ? '' : 's'}`].filter(Boolean).join(' and ');
+    const what = [list.length && `${list.length} item${list.length === 1 ? '' : 's'}`, ups.length && `${ups.length} change${ups.length === 1 ? '' : 's'}`, dlist.length && `${dlist.length} document${dlist.length === 1 ? '' : 's'}`].filter(Boolean).join(', ').replace(/, ([^,]*)$/, ' and $1');
     sheet(`<h2>Export ${what}</h2>
-      <p class="muted">One file with everything, photos included (${mb}).</p>${ups.length ? `<p class="muted small">Changes from scanning labels need OpenSafe ${ups.some(u => (u.photos && u.photos.length) || (u.documents && u.documents.length)) ? '1.8' : '1.6'} or later on the PC.</p>` : ''}
+      <p class="muted">One file with everything, photos included (${mb}).</p>${dlist.length ? '<p class="muted small">Scanned documents need OpenSafe 2.6 or later on the PC.</p>' : ''}${ups.length ? `<p class="muted small">Changes from scanning labels need OpenSafe ${ups.some(u => (u.photos && u.photos.length) || (u.documents && u.documents.length)) ? '1.8' : '1.6'} or later on the PC.</p>` : ''}
       ${shareName ? '<button class="btn primary" data-act="share">Send to PC…</button><p class="muted" style="margin-top:-4px">Pick Quick Share, Bluetooth, email, Google Drive or OneDrive.</p>' : ''}
       <button class="btn ${shareName ? '' : 'primary'}" data-act="download">Save to Downloads</button>
-      <p class="muted">Then on your PC, open OpenSafe and choose <b>Items → Import from phone</b>, or just double-click the file.</p>
+      <p class="muted">Then on your PC, double-click the file, or in OpenSafe choose <b>Phone app → Import from phone…</b>.</p>
       <button class="btn" data-act="closeSheet">Cancel</button>`);
   }
   let pendingExport = null, shareName = null;
 
-  async function markExported(list, ups) {
+  async function markExported(list, ups, dlist = []) {
     const now = new Date().toISOString();
     for (const it of list) { it.exportedAt = now; await putItem(it); }
+    for (const d of dlist) { d.exportedAt = now; await putDoc(d); }
     if (ups.length) {
       await loadUpdates();
       const ids = new Set(ups.map(u => u.id));
@@ -317,8 +337,8 @@
     }
   }
   async function finishExport(how) {
-    const { list, ups } = pendingExport;
-    await markExported(list, ups);
+    const { list, ups, dlist } = pendingExport;
+    await markExported(list, ups, dlist);
     pendingExport = null;
     closeSheet();
     renderList();
@@ -1104,6 +1124,258 @@
     showHome();
   }
 
+  // ---------- scan a document: photograph each page; it's straightened and cleaned up on the phone ----------
+  // The pages go to the PC in the next export, where they become one PDF in Documents and their words are read.
+  const DOC_TYPES = ['Letter', 'Bill', 'Bank statement', 'Benefits & pension', 'Medical', 'Legal', 'Tax', 'Insurance', 'Vehicle', 'Home', 'Work', 'Identity', 'Certificate', 'Other'];
+  const docTx = async (mode, fn) => { const d = await db(); return new Promise((resolve, reject) => { const t = d.transaction('docs', mode); let out; Promise.resolve(fn(t.objectStore('docs'))).then(v => { out = v; }); t.oncomplete = () => resolve(out); t.onerror = () => reject(t.error); t.onabort = () => reject(t.error || new Error('Storage error')); }); };
+  const allDocs = () => docTx('readonly', s => req(s.getAll()));
+  const putDoc = (d) => docTx('readwrite', s => req(s.put(d)));
+  const delDoc = (id) => docTx('readwrite', s => req(s.delete(id)));
+  let docs = [];
+  let dscan = null; // { doc, stream, timer }  scanning in progress
+  let adj = null;   // { canvas (full picture), corners [{x,y}x4], mode, rotate }  adjusting one page
+
+  // --- finding the page: the biggest bright area (paper) in a small copy of the picture ---
+  function findPage(src) {
+    const sw = src.videoWidth || src.width, sh = src.videoHeight || src.height;
+    const W = 240, k = W / Math.max(sw, sh);
+    const w = Math.max(8, Math.round(sw * k)), h = Math.max(8, Math.round(sh * k));
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(src, 0, 0, w, h);
+    const px = g.getImageData(0, 0, w, h).data, n = w * h, lum = new Uint8Array(n), hist = new Uint32Array(256);
+    for (let i = 0; i < n; i++) { const v = (px[i * 4] * 77 + px[i * 4 + 1] * 150 + px[i * 4 + 2] * 29) >> 8; lum[i] = v; hist[v]++; }
+    // Otsu threshold between paper and background
+    let sum = 0; for (let i = 0; i < 256; i++) sum += i * hist[i];
+    let sB = 0, wB = 0, best = 0, th = 128;
+    for (let t = 0; t < 256; t++) { wB += hist[t]; if (!wB) continue; const wF = n - wB; if (!wF) break; sB += t * hist[t]; const mB = sB / wB, mF = (sum - sB) / wF, v = wB * wF * (mB - mF) * (mB - mF); if (v > best) { best = v; th = t; } }
+    const lab = new Int32Array(n).fill(-1); let bestLab = -1, bestSize = 0; const stack = new Int32Array(n);
+    for (let i = 0, l = 0; i < n; i++) {
+      if (lab[i] !== -1 || lum[i] <= th) continue;
+      let sp = 0, size = 0; stack[sp++] = i; lab[i] = l;
+      while (sp) { const j = stack[--sp]; size++; const x = j % w, y = (j / w) | 0;
+        if (x > 0 && lab[j - 1] === -1 && lum[j - 1] > th) { lab[j - 1] = l; stack[sp++] = j - 1; }
+        if (x < w - 1 && lab[j + 1] === -1 && lum[j + 1] > th) { lab[j + 1] = l; stack[sp++] = j + 1; }
+        if (y > 0 && lab[j - w] === -1 && lum[j - w] > th) { lab[j - w] = l; stack[sp++] = j - w; }
+        if (y < h - 1 && lab[j + w] === -1 && lum[j + w] > th) { lab[j + w] = l; stack[sp++] = j + w; } }
+      if (size > bestSize) { bestSize = size; bestLab = l; }
+      l++;
+    }
+    if (bestLab < 0 || bestSize < n * 0.12) return null;
+    let tl = [0, 0, Infinity], tr = [0, 0, -Infinity], br = [0, 0, -Infinity], bl = [0, 0, Infinity];
+    for (let i = 0; i < n; i++) { if (lab[i] !== bestLab) continue; const x = i % w, y = (i / w) | 0;
+      if (x + y < tl[2]) tl = [x, y, x + y]; if (x + y > br[2]) br = [x, y, x + y]; if (x - y > tr[2]) tr = [x, y, x - y]; if (x - y < bl[2]) bl = [x, y, x - y]; }
+    const q = [tl, tr, br, bl].map(p => ({ x: (p[0] + 0.5) / k, y: (p[1] + 0.5) / k }));
+    const area = Math.abs(q.reduce((s, p, i) => { const r = q[(i + 1) % 4]; return s + p.x * r.y - r.x * p.y; }, 0) / 2);
+    if (area < sw * sh * 0.12) return null;
+    if (bestSize / (area * k * k) < 0.75) return null; // not a clean four-sided shape
+    // a page that fills the whole picture means the background was bright too: don't trust it
+    if (area > sw * sh * 0.97) return null;
+    return q;
+  }
+  const defaultCorners = (w, h) => { const m = 0.06; return [{ x: w * m, y: h * m }, { x: w * (1 - m), y: h * m }, { x: w * (1 - m), y: h * (1 - m) }, { x: w * m, y: h * (1 - m) }]; };
+
+  // --- straighten: map the four corners to a flat rectangle (perspective correction) ---
+  function homography(src, dst) { // 3x3 mapping dst -> src, from 4 point pairs
+    const A = [], b = [];
+    for (let i = 0; i < 4; i++) { const { x, y } = dst[i], u = src[i].x, v = src[i].y;
+      A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]); b.push(u); A.push([0, 0, 0, x, y, 1, -v * x, -v * y]); b.push(v); }
+    for (let c = 0; c < 8; c++) { // Gaussian elimination
+      let p = c; for (let r = c + 1; r < 8; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+      [A[c], A[p]] = [A[p], A[c]]; [b[c], b[p]] = [b[p], b[c]];
+      for (let r = 0; r < 8; r++) { if (r === c) continue; const f = A[r][c] / A[c][c]; for (let k = c; k < 8; k++) A[r][k] -= f * A[c][k]; b[r] -= f * b[c]; }
+    }
+    return b.map((v, i) => v / A[i][i]);
+  }
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  function straighten(srcCanvas, q, mode) {
+    const wq = (dist(q[0], q[1]) + dist(q[3], q[2])) / 2, hq = (dist(q[0], q[3]) + dist(q[1], q[2])) / 2;
+    const k = Math.min(1.25, 2200 / Math.max(wq, hq));
+    const W = Math.max(50, Math.round(wq * k)), H = Math.max(50, Math.round(hq * k));
+    const m = homography(q, [{ x: 0, y: 0 }, { x: W, y: 0 }, { x: W, y: H }, { x: 0, y: H }]);
+    const sw = srcCanvas.width, sh = srcCanvas.height;
+    const sd = srcCanvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, sw, sh).data;
+    const out = document.createElement('canvas'); out.width = W; out.height = H;
+    const og = out.getContext('2d'), od = og.createImageData(W, H), o = od.data;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const z = m[6] * x + m[7] * y + 1, u = (m[0] * x + m[1] * y + m[2]) / z, v = (m[3] * x + m[4] * y + m[5]) / z;
+      const x0 = Math.max(0, Math.min(sw - 2, u | 0)), y0 = Math.max(0, Math.min(sh - 2, v | 0)), fx = Math.min(1, Math.max(0, u - x0)), fy = Math.min(1, Math.max(0, v - y0));
+      const i00 = (y0 * sw + x0) * 4, i10 = i00 + 4, i01 = i00 + sw * 4, i11 = i01 + 4, oi = (y * W + x) * 4;
+      for (let ch = 0; ch < 3; ch++) o[oi + ch] = (sd[i00 + ch] * (1 - fx) + sd[i10 + ch] * fx) * (1 - fy) + (sd[i01 + ch] * (1 - fx) + sd[i11 + ch] * fx) * fy;
+      o[oi + 3] = 255;
+    }
+    cleanUp(o, W, H, mode);
+    og.putImageData(od, 0, 0);
+    return out;
+  }
+  // Even out the light (shadows, a dim corner) by dividing by the paper's brightness around each point.
+  function cleanUp(o, W, H, mode) {
+    const B = 32, gw = Math.ceil(W / B), gh = Math.ceil(H / B), bg = new Float32Array(gw * gh);
+    for (let gy = 0; gy < gh; gy++) for (let gx = 0; gx < gw; gx++) {
+      const hist = new Uint32Array(64); let cnt = 0;
+      for (let y = gy * B; y < Math.min(H, gy * B + B); y += 2) for (let x = gx * B; x < Math.min(W, gx * B + B); x += 2) { const i = (y * W + x) * 4; hist[((o[i] + o[i + 1] + o[i + 2]) / 3) >> 2]++; cnt++; }
+      let acc = 0, t = 63; for (; t > 0; t--) { acc += hist[t]; if (acc >= cnt * 0.1) break; } // the brightest 10% is paper
+      bg[gy * gw + gx] = Math.max(40, t * 4 + 2);
+    }
+    const bgAt = (x, y) => { const fx = Math.min(gw - 1, Math.max(0, x / B - 0.5)), fy = Math.min(gh - 1, Math.max(0, y / B - 0.5)); const x0 = fx | 0, y0 = fy | 0, x1 = Math.min(gw - 1, x0 + 1), y1 = Math.min(gh - 1, y0 + 1), ax = fx - x0, ay = fy - y0;
+      return (bg[y0 * gw + x0] * (1 - ax) + bg[y0 * gw + x1] * ax) * (1 - ay) + (bg[y1 * gw + x0] * (1 - ax) + bg[y1 * gw + x1] * ax) * ay; };
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4, b = bgAt(x, y);
+      if (mode === 'colour') { for (let ch = 0; ch < 3; ch++) o[i + ch] = Math.min(255, o[i + ch] * 245 / b); }
+      else { let v = ((o[i] * 77 + o[i + 1] * 150 + o[i + 2] * 29) >> 8) * 255 / b; v = v >= 235 ? 255 : Math.max(0, (v - 40) * 255 / 195); o[i] = o[i + 1] = o[i + 2] = v; }
+    }
+  }
+
+  // --- screens ---
+  async function docNew() {
+    dscan = { doc: { id: uid(), createdAt: new Date().toISOString(), exportedAt: null, title: '', docType: 'Letter', from: '', docDate: '', ref: '', actBy: '', notes: '', pages: [] } };
+    await docCamera();
+  }
+  async function docCamera() {
+    try {
+      dscan.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 3840 }, height: { ideal: 2160 } }, audio: false });
+    } catch (ex) { toast('The camera isn\'t available. You can choose photos instead.', 4500); docDetails(); return; }
+    const v = $('docVideo'); v.srcObject = dscan.stream; await v.play();
+    $('docScanner').classList.remove('hidden');
+    docCount();
+    const cv = $('docOutline'), g = cv.getContext('2d');
+    const loop = () => {
+      if (!dscan || !dscan.stream) return;
+      try {
+        if (v.videoWidth) {
+          const W = cv.clientWidth, H = cv.clientHeight, dpr = window.devicePixelRatio || 1;
+          if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+          g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+          const q = findPage(v);
+          if (q) { const s = Math.max(W / v.videoWidth, H / v.videoHeight), ox = (W - v.videoWidth * s) / 2, oy = (H - v.videoHeight * s) / 2;
+            g.beginPath(); q.forEach((p, i) => (i ? g.lineTo : g.moveTo).call(g, ox + p.x * s, oy + p.y * s)); g.closePath();
+            g.fillStyle = 'rgba(61,219,184,.18)'; g.fill(); g.lineWidth = 3; g.strokeStyle = '#3ddbb8'; g.stroke(); }
+          $('docHint').textContent = q ? 'Page found. Hold still and tap the button.' : 'Fit the whole page in view, ideally on a darker surface.';
+        }
+      } catch (_) { /* keep going */ }
+      dscan.timer = setTimeout(loop, 350);
+    };
+    loop();
+  }
+  function docCount() { const n = dscan ? dscan.doc.pages.length : 0; $('docDoneBtn').textContent = n ? `Done (${n} page${n === 1 ? '' : 's'})` : 'Done'; }
+  function docStopCamera() { if (!dscan) return; clearTimeout(dscan.timer); if (dscan.stream) dscan.stream.getTracks().forEach(t => t.stop()); dscan.stream = null; $('docScanner').classList.add('hidden'); }
+  function docShoot() {
+    const v = $('docVideo'); if (!v.videoWidth) return;
+    const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight; c.getContext('2d').drawImage(v, 0, 0);
+    docStopCamera();
+    docAdjust(c, true);
+  }
+  // Pick the corners, colour or black and white, and rotation.
+  function docAdjust(canvas, fromCamera) {
+    const q = findPage(canvas);
+    adj = { canvas, corners: q || defaultCorners(canvas.width, canvas.height), found: !!q, mode: adj ? adj.mode : 'clean', rotate: 0, fromCamera };
+    $('docAdjust').classList.remove('hidden');
+    $('docAdjMsg').textContent = q ? 'Drag the corners if they\'re not quite on the page.' : 'Couldn\'t find the page edges. Drag the corners to the page\'s corners.';
+    docAdjMode();
+    requestAnimationFrame(docDrawAdjust);
+  }
+  function docAdjMode() { for (const b of document.querySelectorAll('[data-act=docMode]')) b.classList.toggle('on', b.dataset.mode === adj.mode); }
+  function adjGeom() {
+    const box = $('docAdjBox'), cw = box.clientWidth, ch = box.clientHeight, c = adj.canvas;
+    const s = Math.min(cw / c.width, ch / c.height); return { s, ox: (cw - c.width * s) / 2, oy: (ch - c.height * s) / 2, cw, ch };
+  }
+  function docDrawAdjust() {
+    if (!adj) return;
+    const cv = $('docAdjCanvas'), { s, ox, oy, cw, ch } = adjGeom(), dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr);
+    const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, cw, ch);
+    g.drawImage(adj.canvas, ox, oy, adj.canvas.width * s, adj.canvas.height * s);
+    const pts = adj.corners.map(p => ({ x: ox + p.x * s, y: oy + p.y * s }));
+    g.beginPath(); pts.forEach((p, i) => (i ? g.lineTo : g.moveTo).call(g, p.x, p.y)); g.closePath();
+    g.fillStyle = 'rgba(61,219,184,.15)'; g.fill(); g.lineWidth = 2.5; g.strokeStyle = '#3ddbb8'; g.stroke();
+    pts.forEach((p, i) => { const h = $('docH' + i); h.style.left = p.x + 'px'; h.style.top = p.y + 'px'; });
+  }
+  function wireAdjustHandles() {
+    for (let i = 0; i < 4; i++) {
+      const h = $('docH' + i);
+      h.onpointerdown = (e) => {
+        e.preventDefault(); h.setPointerCapture(e.pointerId);
+        const move = (ev) => { const { s, ox, oy } = adjGeom(), r = $('docAdjBox').getBoundingClientRect();
+          adj.corners[i] = { x: Math.max(0, Math.min(adj.canvas.width, (ev.clientX - r.left - ox) / s)), y: Math.max(0, Math.min(adj.canvas.height, (ev.clientY - r.top - oy) / s)) }; docDrawAdjust(); };
+        h.onpointermove = move;
+        h.onpointerup = h.onpointercancel = () => { h.onpointermove = null; };
+      };
+    }
+  }
+  function rotateCanvas(c) { const r = document.createElement('canvas'); r.width = c.height; r.height = c.width; const g = r.getContext('2d'); g.translate(r.width, 0); g.rotate(Math.PI / 2); g.drawImage(c, 0, 0); return r; }
+  async function docUsePage() {
+    const btn = document.querySelector('[data-act=docUse]'); btn.disabled = true; btn.textContent = 'Working…';
+    await new Promise(r => setTimeout(r, 30));
+    try {
+      let out = straighten(adj.canvas, adj.corners, adj.mode);
+      for (let i = 0; i < adj.rotate; i++) out = rotateCanvas(out);
+      const blob = await new Promise(r => out.toBlob(r, 'image/jpeg', adj.mode === 'colour' ? 0.85 : 0.8));
+      dscan.doc.pages.push({ id: uid(), blob, w: out.width, h: out.height });
+    } catch (ex) { toast('Couldn\'t process that page: ' + (ex.message || ex), 5000); }
+    btn.disabled = false; btn.textContent = 'Use this page';
+    const fromCamera = adj.fromCamera;
+    $('docAdjust').classList.add('hidden'); adj = { mode: adj.mode };
+    if (fromCamera) await docCamera(); else docDetails();
+  }
+  // Pages so far, and the letter's details.
+  function docDetails() {
+    const d = dscan.doc;
+    sheet(`<h2>📄 ${d.pages.length ? `${d.pages.length} page${d.pages.length === 1 ? '' : 's'}` : 'Scan a document'}</h2>
+      <div class="docpages">${d.pages.map((p, i) => `<div class="docpage"><img src="${blobUrl(p.blob)}" alt="Page ${i + 1}"><span class="pn">${i + 1}</span><button type="button" class="x" data-act="docDelPage" data-i="${i}" aria-label="Remove page ${i + 1}">✕</button></div>`).join('')}</div>
+      <div class="row2"><button class="btn" data-act="docMore">📷 Add a page</button><label class="btn">🖼 Choose photos<input type="file" accept="image/*" multiple id="docPick" hidden></label></div>
+      <form id="docForm">
+        <label>Title<input name="title" maxlength="200" placeholder="e.g. Pension award letter" value="${esc(d.title)}"></label>
+        <label>Type<select name="docType">${DOC_TYPES.map(t => `<option${t === d.docType ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></label>
+        <label>From<input name="from" maxlength="200" placeholder="e.g. Veterans UK, HMRC, the council" value="${esc(d.from)}"></label>
+        <div class="row2"><label>Date on it<input type="date" name="docDate" value="${esc(d.docDate)}"></label><label>Reply or act by<input type="date" name="actBy" value="${esc(d.actBy)}"></label></div>
+        <label>Reference<input name="ref" maxlength="120" placeholder="Account, case or claim number" value="${esc(d.ref)}"></label>
+        <label>Notes<textarea name="notes" rows="2" maxlength="5000">${esc(d.notes)}</textarea></label>
+        <button class="btn primary" type="submit" ${d.pages.length ? '' : 'disabled'}>Save document</button></form>
+      <p class="muted small">Saved on this phone until you export. On the PC it becomes one PDF in <b>Documents</b>, and its words are read so you can search them.</p>
+      <button class="btn" data-act="docCancel">${d.pages.length ? 'Discard' : 'Cancel'}</button>`);
+    const f = $('docForm');
+    const keepFields = () => { for (const k of ['title', 'docType', 'from', 'docDate', 'actBy', 'ref', 'notes']) d[k] = f.elements[k].value.trim(); };
+    f.oninput = keepFields;
+    f.onsubmit = async (e) => {
+      e.preventDefault(); keepFields();
+      if (!d.pages.length) return;
+      if (!d.title) d.title = `${d.docType}${d.from ? ' from ' + d.from : ''} (scanned ${ukDate(todayLocal())})`;
+      d.updatedAt = new Date().toISOString();
+      try { await putDoc(d); } catch (ex) { toast('Couldn\'t save: ' + (ex.message || ex), 6000); return; }
+      dscan = null; closeSheet();
+      toast(`✓ Saved: ${d.title}. It goes to the PC in your next export.`, 4500);
+      renderList();
+    };
+    $('docPick').onchange = async (e) => {
+      keepFields();
+      const files = [...e.target.files].slice(0, 30); if (!files.length) return;
+      dscan.queue = files;
+      docNextPicked();
+    };
+  }
+  async function docNextPicked() {
+    const f = dscan.queue && dscan.queue.shift();
+    if (!f) { docDetails(); return; }
+    try {
+      const bmp = await createImageBitmap(f, { imageOrientation: 'from-image' });
+      const k = Math.min(1, 4000 / Math.max(bmp.width, bmp.height));
+      const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k); c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+      closeSheet(); docAdjust(c, false);
+    } catch (ex) { toast(`${f.name}: couldn't open that picture`, 4000); docNextPicked(); }
+  }
+  async function docOpen(id) {
+    const d = docs.find(x => x.id === id); if (!d) return;
+    dscan = { doc: Object.assign({}, d, { pages: d.pages.slice() }), editing: true };
+    if (d.exportedAt) {
+      sheet(`<h2>📄 ${esc(d.title)}</h2><div class="docpages">${d.pages.map((p, i) => `<div class="docpage"><img src="${blobUrl(p.blob)}" alt="Page ${i + 1}"><span class="pn">${i + 1}</span></div>`).join('')}</div>
+        <p class="muted">${esc([d.docType, d.from, d.docDate && ukDate(d.docDate), d.ref && 'Ref ' + d.ref].filter(Boolean).join(' · '))}</p>
+        <p class="muted small">Already exported to the PC on ${ukDate(d.exportedAt.slice(0, 10))}. Change its details in OpenSafe on the PC. You can delete the phone's copy to free up space.</p>
+        <button class="btn danger" data-act="docDelete">Delete from this phone</button><button class="btn" data-act="closeSheet">Close</button>`);
+      return;
+    }
+    docDetails();
+    $('sheetBody').insertAdjacentHTML('beforeend', '<button class="btn danger" data-act="docDelete">Delete this document</button>');
+  }
+
   // ---------- events ----------
   document.addEventListener('click', async (e) => {
     const tabBtn = e.target.closest('#tabs button');
@@ -1117,8 +1389,10 @@
     }
     const invCard = e.target.closest('[data-inv]');
     if (invCard) { showInvItem(invCard.dataset.inv); return; }
-    const card = e.target.closest('.item');
+    const card = e.target.closest('.item[data-id]');
     if (card) { const it = items.find(i => i.id === card.dataset.id); if (it) showForm(it); return; }
+    const dcard = e.target.closest('[data-doc]');
+    if (dcard) { docOpen(dcard.dataset.doc); return; }
     if (e.target.id === 'sheet') { closeSheet(); return; }
     const menuOpen = !$('menu').classList.contains('hidden');
     if (menuOpen && !e.target.closest('#menu') && e.target.id !== 'menuBtn') $('menu').classList.add('hidden');
@@ -1157,6 +1431,18 @@
       case 'tripReset': if (confirm('Untick everything on this list on this phone?')) { const all = await tripTicks(); const t = inv.trips.find(x => x.id === a.dataset.id); all[t.id] = {}; for (const r of [...t.items, ...t.extras]) all[t.id][r.id] = { packed: false, back: false }; await kvSet('tripTicks', all); showTrip(t.id); } break;
       case 'stockCheck': startStockCheck(); break;
       case 'roomScan': roomStart(); break;
+      case 'docScan': docNew().catch(ex => toast(ex.message || String(ex), 5000)); break;
+      case 'docShoot': docShoot(); break;
+      case 'docDone': docStopCamera(); docDetails(); break;
+      case 'docCamCancel': docStopCamera(); docDetails(); break;
+      case 'docMore': closeSheet(); docCamera(); break;
+      case 'docDelPage': dscan.doc.pages.splice(Number(a.dataset.i), 1); docDetails(); break;
+      case 'docCancel': if (!dscan || !dscan.doc.pages.length || dscan.editing || confirm('Discard the pages you scanned?')) { dscan = null; closeSheet(); } break;
+      case 'docMode': adj.mode = a.dataset.mode; docAdjMode(); break;
+      case 'docRotate': adj.rotate = (adj.rotate + 1) % 4; $('docAdjMsg').textContent = `The finished page will be turned ${adj.rotate * 90}° clockwise.`; break;
+      case 'docRetake': { const cam = adj.fromCamera; $('docAdjust').classList.add('hidden'); adj = { mode: adj.mode }; if (cam) docCamera(); else docNextPicked(); break; }
+      case 'docUse': docUsePage(); break;
+      case 'docDelete': if (dscan && confirm('Delete this scanned document from the phone?')) { await delDoc(dscan.doc.id); dscan = null; closeSheet(); renderList(); toast('Deleted'); } break;
       case 'roomAgain': closeSheet(); roomScan(room ? room.place : '').catch(ex => { roomStop(); toast(ex.message || String(ex), 5000); }); break;
       case 'roomDone': roomFinish(); break;
       case 'roomCancel': roomStop(); room = null; break;
@@ -1211,7 +1497,9 @@
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 
   // Stop the camera when the app goes into the background
-  document.addEventListener('visibilitychange', () => { if (document.hidden && scan.cancel) scan.cancel(); if (document.hidden && roomStream) roomFinish(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden && scan.cancel) scan.cancel(); if (document.hidden && roomStream) roomFinish(); if (document.hidden && dscan && dscan.stream) { docStopCamera(); docDetails(); } });
+  wireAdjustHandles();
+  window.addEventListener('resize', () => { if (adj && adj.canvas && !$('docAdjust').classList.contains('hidden')) docDrawAdjust(); });
 
   autoOpen().finally(() => { showHome(); openFromHash(); });
 })();

@@ -1,0 +1,23 @@
+From: =?UTF-8?B?RXVyb3R1bm5lbCBMZSBTaHV0dGxl?= <bookings@example.com>
+To: mark@example.com
+Subject: =?UTF-8?Q?Booking_confirmed_=E2=80=93_ref_EZ12345?=
+Date: Tue, 4 Mar 2027 10:15:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="XYZ"
+
+--XYZ
+Content-Type: multipart/alternative; boundary="ALT"
+
+--ALT
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+<html><body><p>Your crossing on 29 June =E2=80=93 motorbike, =C2=A3105.</p><p>Bike: Harley Low Rider S</p></body></html>
+--ALT--
+--XYZ
+Content-Type: application/pdf; name="ticket.pdf"
+Content-Disposition: attachment; filename="ticket.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0=
+--XYZ--

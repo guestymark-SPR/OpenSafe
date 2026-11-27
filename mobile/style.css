@@ -130,3 +130,25 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--accent2);border-
 .roomrow .t input{margin:0;padding:8px 10px}
 .roomrow .m{font-size:12.5px;color:var(--muted)}
 .small{font-size:13px}
+
+/* Scan a document */
+#docOutline{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.shutter{width:72px;height:72px;border-radius:50%;border:5px solid #fff;background:rgba(255,255,255,.25);flex:none;padding:0}
+.shutter:active{background:#fff}
+.roombar .shutter + .btn,.roombar .btn{align-self:center}
+.docadjust{position:fixed;inset:0;z-index:60;background:#111;display:flex;flex-direction:column;color:#fff}
+.adjtop{padding:max(14px,env(safe-area-inset-top)) 16px 10px;font:500 14px system-ui,sans-serif;text-align:center}
+.adjbox{position:relative;flex:1;min-height:0;margin:0 14px;touch-action:none}
+.adjbox canvas{position:absolute;inset:0;width:100%;height:100%}
+.hnd{position:absolute;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;border:3px solid #3ddbb8;background:rgba(61,219,184,.25);touch-action:none}
+.hnd::after{content:"";position:absolute;inset:-12px}
+.adjbar{padding:12px 16px max(16px,env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:10px}
+.seg2{display:flex;gap:8px}.seg2 .btn{flex:1;padding:10px 6px;font-size:14px}.seg2 .btn:last-child{flex:0 0 56px}
+.seg2 .btn.on{background:var(--accent2);border-color:var(--accent2);color:#fff}
+.docpages{display:flex;gap:8px;overflow-x:auto;padding:2px 0 10px}
+.docpage{position:relative;flex:none}
+.docpage img{height:120px;width:auto;border-radius:6px;border:1px solid var(--line);display:block;background:#fff}
+.docpage .pn{position:absolute;left:4px;bottom:4px;background:rgba(0,0,0,.6);color:#fff;font-size:11px;border-radius:8px;padding:0 6px}
+.docpage .x{position:absolute;right:2px;top:2px;width:26px;height:26px;border-radius:50%;border:0;background:rgba(0,0,0,.6);color:#fff;font-size:13px}
+#docForm label{display:block;margin-bottom:8px}
+label.btn{display:flex;align-items:center;justify-content:center;cursor:pointer}

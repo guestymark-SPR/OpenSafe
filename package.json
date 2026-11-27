@@ -1,7 +1,7 @@
 {
   "name": "opensafe",
   "productName": "OpenSafe",
-  "version": "2.5.1",
+  "version": "2.6.0",
   "description": "Free home inventory and asset manager for Windows, with a phone link for adding items from your Android phone.",
   "main": "src/main.js",
   "author": "guestymark-SPR",
@@ -9,7 +9,7 @@
   "homepage": "https://github.com/guestymark-SPR/OpenSafe",
   "scripts": {
     "start": "electron .",
-    "test": "node --test test/store.test.js test/security.test.js",
+    "test": "node --test test/store.test.js test/security.test.js test/library.test.js",
     "dist:win": "electron-builder --win nsis portable --x64",
     "pack:win-zip": "electron-builder --win zip --x64",
     "release:patch": "npm version patch --no-git-tag-version && git commit -am \"Release v$(node -p \\\"require('./package.json').version\\\")\" && git push",
@@ -19,6 +19,7 @@
     "@tesseract.js-data/eng": "^1.0.0",
     "electron-updater": "^6.8.11",
     "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^6.5.438",
     "qrcode": "^1.5.4",
     "tesseract.js": "^7.0.0"
   },
@@ -36,7 +37,11 @@
     },
     "files": [
       "src/**/*",
-      "package.json"
+      "package.json",
+      "!node_modules/pdfjs-dist/{build,web,types,image_decoders,cmaps,standard_fonts,wasm}/**",
+      "!node_modules/pdfjs-dist/legacy/{web,image_decoders}/**",
+      "!node_modules/pdfjs-dist/**/*.map",
+      "!node_modules/pdfjs-dist/legacy/build/{pdf.min.mjs,pdf.worker.min.mjs,pdf.sandbox*.mjs,pdf.renderer*.mjs}"
     ],
     "win": {
       "icon": "build/icon.png",
@@ -83,7 +88,9 @@
       "node_modules/tesseract.js-core/**",
       "node_modules/wasm-feature-detect/**",
       "node_modules/zlibjs/**",
-      "node_modules/@tesseract.js-data/**"
+      "node_modules/@tesseract.js-data/**",
+      "node_modules/pdfjs-dist/**",
+      "node_modules/@napi-rs/**"
     ]
   },
   "repository": {

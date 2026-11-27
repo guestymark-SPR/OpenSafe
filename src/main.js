@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
 const QRCode = require('qrcode');
-const { Store, STATUSES, CONDITIONS, DOC_TYPES, POLICY_TYPES } = require('./store');
+const { Store, STATUSES, CONDITIONS, DOC_TYPES, POLICY_TYPES, LIBRARY_DOC_TYPES } = require('./store');
 const { PhoneServer } = require('./phoneServer');
 const { buildReportHtml } = require('./report');
 const { buildClaimPack } = require('./claim');
@@ -137,6 +137,7 @@ function afterUnlock() {
   }, 1500);
   if (bgEnabled()) scheduleSoon();
   try { store.purgeOldBin(); } catch (_) { /* never block opening */ }
+  readSoon();
   if (store.data.settings.phoneLinkEnabled && !phone.running) startPhone().catch(() => {});
   setTimeout(checkAutoBackup, 20000);
   if (!backupTimer) backupTimer = setInterval(checkAutoBackup, 60 * 60 * 1000);
@@ -234,6 +235,7 @@ async function importFromPath(file) {
     try { parsed = JSON.parse(fs.readFileSync(file, 'utf8')); }
     catch (_) { throw new Error('This file isn\'t an OpenSafe export, or it was damaged while being copied.'); }
     res = store.importCapture(parsed);
+    res.docs = await importPhoneDocuments(parsed);
   } catch (e) {
     if (win) dialog.showMessageBox(win, { type: 'error', title: 'Import', message: 'Couldn\'t import that file', detail: e.message });
     throw e;
@@ -246,10 +248,96 @@ async function importFromPath(file) {
   if (res.added || res.updated || res.photos || res.documents) lines.push(`${res.photos} photo${res.photos === 1 ? '' : 's'} and ${res.documents} receipt${res.documents === 1 ? '' : 's'} saved.`);
   if (res.changes) lines.push('', `${res.changes} change${res.changes === 1 ? '' : 's'} from scanning labels:`, ...res.changeLines.slice(0, 15), ...(res.changeLines.length > 15 ? [`…and ${res.changeLines.length - 15} more.`] : []));
   if (res.skippedChanges.length) lines.push('', 'Changes not applied:', ...res.skippedChanges.slice(0, 10));
+  if (res.docs.added) lines.push(`${res.docs.added} scanned document${res.docs.added === 1 ? '' : 's'} added to Documents.`);
   if (!lines.length) lines.push('Nothing new in this file. It was already imported.');
+  res.errors.push(...res.docs.errors);
   if (res.errors.length) lines.push('', 'Not imported:', ...res.errors.slice(0, 10));
-  if (win) dialog.showMessageBox(win, { type: res.errors.length ? 'warning' : 'info', title: 'Import', message: res.added ? 'Items imported from your phone' : res.changes ? 'Changes imported from your phone' : 'Import finished', detail: lines.join('\n').replace(/^\n+/, '') });
+  if (win) dialog.showMessageBox(win, { type: res.errors.length ? 'warning' : 'info', title: 'Import', message: res.added ? 'Items imported from your phone' : res.docs.added ? 'Documents imported from your phone' : res.changes ? 'Changes imported from your phone' : 'Import finished', detail: lines.join('\n').replace(/^\n+/, '') });
   return res;
+}
+
+// ---------- Documents and Data ----------
+const doctext = require('./doctext');
+const phonedocs = require('./phonedocs');
+const LIB_MAX = 500 * 1024 * 1024; // per file
+const libNote = (e) => { libChanged(); return e; };
+async function libPdfPreview(buffer) {
+  try { const r = await doctext.pdfFirstPage(buffer, 1000); return 'data:image/png;base64,' + r.png.toString('base64'); } catch (_) { return null; }
+}
+function libChanged() { if (win && !win.isDestroyed()) win.webContents.send('lib:changed'); }
+
+// Read the text inside new files, one at a time in the background, so they can be searched.
+let libReading = false;
+async function readLibraryText() {
+  if (libReading) return;
+  libReading = true;
+  try {
+    for (let guard = 0; guard < 5000; guard++) {
+      if (!store || store.isLocked()) break;
+      const next = store.libraryTextQueue()[0];
+      if (!next) break;
+      let text = '';
+      if (doctext.canRead(next.name)) {
+        try {
+          const { buffer } = store.readLibraryFile(next.id, next.fileId);
+          text = await Promise.race([doctext.extractText(next.name, buffer), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10 * 60 * 1000))]);
+        } catch (_) { text = ''; }
+      }
+      if (!store || store.isLocked()) break;
+      store.setLibraryText(next.id, next.fileId, text);
+      libChanged();
+    }
+  } finally { libReading = false; }
+}
+const readSoon = () => setTimeout(() => readLibraryText().catch(() => {}), 300);
+
+/** Add files from disk. Documents: all the files become one document. Data: one entry per file. */
+async function addLibraryPaths(kind, paths, entryId, fields) {
+  const res = { added: 0, ids: [], errors: [] };
+  const files = [];
+  for (const p of paths) {
+    try {
+      const st = fs.statSync(p);
+      if (!st.isFile()) continue;
+      if (st.size > LIB_MAX) throw new Error('over 500 MB');
+      files.push({ name: path.basename(p), buf: fs.readFileSync(p) });
+    } catch (e) { res.errors.push(`${path.basename(p)}: ${e.message}`); }
+  }
+  const detailsFor = (f) => {
+    const base = { title: f.name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ').slice(0, 200) };
+    if (/\.eml$/i.test(f.name)) { try { const i = doctext.emailInfo(f.buf); return { title: i.subject || base.title, from: i.from, docDate: i.date, folder: 'Emails' }; } catch (_) { /* use the name */ } }
+    return base;
+  };
+  if (entryId) {
+    for (const f of files) { try { store.addLibraryFile(entryId, f.name, f.buf); res.added++; } catch (e) { res.errors.push(e.message); } }
+    if (res.added) res.ids.push(entryId);
+  } else if (kind === 'document') {
+    if (files.length) {
+      const e = store.saveLibraryEntry(Object.assign({ kind: 'document' }, detailsFor(files[0]), { folder: '' }, fields || {}));
+      for (const f of files) { try { store.addLibraryFile(e.id, f.name, f.buf); res.added++; } catch (err) { res.errors.push(err.message); } }
+      if (!e.files.length) { store.deleteLibraryEntry(e.id); store.purgeLibraryEntry(e.id); } else res.ids.push(e.id);
+    }
+  } else {
+    for (const f of files) {
+      let e;
+      try {
+        e = store.saveLibraryEntry(Object.assign({ kind: 'data' }, detailsFor(f), fields || {}));
+        store.addLibraryFile(e.id, f.name, f.buf); res.added++; res.ids.push(e.id);
+      } catch (err) {
+        res.errors.push(err.message);
+        if (e) { try { store.deleteLibraryEntry(e.id); store.purgeLibraryEntry(e.id); } catch (_) { /* gone */ } }
+      }
+    }
+  }
+  libChanged(); readSoon();
+  return res;
+}
+
+/** Scanned documents from the phone (see src/phonedocs.js). */
+async function importPhoneDocuments(obj) {
+  const out = await phonedocs.importPhoneDocuments(store, obj);
+  if (out.added) { libChanged(); readSoon(); }
+  return out;
 }
 
 function createWindow() {
@@ -296,13 +384,15 @@ function snapshot() {
   data.bin = store.binView();
   delete data.settings.phoneToken;
   data.assets = store.viewAssets();
+  data.library = store.libraryView();
+  data.libBin = store.libraryBinView();
   return {
     data,
     security: store.securityState(),
     theme: readPrefs().theme || 'system',
     summary: store.summary(),
     reminders: store.reminders(),
-    lists: { statuses: STATUSES, conditions: CONDITIONS, docTypes: DOC_TYPES, policyTypes: POLICY_TYPES },
+    lists: { statuses: STATUSES, conditions: CONDITIONS, docTypes: DOC_TYPES, policyTypes: POLICY_TYPES, libraryTypes: LIBRARY_DOC_TYPES, libraryFolders: store.libraryFolders() },
     dataDir: DATA_DIR,
     platform: process.platform,
     version: require('../package.json').version
@@ -392,6 +482,63 @@ function registerIpc() {
   };
 
   // ---- insurance policies ----
+  // Documents and Data
+  const libFilters = [{ name: 'All files', extensions: ['*'] }, { name: 'Documents', extensions: ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'heic', 'doc', 'docx', 'odt', 'rtf', 'txt', 'xls', 'xlsx', 'ods', 'csv', 'ppt', 'pptx', 'eml', 'msg', 'htm', 'html'] }];
+  h('lib:pick', async (kind, entryId) => {
+    const r = await dialog.showOpenDialog(win, { title: entryId ? 'Add files' : kind === 'document' ? 'Add a document (choose all its pages or files)' : 'Add files to Data', properties: ['openFile', 'multiSelections'], filters: libFilters });
+    if (r.canceled) return { added: 0, ids: [], errors: [] };
+    return addLibraryPaths(kind === 'data' ? 'data' : 'document', r.filePaths.slice(0, 200), entryId ? String(entryId) : '');
+  });
+  h('lib:addPaths', (kind, paths, entryId) => {
+    if (!Array.isArray(paths)) throw new Error('No files');
+    return addLibraryPaths(kind === 'data' ? 'data' : 'document', paths.slice(0, 200).map(String), entryId ? String(entryId) : '');
+  });
+  h('lib:save', (e) => libNote(store.saveLibraryEntry(e || {})));
+  h('lib:get', (id) => store.getLibraryEntry(String(id)));
+  h('lib:text', (id, fileId) => store.libraryText(String(id), String(fileId)));
+  h('lib:search', (kind, q) => store.librarySearch(kind === 'data' ? 'data' : 'document', String(q || '').slice(0, 200)));
+  h('lib:removeFile', (id, fileId) => libNote(store.removeLibraryFile(String(id), String(fileId))));
+  h('lib:delete', (id) => libNote(store.deleteLibraryEntry(String(id))));
+  h('lib:restore', (id) => libNote(store.restoreLibraryEntry(String(id))));
+  h('lib:purge', async (id) => {
+    const e = store.libraryBinView().find(x => x.id === String(id));
+    if (!e) return false;
+    const r = await dialog.showMessageBox(win, { type: 'warning', buttons: ['Delete for good', 'Cancel'], defaultId: 1, cancelId: 1, title: 'Delete for good', message: `Delete "${e.title}" for good?`, detail: `Its ${e.files} file${e.files === 1 ? '' : 's'} will be removed from this PC. This can't be undone (backups you made earlier still have it).` });
+    if (r.response !== 0) return false;
+    return libNote(store.purgeLibraryEntry(e.id));
+  });
+  h('lib:vault', (id, to) => libNote(store.moveLibraryToVault(String(id), !!to)));
+  h('lib:open', async (id, fileId) => {
+    const { name, buffer } = store.readLibraryFile(String(id), String(fileId));
+    const dir = path.join(OPEN_DIR, crypto.randomBytes(6).toString('hex'));
+    fs.mkdirSync(dir, { recursive: true });
+    const p = path.join(dir, String(name).replace(/[\\/:*?"<>|]/g, '_').slice(0, 120) || 'file');
+    fs.writeFileSync(p, buffer);
+    const err = await shell.openPath(p);
+    if (err) throw new Error(err);
+    return true;
+  });
+  h('lib:saveCopy', async (id, fileId) => {
+    const { name, buffer } = store.readLibraryFile(String(id), String(fileId));
+    const r = await dialog.showSaveDialog(win, { title: 'Save a copy', defaultPath: path.join(app.getPath('documents'), name) });
+    if (r.canceled || !r.filePath) return null;
+    fs.writeFileSync(r.filePath, buffer);
+    return r.filePath;
+  });
+  h('lib:preview', async (id, fileId) => {
+    // A small picture of an image or the first page of a PDF, for the list and the document page.
+    const { name, buffer } = store.readLibraryFile(String(id), String(fileId));
+    const ext = path.extname(name).toLowerCase();
+    if (['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext)) {
+      const img = nativeImage.createFromBuffer(buffer);
+      if (img.isEmpty()) return null;
+      const sz = img.getSize(), k = Math.min(1, 900 / Math.max(sz.width, sz.height));
+      return img.resize({ width: Math.round(sz.width * k), height: Math.round(sz.height * k) }).toDataURL();
+    }
+    if (ext === '.pdf') return libPdfPreview(buffer);
+    return null;
+  });
+  h('lib:readNow', () => { readSoon(); return true; });
   h('policy:save', (p) => store.savePolicy(p));
   h('policy:delete', async (id) => {
     const p = store.data.policies.find(x => x.id === id);
@@ -432,7 +579,7 @@ function registerIpc() {
 
   // ---- vault ----
   h('vault:setup', async (pin) => { await store.setupVault(pin); sendSecurity(); return true; });
-  h('vault:unlock', async (pin) => { await store.unlockVault(pin); sendSecurity(); return true; });
+  h('vault:unlock', async (pin) => { await store.unlockVault(pin); sendSecurity(); readSoon(); return true; });
   h('vault:lock', () => { store.lockVault(); cleanOpenDir(); sendSecurity(); return true; });
   h('vault:changePin', (cur, next) => store.changePin(cur, next));
   h('vault:recoverPin', async (rk, pin) => { await pwResult(() => store.recoverVaultPin(rk, pin)); sendSecurity(); return true; });

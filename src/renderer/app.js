@@ -476,16 +476,273 @@
   }
   const vaultPill = (a) => a.inVault ? `<span class="pill vault">${icon('lock')}Vault</span>` : '';
 
+  // ---------- Documents and Data ----------
+  // Documents: scanned letters and papers. Data: saved emails, PDFs, Word files, photos and anything else.
+  const LIB = {
+    docs: { kind: 'document', title: 'Documents', one: 'document', many: 'documents', add: 'Add document…' },
+    files: { kind: 'data', title: 'Data', one: 'entry', many: 'entries', add: 'Add files…' }
+  };
+  const libKindPage = (kind) => kind === 'data' ? 'files' : 'docs';
+  const libEntries = (kind) => (state.snap.data.library || []).filter(e => e.kind === kind);
+  const libEntry = (id) => (state.snap.data.library || []).find(e => e.id === id);
+  const fileSize = (n) => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' KB' : n + ' bytes';
+  const fileKind = (name) => {
+    const x = (name.match(/\.([^.]+)$/) || [, ''])[1].toLowerCase();
+    if (x === 'pdf') return ['PDF', 'file'];
+    if (['eml', 'msg'].includes(x)) return ['Email', 'mail'];
+    if (['doc', 'docx', 'odt', 'rtf', 'txt', 'md'].includes(x)) return ['Document', 'letter'];
+    if (['xls', 'xlsx', 'ods', 'csv'].includes(x)) return ['Spreadsheet', 'sheet'];
+    if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'heic', 'bmp', 'tif', 'tiff'].includes(x)) return ['Photo', 'image'];
+    if (['mp4', 'mov', 'm4v', 'webm', 'avi', 'mkv', '3gp'].includes(x)) return ['Video', 'video'];
+    if (['zip', '7z', 'rar'].includes(x)) return ['Archive', 'box'];
+    return [x ? x.toUpperCase() : 'File', 'file'];
+  };
+  const previewable = (name) => /\.(pdf|jpe?g|png|webp|gif)$/i.test(name);
+  state.libThumbs = state.libThumbs || {};
+  function libThumb(e, cls = 'lthumb') {
+    const f = e.files.find(x => previewable(x.name));
+    if (!f) { const k = fileKind((e.files[0] || { name: '' }).name); return `<div class="${cls} ph">${icon(e.files.length ? k[1] : 'letter')}</div>`; }
+    const t = state.libThumbs[f.id];
+    if (t) return `<img class="${cls}" src="${t}" alt="">`;
+    return `<div class="${cls} ph" data-libthumb="${esc(e.id)}" data-libfile="${esc(f.id)}">${icon(fileKind(f.name)[1])}</div>`;
+  }
+  // Load previews for whatever is on screen (a few at a time).
+  async function loadLibThumbs() {
+    const todo = $$('[data-libthumb]').slice(0, 40);
+    for (const el of todo) {
+      const id = el.dataset.libthumb, fid = el.dataset.libfile;
+      if (state.libThumbs[fid] === undefined) {
+        state.libThumbs[fid] = null;
+        try { state.libThumbs[fid] = await keep.libPreview(id, fid); } catch (_) { state.libThumbs[fid] = null; }
+      }
+      const url = state.libThumbs[fid];
+      for (const t of $$(`[data-libfile="${CSS.escape(fid)}"]`)) if (url) { const im = document.createElement('img'); im.className = t.className.replace(/\bph\b/, '').trim(); im.src = url; im.alt = ''; t.replaceWith(im); }
+    }
+  }
+  function libFiltered(kind) {
+    const f = state.lf || {};
+    let list = libEntries(kind);
+    if (f.q && state.libHits) list = list.filter(e => state.libHits.has(e.id));
+    if (kind === 'document' && f.type) list = list.filter(e => e.docType === f.type);
+    if (kind === 'data' && f.folder) list = list.filter(e => (f.folder === '(none)' ? !e.folder : e.folder === f.folder));
+    if (f.vault === 'only') list = list.filter(e => e.inVault);
+    const by = f.sort || 'added';
+    const key = (e) => by === 'title' ? e.title.toLowerCase() : by === 'date' ? (e.docDate || e.createdAt.slice(0, 10)) : e.createdAt;
+    list.sort((a, b) => by === 'title' ? key(a).localeCompare(key(b), 'en-GB') : key(b).localeCompare(key(a)));
+    return list;
+  }
+  function viewLibrary(page) {
+    const L = LIB[page], kind = L.kind;
+    const all = libEntries(kind);
+    if (state.lfPage !== page) { state.lf = { sort: 'added' }; state.libHits = null; state.lfPage = page; }
+    const f = state.lf;
+    const binN = (state.snap.data.libBin || []).filter(b => b.kind === kind).length;
+    const vaultLocked = state.snap.security.vault.exists && !state.snap.security.vault.unlocked;
+    const head = `<div class="head"><h1>${L.title}</h1><span class="sub">${all.length} ${all.length === 1 ? L.one : L.many}</span><span class="spacer"></span>
+      ${binN ? `<button class="btn" data-action="libBin" data-kind="${kind}">${icon('trash')}Deleted (${binN})</button>` : ''}
+      <button class="btn primary" data-action="libAdd" data-kind="${kind}">${icon('plus')}${L.add}</button></div>`;
+    const intro = kind === 'document'
+      ? `<p class="lead">Keep an electronic copy of important letters and papers: bills, bank and pension letters, medical and legal letters, certificates. OpenSafe reads the words in them so you can search, and you can set a "reply by" date to get a reminder.</p>`
+      : `<p class="lead">Keep files you want safe and in one place: saved emails (.eml or .msg), PDFs, Word and Excel files, photos and anything else. OpenSafe reads the words in most of them so you can search.</p>`;
+    if (!all.length) return head + intro + `<div class="card empty droplib" id="libDrop" style="max-width:760px">
+        <p style="margin-top:0"><b>Nothing here yet.</b> Drag files onto this box, or use <b>${L.add}</b>.</p>
+        ${kind === 'document' ? `<p class="muted" style="margin-bottom:0">${icon('phone')}To scan a paper letter, use OpenSafe Capture on your phone: tap <b>📄 Scan a document</b>, photograph each page, then <b>Export to PC</b> and import the file here (<b>Phone app → Import from phone…</b>). Each scan becomes one PDF, and its words are read on this PC.</p>` : `<p class="muted" style="margin-bottom:0">To keep an email, save it from your email program as a file (in Outlook: <b>File → Save As</b>, or drag the email to a folder) and add that file here. The text of .eml emails can be searched; .msg files are stored but not searched.</p>`}
+        ${vaultLocked ? `<p class="note" style="margin-bottom:0">Some ${L.many} may be in the vault. <a href="#" data-nav="vault">Unlock the vault</a> to see them.</p>` : ''}</div>`;
+    const types = state.snap.lists.libraryTypes || [];
+    const folders = [...new Set(all.map(e => e.folder).filter(Boolean))].sort();
+    const reading = all.reduce((n, e) => n + (e.textPending || 0), 0);
+    return head + `<div class="libbar">
+        <div class="sidesearch libsearch">${icon('search')}<input id="libQ" type="search" placeholder="Search titles, senders, references and the words inside" value="${esc(f.q || '')}" autocomplete="off"></div>
+        ${kind === 'document' ? `<select id="libType"><option value="">All types</option>${types.filter(t => all.some(e => e.docType === t)).map(t => opt(t, t, f.type || '')).join('')}</select>`
+          : `<select id="libFolder"><option value="">All folders</option>${folders.map(x => opt(x, x, f.folder || '')).join('')}${all.some(e => !e.folder) ? opt('(none)', 'No folder', f.folder || '') : ''}</select>`}
+        <select id="libSort">${opt('added', 'Newest added', f.sort)}${opt('date', kind === 'document' ? 'Date on the letter' : 'Date', f.sort)}${opt('title', 'Title A–Z', f.sort)}</select>
+      </div>
+      ${reading ? `<p class="faint small" style="margin:-6px 0 10px">${icon('search')}Reading the words in ${reading} file${reading === 1 ? '' : 's'}… They can be searched once this finishes.</p>` : ''}
+      ${vaultLocked ? `<p class="faint small" style="margin:-6px 0 10px">${icon('lock')}Anything in the vault is hidden. <a href="#" data-nav="vault">Unlock the vault</a> to see and search it.</p>` : ''}
+      <div id="libList" class="droplib">${libListHtml(kind)}</div>`;
+  }
+  function libListHtml(kind) {
+    const list = libFiltered(kind);
+    if (!list.length) return `<div class="card empty">${state.lf.q ? `Nothing matches "<b>${esc(state.lf.q)}</b>".` : 'Nothing matches.'}</div>`;
+    return `<div class="card" style="padding:0"><table class="list libtable"><thead><tr><th style="width:64px"></th><th>Title</th><th>${kind === 'document' ? 'Type' : 'Folder'}</th><th>From</th><th>Date</th><th class="r">Files</th></tr></thead><tbody>
+      ${list.map(e => {
+        const hit = state.libHits && state.libHits.get(e.id);
+        const due = e.actBy && !e.actDone ? `<span class="pill ${e.actBy < new Date().toISOString().slice(0, 10) ? 'bad' : 'warn'}">${icon('calendar')}Reply by ${ukDate(e.actBy)}</span>` : '';
+        return `<tr data-action="libOpen" data-lib="${esc(e.id)}"><td>${libThumb(e)}</td>
+          <td><b>${esc(e.title)}</b> ${e.inVault ? `<span class="pill vault">${icon('lock')}Vault</span>` : ''} ${due}
+            ${e.ref ? `<div class="meta">Ref ${esc(e.ref)}</div>` : ''}${hit ? `<div class="meta snippet">…${esc(hit)}…</div>` : ''}</td>
+          <td class="meta">${kind === 'document' ? esc(e.docType) : e.folder ? esc(e.folder) : `<span class="faint">${esc(fileKind((e.files[0] || { name: '' }).name)[0])}</span>`}</td>
+          <td class="meta">${esc(e.from || '')}</td>
+          <td class="meta nowrap">${e.docDate ? ukDate(e.docDate) : `<span class="faint">Added ${ukDate(e.createdAt)}</span>`}</td>
+          <td class="r meta">${e.files.length}${e.textPending ? ` <span class="faint" title="Reading the words">…</span>` : ''}</td></tr>`;
+      }).join('')}</tbody></table></div>`;
+  }
+  function refreshLibList() { const kind = LIB[state.view] && LIB[state.view].kind; if (kind && $('#libList')) { $('#libList').innerHTML = libListHtml(kind); loadLibThumbs(); } }
+  let libSearchTimer = null;
+  function wireLibrary() {
+    const kind = LIB[state.view].kind;
+    const q = $('#libQ');
+    if (q) q.oninput = () => {
+      clearTimeout(libSearchTimer);
+      libSearchTimer = setTimeout(async () => {
+        state.lf.q = q.value.trim();
+        if (!state.lf.q) state.libHits = null;
+        else { const r = await keep.libSearch(kind, state.lf.q).catch(() => []); state.libHits = new Map(r.map(x => [x.id, x.snippet])); }
+        refreshLibList();
+      }, 200);
+    };
+    for (const [id, key] of [['#libType', 'type'], ['#libFolder', 'folder'], ['#libSort', 'sort']]) if ($(id)) $(id).onchange = (e) => { state.lf[key] = e.target.value; refreshLibList(); };
+    wireLibDrop($('#libDrop') || $('#libList'), kind, '');
+    loadLibThumbs();
+  }
+  function wireLibDrop(z, kind, entryId) {
+    if (!z) return;
+    z.ondragover = (e) => { e.preventDefault(); z.classList.add('over'); };
+    z.ondragleave = () => z.classList.remove('over');
+    z.ondrop = async (e) => {
+      e.preventDefault(); z.classList.remove('over');
+      if (!e.dataTransfer.files.length) return;
+      const r = await run(() => keep.libAddFiles(kind, e.dataTransfer.files, entryId));
+      await libAfterAdd(r, kind, entryId);
+    };
+  }
+  async function libAfterAdd(r, kind, entryId) {
+    if (!r) return;
+    if (r.errors.length) toast(`Added ${r.added}. Not added: ${r.errors.join('; ')}`, 8000);
+    else if (r.added) toast(`✓ Added ${r.added} file${r.added === 1 ? '' : 's'}`);
+    await refresh();
+    // a new document: open it and ask for its details
+    if (!entryId && kind === 'document' && r.ids.length === 1) { go('libitem', { libId: r.ids[0] }); libForm(libEntry(r.ids[0]), true); }
+  }
+
+  function viewLibItem() {
+    const e = libEntry(state.libId);
+    if (!e) return `<div class="head"><button class="btn ghost" data-nav="docs">${icon('back')}Back</button></div><div class="card empty">This has been deleted, or it's in the vault and the vault is locked.</div>`;
+    const L = LIB[libKindPage(e.kind)];
+    const first = e.files.find(x => previewable(x.name));
+    const big = first ? (state.libThumbs[first.id] ? `<img class="libbig" src="${state.libThumbs[first.id]}" alt="" data-zoom="${state.libThumbs[first.id]}">` : `<div class="libbig ph" data-libthumb="${esc(e.id)}" data-libfile="${esc(first.id)}">${icon('file')}</div>`) : '';
+    const row = (label, v) => v ? `<div class="lkv"><span class="k">${label}</span><span class="v">${v}</span></div>` : '';
+    const today = new Date().toISOString().slice(0, 10);
+    return `<div class="head"><button class="btn ghost" data-nav="${libKindPage(e.kind)}">${icon('back')}${L.title}</button><span class="spacer"></span>
+      <span class="menuwrap"><button class="btn" data-action="moreMenu">${icon('more')}More</button><div class="menu hidden">
+        ${state.snap.security.vault.unlocked ? `<button data-action="libVault" data-to="${e.inVault ? '' : '1'}">${icon(e.inVault ? 'unlock' : 'lock')}${e.inVault ? 'Move out of the vault' : 'Move into the vault'}</button>` : state.snap.security.vault.exists ? '' : ''}
+        <button data-action="libDel" class="danger">${icon('trash')}Delete</button></div></span>
+      <button class="btn primary" data-action="libEdit">${icon('edit')}Edit details</button></div>
+    <div class="dhead libhead"><div><div class="meta">${esc(e.kind === 'document' ? e.docType : (e.folder || 'Data'))}${e.from ? ' · ' + esc(e.from) : ''}</div><h1 style="margin:2px 0 6px">${esc(e.title)}</h1>
+      <div>${e.inVault ? `<span class="pill vault">${icon('lock')}Vault</span> ` : ''}${e.actBy ? (e.actDone ? `<span class="pill good">${icon('check')}Done (was due ${ukDate(e.actBy)})</span>` : `<span class="pill ${e.actBy < today ? 'bad' : 'warn'}">${icon('calendar')}Reply or act by ${ukDate(e.actBy)}</span>`) : ''}</div></div></div>
+    <div class="dash"><div class="dash-main">
+      ${!big && e.files.some(x => /\.eml$/i.test(x.name)) ? `<div class="card"><h2>${icon('mail')}Message</h2><pre class="libtext libmsg" id="libMsg">Loading…</pre></div>` : ''}
+      ${big ? `<div class="card libpreview">${big}<p class="faint small" style="margin:8px 0 0">${first.name.toLowerCase().endsWith('.pdf') ? 'First page. ' : ''}Click to enlarge, or open the file below.</p></div>` : ''}
+      <div class="card" id="libFiles"><h2>${icon('file')}Files <span class="faint">(${e.files.length})</span></h2>
+        ${e.files.length ? `<div class="rows">${e.files.map(x => { const k = fileKind(x.name); return `<div class="rowi libfile">${icon(k[1])}<span style="flex:1;min-width:0"><b class="ell">${esc(x.name)}</b><div class="meta">${k[0]} · ${fileSize(x.size || 0)} · ${(e.textByFile || {})[x.id] !== undefined ? '' : ''}<span data-textstate="${esc(x.id)}">${libTextState(e, x)}</span></div></span>
+          <button class="btn small" data-action="libFileOpen" data-file="${esc(x.id)}">Open</button>
+          <span class="menuwrap"><button class="btn small" data-action="moreMenu">${icon('more')}</button><div class="menu hidden">
+            <button data-action="libFileCopy" data-file="${esc(x.id)}">${icon('download')}Save a copy…</button>
+            <button data-action="libFileText" data-file="${esc(x.id)}">${icon('search')}Show the words found</button>
+            <button data-action="libFileRemove" data-file="${esc(x.id)}" class="danger">${icon('trash')}Remove this file</button></div></span></div>`; }).join('')}</div>` : '<p class="muted">No files.</p>'}
+        <div class="drop" id="libDrop2">Drag more files here, or <a href="#" data-action="libAddMore">choose files…</a>${e.kind === 'document' ? ' (for example the other pages of the letter)' : ''}</div></div>
+    </div><div class="dash-side">
+      <div class="card"><h2>Details</h2>
+        ${row(e.kind === 'document' ? 'Type' : 'Folder', esc(e.kind === 'document' ? e.docType : e.folder))}${row('From', esc(e.from))}${row(e.kind === 'document' ? 'Date on it' : 'Date', e.docDate ? ukDate(e.docDate) : '')}${row('Reference', esc(e.ref))}
+        ${row('Tags', e.tags.map(t => `<span class="pill">${esc(t)}</span>`).join(' '))}
+        ${e.notes ? `<div class="lkv" style="display:block"><span class="k">Notes</span><div class="v" style="white-space:pre-wrap;margin-top:4px">${esc(e.notes)}</div></div>` : ''}
+        ${row('Added', ukDate(e.createdAt) + (e.source === 'phone' ? ' · scanned on the phone' : ''))}
+        ${e.actBy && !e.actDone ? `<p style="margin:12px 0 0"><button class="btn small" data-action="libDone">${icon('check')}Mark as done</button></p>` : ''}
+        ${!e.from && !e.docDate && !e.ref && e.kind === 'document' ? `<p class="muted small" style="margin:10px 0 0">Add who it's from, its date and any reference with <b>Edit details</b>.</p>` : ''}</div>
+    </div></div>`;
+  }
+  function libTextState(e, x) {
+    if (!(e.textByFile && x.id in e.textByFile)) return 'reading the words…';
+    const n = e.textByFile[x.id];
+    return n > 20 ? 'words can be searched' : /\.(msg|doc|xls|ppt|zip|mp4|mov)$/i.test(x.name) ? 'words can\'t be read from this kind of file' : 'no words found';
+  }
+  async function loadLibItem() {
+    try {
+      const full = await keep.libGet(state.libId);
+      const i = (state.snap.data.library || []).findIndex(x => x.id === full.id);
+      if (i >= 0) state.snap.data.library[i] = Object.assign({}, state.snap.data.library[i], { textByFile: full.textByFile });
+      const e = libEntry(state.libId);
+      for (const x of e.files) { const el = $(`[data-textstate="${CSS.escape(x.id)}"]`); if (el) el.textContent = libTextState(e, x); }
+    } catch (_) { /* deleted or locked */ }
+    wireLibDrop($('#libDrop2'), (libEntry(state.libId) || {}).kind, state.libId);
+    const m = $('#libMsg'), em = libEntry(state.libId), ef = em && em.files.find(x => /\.eml$/i.test(x.name));
+    if (m && ef) keep.libText(em.id, ef.id).then(t => { m.textContent = t && t.trim() ? t : 'The message text will appear here once OpenSafe has read the file.'; }).catch(() => { m.textContent = ''; });
+    loadLibThumbs().then(() => { const e = libEntry(state.libId); const f = e && e.files.find(x => previewable(x.name)); const im = f && state.libThumbs[f.id]; const b = $('.libbig'); if (im && b && b.tagName === 'IMG') b.dataset.zoom = im; });
+  }
+  function libForm(e, isNew) {
+    const doc = e.kind === 'document';
+    const types = state.snap.lists.libraryTypes || [];
+    const folders = state.snap.lists.libraryFolders || [];
+    openModal(`<form class="dialog" id="libForm"><div class="dh"><h2>${isNew ? (doc ? 'New document' : 'New entry') : 'Edit details'}</h2></div><div class="db">
+      ${isNew ? `<p class="muted s3" style="margin-top:0">Fill in what you know; everything except the title is optional. You can change it later.</p>` : ''}
+      <label class="f s2">Title<input name="title" maxlength="200" required value="${esc(e.title)}"></label>
+      ${doc ? `<label class="f">Type<select name="docType">${types.map(t => opt(t, t, e.docType)).join('')}</select></label>` : `<label class="f">Folder<input name="folder" list="libFolders" maxlength="120" value="${esc(e.folder)}" placeholder="e.g. Emails, Tax, Holiday"><datalist id="libFolders">${folders.map(x => `<option value="${esc(x)}">`).join('')}</datalist></label>`}
+      <label class="f">From<input name="from" maxlength="200" value="${esc(e.from)}" placeholder="${doc ? 'e.g. Veterans UK, HMRC, the council' : ''}"></label>
+      <label class="f">${doc ? 'Date on it' : 'Date'}<input type="date" name="docDate" value="${esc(e.docDate)}"></label>
+      <label class="f">Reference<input name="ref" maxlength="120" value="${esc(e.ref)}" placeholder="Account, case or claim number"></label>
+      <label class="f">Reply or act by<input type="date" name="actBy" value="${esc(e.actBy)}"><span class="faint small">Shows in Reminders until marked done</span></label>
+      <label class="f" style="align-self:center"><span class="switch"><input type="checkbox" name="actDone" ${e.actDone ? 'checked' : ''}> Done</span></label>
+      <label class="f s3">Tags<input name="tags" maxlength="400" value="${esc(e.tags.join(', '))}" placeholder="Separate with commas"></label>
+      <label class="f s3">Notes<textarea name="notes" rows="4" maxlength="5000">${esc(e.notes)}</textarea></label></div>
+      <div class="df"><button type="button" class="btn" data-action="close">${isNew ? 'Later' : 'Cancel'}</button><button class="btn primary" type="submit">Save</button></div></form>`);
+    $('#libForm').onsubmit = async (ev) => {
+      ev.preventDefault();
+      const fd = new FormData(ev.target), v = Object.fromEntries(fd.entries());
+      v.id = e.id; v.actDone = fd.get('actDone') === 'on'; v.tags = String(v.tags || '').split(',');
+      const ok = await run(() => keep.libSave(v), '✓ Saved');
+      if (ok) { closeModal(); await refresh(); }
+    };
+  }
+  function libBinForm(kind) {
+    const list = (state.snap.data.libBin || []).filter(b => b.kind === kind);
+    openModal(`<div class="dialog narrow"><div class="dh"><h2>Deleted ${kind === 'document' ? 'documents' : 'data'}</h2></div><div class="db"><div class="s3">
+      <p class="muted" style="margin-top:0">Kept for 30 days, then deleted for good.</p>
+      ${list.length ? `<div class="rows">${list.map(b => `<div class="rowi"><span style="flex:1"><b>${esc(b.title)}</b><div class="meta">${b.files} file${b.files === 1 ? '' : 's'} · deleted ${ukDate(b.deletedAt)}${b.inVault ? ' · vault' : ''}</div></span>
+        <button class="btn small" data-action="libRestore" data-lib="${esc(b.id)}">Restore</button><button class="btn small danger" data-action="libPurge" data-lib="${esc(b.id)}">Delete for good</button></div>`).join('')}</div>` : '<p class="muted">Nothing here.</p>'}</div></div>
+      <div class="df"><button class="btn" data-action="close">Close</button></div></div>`);
+  }
+  async function libTextModal(id, fileId) {
+    const t = await run(() => keep.libText(id, fileId));
+    if (t === undefined) return;
+    openModal(`<div class="dialog"><div class="dh"><h2>Words found in this file</h2></div><div class="db"><div class="s3">
+      ${t && t.trim() ? `<p class="faint small" style="margin-top:0">Read automatically, so there may be mistakes, especially in handwriting or poor photos. This is what search looks through.</p><pre class="libtext">${esc(t)}</pre>` : '<p class="muted">No words were found in this file. It may be a photo without writing, a handwritten page, or a kind of file OpenSafe can\'t read (such as Outlook .msg or old .doc files).</p>'}</div></div>
+      <div class="df">${t && t.trim() ? '<button class="btn" data-action="libCopyText">Copy text</button>' : ''}<button class="btn" data-action="close">Close</button></div></div>`);
+    state.libTextCopy = t;
+  }
+  async function libAction(act) {
+    const e = state.libId && libEntry(state.libId);
+    switch (act.dataset.action) {
+      case 'libAdd': { const kind = act.dataset.kind; const r = await run(() => keep.libPick(kind, '')); await libAfterAdd(r, kind, ''); return true; }
+      case 'libAddMore': { if (!e) return true; const r = await run(() => keep.libPick(e.kind, e.id)); await libAfterAdd(r, e.kind, e.id); return true; }
+      case 'libOpen': go('libitem', { libId: act.dataset.lib }); return true;
+      case 'libEdit': if (e) libForm(e, false); return true;
+      case 'libDone': if (e) { await run(() => keep.libSave({ id: e.id, actDone: true }), '✓ Marked as done'); await refresh(); } return true;
+      case 'libDel': if (e && confirm(`Delete "${e.title}"?\n\nIt goes to Deleted ${e.kind === 'document' ? 'documents' : 'data'} for 30 days, so you can restore it.`)) { const ok = await run(() => keep.libDelete(e.id)); if (ok) { toast('Deleted. You can restore it for 30 days.', 4000); await refresh(); go(libKindPage(e.kind)); } } return true;
+      case 'libVault': if (e) { const to = !!act.dataset.to; const ok = await run(() => keep.libVault(e.id, to), to ? '✓ Moved into the vault' : '✓ Moved out of the vault'); if (ok) await refresh(); } return true;
+      case 'libFileOpen': if (e) await run(() => keep.libOpen(e.id, act.dataset.file)); return true;
+      case 'libFileCopy': if (e) { const p = await run(() => keep.libSaveCopy(e.id, act.dataset.file)); if (p) toast('✓ Copy saved'); } return true;
+      case 'libFileText': if (e) await libTextModal(e.id, act.dataset.file); return true;
+      case 'libCopyText': await run(() => keep.copyPlain(state.libTextCopy || ''), '✓ Copied'); return true;
+      case 'libFileRemove': if (e) { const f = e.files.find(x => x.id === act.dataset.file); if (f && confirm(`Remove "${f.name}" from this ${e.kind === 'document' ? 'document' : 'entry'}?\n\nThis deletes the file from OpenSafe and can't be undone. (Use Save a copy first if you want to keep it.)`)) { await run(() => keep.libRemoveFile(e.id, f.id), 'File removed'); await refresh(); } } return true;
+      case 'libBin': libBinForm(act.dataset.kind); return true;
+      case 'libRestore': { const ok = await run(() => keep.libRestore(act.dataset.lib), '✓ Restored'); if (ok) { await refresh(); const k = (state.snap.data.library.find(x => x.id === act.dataset.lib) || {}).kind; libBinForm(k || LIB[state.view] && LIB[state.view].kind || 'document'); } return true; }
+      case 'libPurge': { const ok = await run(() => keep.libPurge(act.dataset.lib)); if (ok) { toast('Deleted for good'); await refresh(); libBinForm(LIB[state.view] ? LIB[state.view].kind : 'document'); } return true; }
+    }
+    return false;
+  }
+
   // ---------- render ----------
   function render() {
     if (!state.snap) return;
-    const navView = state.view === 'item' || state.view === 'bin' ? 'items' : state.view;
+    const navView = state.view === 'item' || state.view === 'bin' ? 'items' : state.view === 'libitem' ? libKindPage((libEntry(state.libId) || {}).kind) : state.view;
     $$('.side [data-nav]').forEach(b => b.classList.toggle('on', b.dataset.nav === navView));
     const v = $('#view');
-    const views = { dashboard: viewDashboard, items: viewItems, item: viewItem, reminders: viewReminders, phone: viewPhone, reports: viewReports, settings: viewSettings, vault: viewVault, policies: viewPolicies, bin: viewBin, trips: viewTrips, places: viewPlaces, data: viewData };
+    const views = { dashboard: viewDashboard, items: viewItems, item: viewItem, reminders: viewReminders, phone: viewPhone, reports: viewReports, settings: viewSettings, vault: viewVault, policies: viewPolicies, bin: viewBin, trips: viewTrips, places: viewPlaces, data: viewData, docs: () => viewLibrary('docs'), files: () => viewLibrary('files'), libitem: viewLibItem };
     v.innerHTML = (views[state.view] || viewDashboard)();
     if (state.view === 'phone') { loadCapture(); loadPhone(); const d = $('#wifiDetails'); if (d) d.ontoggle = () => { state.wifiOpen = d.open; }; }
     if (state.view === 'item') wireDrop();
+    if (state.view === 'docs' || state.view === 'files') wireLibrary();
+    if (state.view === 'libitem') loadLibItem();
     if (state.view === 'vault') wireVaultForm();
     if (state.view === 'reports') spendingCard();
     if (state.view === 'trips' && $('#extraForm')) $('#extraForm').onsubmit = async (e) => { e.preventDefault(); const v = e.target.text.value; if (!v.trim()) return; await run(() => keep.addTripExtra(state.tripId, v)); await refresh(); };
@@ -521,7 +778,7 @@
     <div class="dash">
       <div class="dash-main">
         <div class="card"><h2>${icon('bell')}Coming up<span class="spacer"></span><a href="#" class="meta" data-nav="reminders" style="font-weight:500">All reminders</a></h2>
-          ${rem.length ? `<div class="rows">${rem.map(r => `<div class="rowi" ${r.policyId ? 'data-nav="policies"' : `data-open="${r.assetId}"`}>
+          ${rem.length ? `<div class="rows">${rem.map(r => `<div class="rowi" ${r.libraryId ? `data-action="libOpen" data-lib="${esc(r.libraryId)}"` : r.policyId ? 'data-nav="policies"' : `data-open="${r.assetId}"`}>
               <span class="pill ${r.daysLeft < 0 ? 'bad' : 'warn'}">${esc(r.kind)}</span>
               <span style="flex:1">${esc(r.assetName)}</span><span class="meta nowrap">${dueText(r.daysLeft)}</span></div>`).join('')}</div>`
             : '<div class="muted">Nothing due in the next ' + state.snap.data.settings.reminderDays + ' days.</div>'}</div>
@@ -925,9 +1182,9 @@
     const r = state.snap.reminders;
     const over = r.filter(x => x.daysLeft < 0), soon = r.filter(x => x.daysLeft >= 0);
     const block = (title, list, cls) => `<div class="card" style="margin-bottom:16px"><h2>${title}</h2>${list.length ? `<div class="rows">${list.map(x => `
-      <div class="rowi" ${x.policyId ? 'data-nav="policies"' : `data-open="${x.assetId}" data-opentab="${x.source === 'item' ? 'overview' : 'service'}"`}><span class="pill ${cls}">${esc(x.kind)}</span><span style="flex:1"><b>${esc(x.assetName)}</b></span>
+      <div class="rowi" ${x.libraryId ? `data-action="libOpen" data-lib="${esc(x.libraryId)}"` : x.policyId ? 'data-nav="policies"' : `data-open="${x.assetId}" data-opentab="${x.source === 'item' ? 'overview' : 'service'}"`}><span class="pill ${cls}">${esc(x.kind)}</span><span style="flex:1"><b>${esc(x.assetName)}</b></span>
       <span class="meta">${ukDate(x.date)}</span><span class="nowrap" style="width:130px;text-align:right">${dueText(x.daysLeft)}</span></div>`).join('')}</div>` : '<div class="muted">None.</div>'}</div>`;
-    return `<div class="head"><h1>Reminders</h1><span class="sub">Warranty end dates and "next due" dates from service logs, looking ${state.snap.data.settings.reminderDays} days ahead</span></div>
+    return `<div class="head"><h1>Reminders</h1><span class="sub">Warranties, service and MOT dates, things lent or borrowed, insurance renewals and letters to reply to, looking ${state.snap.data.settings.reminderDays} days ahead</span></div>
       ${block('Overdue', over, 'bad')}${block('Coming up', soon, 'warn')}`;
   }
 
@@ -1348,6 +1605,7 @@
     if (lay) { state.f.layout = lay.dataset.layout; render(); return; }
 
     const act = e.target.closest('[data-action]');
+    if (act && act.dataset.action.startsWith('lib')) { e.preventDefault(); await libAction(act); return; }
     if (act) {
       const a = state.itemId && asset(state.itemId);
       switch (act.dataset.action) {
@@ -1560,6 +1818,20 @@
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); if (state.view !== 'items') go('items'); setTimeout(() => $('#q') && $('#q').focus(), 0); }
   });
 
+  // Documents and Data changed in the background (for example words read from a new file).
+  let libTimer = null;
+  keep.onLibrary(() => {
+    clearTimeout(libTimer);
+    libTimer = setTimeout(async () => {
+      if (!state.snap || state.snap.locked || !['docs', 'files', 'libitem', 'reminders', 'dashboard'].includes(state.view)) return;
+      const snap = await keep.getData().catch(() => null);
+      if (!snap || snap.locked) return;
+      state.snap = snap;
+      if (!$('#modal').classList.contains('hidden')) return;
+      if (document.activeElement && document.activeElement.id === 'libQ') refreshLibList();
+      else { const sc = $('#view').scrollTop; render(); $('#view').scrollTop = sc; }
+    }, 700);
+  });
   keep.onChanged(async () => {
     if (!state.snap || state.snap.locked) return;
     const before = state.snap.data.assets.length;

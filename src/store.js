@@ -41,6 +41,10 @@ const VIDEO_EXT = new Set(['.mp4', '.mov', '.m4v', '.webm', '.avi', '.mkv', '.3g
 const DOC_EXT = new Set(['.pdf', '.jpg', '.jpeg', '.png', '.webp', '.gif', '.txt', '.doc', '.docx', '.xls', '.xlsx', '.csv', ...VIDEO_EXT]);
 
 const MAX_STRING = 5000;
+const LIBRARY_KINDS = ['document', 'data'];
+const LIBRARY_DOC_TYPES = ['Letter', 'Bill', 'Bank statement', 'Benefits & pension', 'Medical', 'Legal', 'Tax', 'Insurance', 'Vehicle', 'Home', 'Work', 'Identity', 'Certificate', 'Other'];
+// Never stored in Documents or Data: opening one of these could run a program.
+const BLOCKED_EXT = new Set(['.exe', '.com', '.bat', '.cmd', '.msi', '.msp', '.scr', '.pif', '.cpl', '.ps1', '.psm1', '.vbs', '.vbe', '.js', '.jse', '.wsf', '.wsh', '.hta', '.jar', '.lnk', '.reg', '.dll', '.sys', '.appx', '.msix', '.application', '.gadget', '.inf', '.url', '.scf']);
 const BIN_DAYS = 30;
 
 function uid() { return crypto.randomUUID(); }
@@ -94,7 +98,8 @@ function cleanDate(v) {
   if (!s) return '';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return '';
   const d = new Date(s + 'T00:00:00Z');
-  return Number.isNaN(d.getTime()) ? '' : s;
+  // must be a real day: 2026-02-31 would otherwise roll over to 3 March
+  return Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s ? '' : s;
 }
 function cleanTags(v) {
   const arr = Array.isArray(v) ? v : String(v || '').split(',');
@@ -140,6 +145,8 @@ function emptyData() {
     people: [], // household members items can belong to ("who owns it")
     places: {}, // photos and videos of a room or place: { 'Home / Lounge': { id, files: [{ id, file, name, kind, addedAt }] } }
     bin: [], // deleted items, kept for BIN_DAYS: [{ asset, deletedAt }]
+    library: [], // Documents and Data entries (see _normaliseLibrary)
+    libBin: [], // deleted Documents and Data entries, kept for BIN_DAYS: [{ entry, deletedAt }]
     categories: DEFAULT_CATEGORIES.slice(),
     locations: DEFAULT_LOCATIONS.slice(),
     assets: []
@@ -229,6 +236,8 @@ class Store {
     out.places = out.places && typeof out.places === 'object' && !Array.isArray(out.places) ? out.places : {};
     out.bin = Array.isArray(out.bin) ? out.bin.filter(b => b && b.asset && b.asset.id).map(b => ({ asset: this._normaliseAsset(b.asset, b.asset, true), deletedAt: b.deletedAt || nowIso() })) : [];
     out.policies = Array.isArray(out.policies) ? out.policies.map(p => this._normalisePolicy(p, p)) : [];
+    out.library = Array.isArray(out.library) ? out.library.filter(e => e && e.id).map(e => Object.assign(this._normaliseLibrary(e, e), { updatedAt: e.updatedAt || nowIso() })) : [];
+    out.libBin = Array.isArray(out.libBin) ? out.libBin.filter(b => b && b.entry && b.entry.id) : [];
     out.version = DATA_VERSION;
     return out;
   }
@@ -236,7 +245,7 @@ class Store {
   save() {
     if (!this.data) throw new Error('OpenSafe is locked.');
     if (this.vault && this.keys && this.keys[sec.KEY_VAULT] && this.data.vault) {
-      const vjson = Buffer.from(JSON.stringify({ assets: this.vault.assets, fileMeta: this.vault.fileMeta, bin: this.vault.bin || [] }));
+      const vjson = Buffer.from(JSON.stringify({ assets: this.vault.assets, fileMeta: this.vault.fileMeta, bin: this.vault.bin || [], library: this.vault.library || [], libBin: this.vault.libBin || [] }));
       this.data.vault.blob = sec.seal(this.keys[sec.KEY_VAULT], sec.KEY_VAULT, vjson).toString('base64');
     }
     const json = Buffer.from(JSON.stringify(this.data, null, 2));
@@ -431,8 +440,10 @@ class Store {
   purgeOldBin(now = Date.now()) {
     const old = this._binEntries().filter(e => now - Date.parse(e.b.deletedAt) > BIN_DAYS * 86400000).map(e => e.b.asset.id);
     for (const id of old) this.purgeAsset(id, { save: false });
-    if (old.length) this.save();
-    return old.length;
+    const oldLib = this._libBinEntries().filter(e => now - Date.parse(e.b.deletedAt) > BIN_DAYS * 86400000).map(e => e.b.entry.id);
+    for (const id of oldLib) this.purgeLibraryEntry(id, { save: false });
+    if (old.length || oldLib.length) this.save();
+    return old.length + oldLib.length;
   }
 
 
@@ -461,6 +472,174 @@ class Store {
     this.save();
     return true;
   }
+
+  // ---------- Documents and Data: files kept for their own sake, not tied to an item ----------
+  // Documents: scanned letters and papers. Data: saved emails, PDFs, Word files, photos and so on.
+  // Files live in attachments/<entry id>/, encrypted like item files; whole entries can go in the vault.
+  _normaliseLibrary(input, existing) {
+    const get = (k) => input[k] !== undefined ? input[k] : existing && existing[k];
+    const e = {
+      id: (existing && existing.id) || uid(),
+      kind: LIBRARY_KINDS.includes(get('kind')) ? get('kind') : 'document',
+      createdAt: (existing && existing.createdAt) || nowIso(),
+      updatedAt: nowIso(),
+      files: (existing && Array.isArray(existing.files)) ? existing.files : [],
+      text: (existing && typeof existing.text === 'object' && existing.text) || {}, // fileId -> searchable text read from that file
+      source: (existing && existing.source) || cleanString(input.source, 20) || 'pc',
+      phoneId: (existing && existing.phoneId) || cleanString(input.phoneId, 80)
+    };
+    e.title = cleanString(get('title'), 200) || 'Untitled';
+    e.docType = e.kind === 'document' ? (LIBRARY_DOC_TYPES.includes(get('docType')) ? get('docType') : 'Letter') : '';
+    e.from = cleanString(get('from'), 200);
+    e.docDate = cleanDate(get('docDate'));
+    e.ref = cleanString(get('ref'), 120);
+    e.actBy = cleanDate(get('actBy'));       // reply or act by (shows in Reminders)
+    e.actDone = get('actDone') === true || get('actDone') === 'on' || get('actDone') === 'true';
+    e.folder = cleanString(get('folder'), 120);
+    e.notes = cleanString(get('notes'), MAX_STRING);
+    e.tags = cleanTags(get('tags'));
+    e.assetIds = (Array.isArray(get('assetIds')) ? get('assetIds') : []).map(x => cleanString(x, 80)).filter(Boolean).slice(0, 200);
+    return e;
+  }
+  _libLists() { return { normal: this.data.library, vault: this.vault ? (this.vault.library = this.vault.library || []) : null }; }
+  _libFind(id) {
+    const { normal, vault } = this._libLists();
+    let e = normal.find(x => x.id === id);
+    if (e) return { e, list: normal, inVault: false };
+    e = vault && vault.find(x => x.id === id);
+    if (e) return { e, list: vault, inVault: true };
+    const err = new Error(this.data.vault && !this.vault ? 'Not found. If it\'s in the vault, unlock the vault first.' : 'Not found');
+    err.code = this.data.vault && !this.vault ? 'VAULT_LOCKED' : 'NOT_FOUND';
+    throw err;
+  }
+  /** Entries for the window (no full text, which can be long): kind 'document' or 'data'. */
+  libraryView(kind) {
+    const { normal, vault } = this._libLists();
+    const map = (e, inVault) => Object.assign({}, e, { text: undefined, hasText: Object.values(e.text || {}).some(t => t && t.length > 20), inVault,
+      textPending: e.files.filter(f => !(f.id in (e.text || {}))).length });
+    return [...normal.map(e => map(e, false)), ...(vault || []).map(e => map(e, true))].filter(e => !kind || e.kind === kind);
+  }
+  /** Search titles, senders, references, notes, tags, file names and the text inside the files. */
+  librarySearch(kind, q) {
+    const words = String(q || '').toLowerCase().split(/\s+/).filter(Boolean).slice(0, 10);
+    const out = [];
+    for (const e of this.libraryView(kind)) {
+      const full = this._libFind(e.id).e;
+      const meta = [e.title, e.docType, e.from, e.ref, e.folder, e.notes, e.tags.join(' '), ...e.files.map(f => f.name)].join(' ').toLowerCase();
+      const body = Object.values(full.text || {}).join('\n');
+      const low = body.toLowerCase();
+      if (!words.every(w => meta.includes(w) || low.includes(w))) continue;
+      let snippet = '';
+      const w = words.find(x => !meta.includes(x) && low.includes(x)) || words.find(x => low.includes(x));
+      if (w) { const i = low.indexOf(w); snippet = body.slice(Math.max(0, i - 60), i + w.length + 80).replace(/\s+/g, ' ').trim(); }
+      out.push({ id: e.id, snippet });
+    }
+    return out;
+  }
+  getLibraryEntry(id) { const { e, inVault } = this._libFind(id); return Object.assign({}, e, { text: undefined, inVault, textByFile: Object.fromEntries(Object.entries(e.text || {}).map(([k, v]) => [k, (v || '').length])) }); }
+  libraryText(id, fileId) { const { e } = this._libFind(id); return (e.text || {})[fileId] || ''; }
+  saveLibraryEntry(input) {
+    if (input.id) {
+      const { e, list } = this._libFind(input.id);
+      const next = this._normaliseLibrary(Object.assign({}, input, { kind: e.kind }), e);
+      list[list.indexOf(e)] = next;
+      this.save();
+      return next;
+    }
+    const e = this._normaliseLibrary(input, null);
+    this.data.library.push(e);
+    this.save();
+    return e;
+  }
+  addLibraryFile(id, originalName, buffer, { save = true } = {}) {
+    const { e, inVault } = this._libFind(id);
+    const ext = path.extname(originalName || '').toLowerCase();
+    if (BLOCKED_EXT.has(ext)) throw new Error(`${originalName}: programs and scripts (${ext}) can't be stored, as opening one could run it.`);
+    if (!Buffer.isBuffer(buffer) || !buffer.length) throw new Error(`${originalName}: the file is empty.`);
+    const fid = uid(), file = fid + (ext && ext.length <= 10 ? ext : '');
+    this._storeFile({ id: e.id }, file, buffer, inVault);
+    const rec = { id: fid, file, name: safeFileName(originalName || file), size: buffer.length, addedAt: nowIso() };
+    e.files.push(rec);
+    e.updatedAt = nowIso();
+    if (save) this.save();
+    return rec;
+  }
+  readLibraryFile(id, fileId) {
+    const { e } = this._libFind(id);
+    const f = e.files.find(x => x.id === fileId);
+    if (!f) throw new Error('File not found');
+    return { name: f.name, buffer: this.readAttachment(e.id, f.file) };
+  }
+  removeLibraryFile(id, fileId) {
+    const { e } = this._libFind(id);
+    const i = e.files.findIndex(x => x.id === fileId);
+    if (i < 0) throw new Error('File not found');
+    const [f] = e.files.splice(i, 1);
+    delete e.text[fileId];
+    try { fs.unlinkSync(this.attachmentPath(e.id, f.file)); } catch (_) { /* already gone */ }
+    e.updatedAt = nowIso();
+    this.save();
+    return true;
+  }
+  /** Store the text read from one file (empty string = no text found). */
+  setLibraryText(id, fileId, text) {
+    let found;
+    try { found = this._libFind(id); } catch (_) { return false; } // deleted or vault locked meanwhile
+    if (!found.e.files.some(f => f.id === fileId)) return false;
+    found.e.text[fileId] = String(text || '').replace(/\u0000/g, '').slice(0, 300000);
+    this.save();
+    return true;
+  }
+  /** Files whose text hasn't been read yet (for the background reader). Vault entries only while it's open. */
+  libraryTextQueue() {
+    const { normal, vault } = this._libLists();
+    const out = [];
+    for (const e of [...normal, ...(vault || [])]) for (const f of e.files) if (!(f.id in e.text)) out.push({ id: e.id, fileId: f.id, name: f.name });
+    return out;
+  }
+  deleteLibraryEntry(id) {
+    const { e, list, inVault } = this._libFind(id);
+    list.splice(list.indexOf(e), 1);
+    const bin = inVault ? (this.vault.libBin = this.vault.libBin || []) : this.data.libBin;
+    bin.push({ entry: e, deletedAt: nowIso() });
+    this.save();
+    return true;
+  }
+  _libBinEntries() {
+    return [...this.data.libBin.map(b => ({ b, list: this.data.libBin, inVault: false })),
+      ...(this.vault ? (this.vault.libBin || []).map(b => ({ b, list: this.vault.libBin, inVault: true })) : [])];
+  }
+  libraryBinView(kind) { return this._libBinEntries().filter(x => !kind || x.b.entry.kind === kind).map(x => ({ id: x.b.entry.id, title: x.b.entry.title, kind: x.b.entry.kind, files: x.b.entry.files.length, deletedAt: x.b.deletedAt, inVault: x.inVault })); }
+  restoreLibraryEntry(id) {
+    const x = this._libBinEntries().find(y => y.b.entry.id === id);
+    if (!x) throw new Error('Not found in the bin');
+    x.list.splice(x.list.indexOf(x.b), 1);
+    (x.inVault ? this.vault.library : this.data.library).push(x.b.entry);
+    this.save();
+    return true;
+  }
+  purgeLibraryEntry(id, { save = true } = {}) {
+    const x = this._libBinEntries().find(y => y.b.entry.id === id);
+    if (!x) return false;
+    x.list.splice(x.list.indexOf(x.b), 1);
+    const dir = this._assetDir(id);
+    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+    if (save) this.save();
+    return true;
+  }
+  /** Move a whole document or data entry into the vault (or back out). */
+  moveLibraryToVault(id, toVault) {
+    if (!this.vault) throw Object.assign(new Error('Unlock the vault first.'), { code: 'VAULT_LOCKED' });
+    const { e, list, inVault } = this._libFind(id);
+    if (!!toVault === inVault) return e;
+    for (const f of e.files) this._reseal(e.id, f.file, toVault ? sec.KEY_VAULT : sec.KEY_MASTER);
+    list.splice(list.indexOf(e), 1);
+    (toVault ? this.vault.library : this.data.library).push(e);
+    this.save();
+    return e;
+  }
+  /** Folders used in Data, for suggestions. */
+  libraryFolders() { const s = new Set(); for (const e of this.libraryView('data')) if (e.folder) s.add(e.folder); return [...s].sort((a, b) => a.localeCompare(b)); }
 
   // ---------- date bought, suggested from when the photos were taken ----------
   /** Read the photo date of up to `limit` older photos that haven't been checked yet. Returns how many were checked. */
@@ -850,7 +1029,7 @@ class Store {
     if (!obj || obj.format !== 'opensafe-export' || !Array.isArray(obj.items)) {
       throw new Error('This file isn\'t an OpenSafe export. Export it from OpenSafe Capture on your phone or tablet.');
     }
-    if (Number(obj.version) > 3) throw new Error('This file was made by a newer version of OpenSafe Capture. Update OpenSafe on this PC and try again.');
+    if (Number(obj.version) > 4) throw new Error('This file was made by a newer version of OpenSafe Capture. Update OpenSafe on this PC and try again.');
     const res = { added: 0, updated: 0, unchanged: 0, photos: 0, documents: 0, errors: [], names: [], changes: 0, changeLines: [], skippedChanges: [] };
     const touched = new Map(); // item id -> when it was last edited before this import (null for new items)
     for (const it of obj.items.slice(0, 10000)) {
@@ -1065,6 +1244,11 @@ class Store {
         const n = diff(s.nextDueDate);
         if (n <= days) out.push({ assetId: a.id, assetName: a.name, kind: s.type || 'Service', date: s.nextDueDate, daysLeft: n });
       }
+    }
+    for (const e of [...(this.data.library || []), ...((this.vault && this.vault.library) || [])]) {
+      if (!e.actBy || e.actDone) continue;
+      const n = diff(e.actBy);
+      if (n <= days) out.push({ libraryId: e.id, libraryKind: e.kind, assetName: e.title + (e.from ? ` (${e.from})` : ''), kind: 'Reply or act by', date: e.actBy, daysLeft: n });
     }
     for (const p of this.data.policies || []) {
       if (!p.renewalDate) continue;
@@ -1514,6 +1698,8 @@ class Store {
     v.assets = Array.isArray(v.assets) ? v.assets.map(a => this._normaliseAsset(a, a, true)) : [];
     v.fileMeta = v.fileMeta && typeof v.fileMeta === 'object' ? v.fileMeta : {};
     v.bin = Array.isArray(v.bin) ? v.bin.filter(b => b && b.asset && b.asset.id).map(b => ({ asset: this._normaliseAsset(b.asset, b.asset, true), deletedAt: b.deletedAt || nowIso() })) : [];
+    v.library = Array.isArray(v.library) ? v.library.filter(e => e && e.id).map(e => Object.assign(this._normaliseLibrary(e, e), { updatedAt: e.updatedAt || nowIso() })) : [];
+    v.libBin = Array.isArray(v.libBin) ? v.libBin.filter(b => b && b.entry && b.entry.id) : [];
     // forget names of vault files that no longer exist (items in the bin still count)
     const live = new Set();
     for (const a of [...this.data.assets, ...(this.data.bin || []).map(b => b.asset)]) for (const r of [...a.photos, ...a.documents]) if (r.vault) live.add(r.id);
@@ -1582,6 +1768,8 @@ class Store {
     const files = this.data.assets.reduce((n, a) => n + [...a.photos, ...a.documents].filter(r => r.vault).length, 0);
     if (this.vault.assets.length || files) throw new Error(`Move everything out of the vault first (${this.vault.assets.length} item(s) and ${files} file(s) are still in it).`);
     if ((this.vault.bin || []).length) throw new Error(`The vault's deleted items (${this.vault.bin.length}) are still in its bin. Restore them or delete them for good first.`);
+    if ((this.vault.library || []).length) throw new Error(`Move the vault's documents and data (${this.vault.library.length}) out of the vault first.`);
+    if ((this.vault.libBin || []).length) throw new Error(`The vault's deleted documents and data (${this.vault.libBin.length}) are still in its bin. Restore them or delete them for good first.`);
     delete this.data.vault;
     this.lockVault();
     this.save();
@@ -1661,4 +1849,4 @@ class Store {
   }
 }
 
-module.exports = { VIDEO_EXT, GONE, NOT_MINE, Store, STATUSES, CONDITIONS, DOC_TYPES, POLICY_TYPES, DETAIL_FIELDS, cleanMoney, cleanDate, cleanLocation, inLocation, cleanUrl, estimateValue, valueNow, emptyData };
+module.exports = { LIBRARY_DOC_TYPES, VIDEO_EXT, GONE, NOT_MINE, Store, STATUSES, CONDITIONS, DOC_TYPES, POLICY_TYPES, DETAIL_FIELDS, cleanMoney, cleanDate, cleanLocation, inLocation, cleanUrl, estimateValue, valueNow, emptyData };

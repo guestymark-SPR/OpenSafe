@@ -63,11 +63,13 @@
     </div>
     <div class="scanrow"><button class="btn scanbtn" data-act="scanItem">📷 Scan an item's QR label<span>Move it, lend it, add photos, or say it needs repairing</span></button>
     <button class="btn stockbtn" data-act="stockCheck">📋 Stock check<span>Scan everything in a place</span></button></div>
+    <button class="btn roombtn" data-act="docScan">📄 Scan a document<span>Photograph each page of a letter: it's straightened and cleaned up, and becomes a searchable PDF in Documents on your PC</span></button>
     <button class="btn roombtn" data-act="roomScan">🔍 Scan a room<span>Point the camera round a room: it recognises TVs, laptops, sofas, bikes and more, and makes draft items with photos</span></button>
     <div class="card exportcard">
       <div><b id="pendingCount">0 items</b> <span class="muted" id="pendingText">ready to export</span></div>
       <button class="btn primary" id="exportBtn" data-act="export">Export to PC</button>
     </div>
+    <div id="docsBox" class="hidden"><h3 class="sectionh">Scanned documents</h3><div id="docList" class="list"></div></div>
     <div id="changes" class="hidden"><h3 class="sectionh">Changes from scanning labels</h3><div id="changeList" class="list"></div><h3 class="sectionh" id="itemsHead">New items</h3></div>
     <div id="list" class="list"></div>
     <div id="empty" class="empty hidden">
@@ -137,6 +139,12 @@
 <div id="sheet" class="sheetwrap hidden"><div class="sheet" id="sheetBody"></div></div>
 <div id="scanner" class="scanner hidden"><video id="scanVideo" playsinline muted></video><div class="scanframe"></div><div class="scanmsg" id="scanMsg">Point the camera at the code</div><div class="scancount" id="scanCount"></div><button class="btn" data-act="scanClose" id="scanCloseBtn">Cancel</button></div>
 <div id="roomScanner" class="scanner roomscanner hidden"><video id="roomVideo" playsinline muted></video><canvas id="roomBoxes"></canvas><div class="roomfound" id="roomFound"></div><div class="roombar"><button class="btn" data-act="roomCancel">Cancel</button><button class="btn primary" data-act="roomDone">Finish</button></div></div>
+<div id="docScanner" class="scanner roomscanner hidden"><video id="docVideo" playsinline muted></video><canvas id="docOutline"></canvas><div class="roomfound" id="docHint">Fit the whole page in view</div>
+  <div class="roombar"><button class="btn" data-act="docCamCancel">Cancel</button><button class="shutter" data-act="docShoot" aria-label="Take page"></button><button class="btn primary" data-act="docDone" id="docDoneBtn">Done</button></div></div>
+<div id="docAdjust" class="docadjust hidden"><div class="adjtop" id="docAdjMsg"></div>
+  <div class="adjbox" id="docAdjBox"><canvas id="docAdjCanvas"></canvas><span class="hnd" id="docH0"></span><span class="hnd" id="docH1"></span><span class="hnd" id="docH2"></span><span class="hnd" id="docH3"></span></div>
+  <div class="adjbar"><div class="seg2"><button class="btn" data-act="docMode" data-mode="clean">Black &amp; white</button><button class="btn" data-act="docMode" data-mode="colour">Colour</button><button class="btn" data-act="docRotate" aria-label="Rotate">⟳</button></div>
+  <div class="row2"><button class="btn" data-act="docRetake">Retake</button><button class="btn primary" data-act="docUse">Use this page</button></div></div></div>
 <datalist id="cats"></datalist>
 <datalist id="locs"></datalist>
 <script src="app.js"></script>

@@ -11,7 +11,7 @@ Everything stays on your PC. There's no account, no cloud and no subscription.
 The menu on the left is grouped by job:
 
 - **Home** (totals, what's coming up, gaps to fill, places, recalls) and **Reminders**.
-- **Inventory:** **Items**, **Places** (every room, shelf and box with what's in it, its photos and videos, and its label) and **Packing lists**.
+- **Inventory:** **Items**, **Documents** (scanned letters and important papers), **Data** (saved emails, PDFs, Word files, photos and anything else), **Places** (every room, shelf and box with what's in it, its photos and videos, and its label) and **Packing lists**.
 - **Protection:** **Insurance** and the **Vault**.
 - **Tools:** **Reports & printing**, **Phone app** and **Import & backup**.
 - **Settings**, **Lock OpenSafe** (when password protection is on) and **+ Add item** sit at the bottom.
@@ -22,6 +22,7 @@ The search box at the top of the menu searches all your items from any page. On 
 
 - **Items:** name, category, location, brand, model, serial number, condition, status (owned, lent out, in repair, sold, disposed, lost/stolen), purchase date and price, supplier, current value, warranty end date, insurer, policy number, insured value, tags and notes.
 - **Photos and documents:** drag in photos, receipts, manuals and warranty cards (PDF, images, Office files). Choose a cover photo and click any photo to enlarge it.
+- **Documents and Data:** keep letters, papers, emails and files that aren't tied to one item, and search the words inside them (see below).
 - **Vehicles and boats:** registration, VIN/frame number, engine number, mileage, MOT, road tax and service dates for cars, vans and motorbikes. Hull ID, registration, MMSI, call sign, engine hours and mooring for boats. MOT, tax and service dates come with reminders.
 - **Lending and selling:** who has an item and when it's due back (with a reminder), or the sale date, price and buyer.
 - **Insurance policies:** record each policy once (insurer, number, renewal date, premium, excess, cover limit, claims line), link the items it covers, and get a reminder before renewal.
@@ -66,6 +67,29 @@ The search box at the top of the menu searches all your items from any page. On 
 - **Scan a label to update an item:** in Capture, tap **Scan an item's QR label** to move it, lend it (with the person's phone or email and a due-back date), mark it returned, needing repair, in repair, repaired, sold, lost or got rid of, or add a note. The changes go to the PC in your next export.
 - **Scan a room:** in Capture, point the camera round a room and it recognises everyday things (TVs, laptops, sofas, fridges, bikes and more) and makes a draft item for each, with photos. Runs on the phone, offline after a one-time download.
 - **Barcodes:** scan a product barcode with the phone camera, or type it in. On the PC, **Look up** fills in the product name and brand from UPCitemdb (free, about 100 lookups a day and 6 a minute, needs the internet).
+
+## Documents and Data
+
+Two places for files that aren't about one item.
+
+- **Documents** is for important letters and papers: bills, bank and pension letters, medical and legal letters, certificates. Each document has a title, type, who it's from, the date on it, a reference, notes and tags, and any number of files (for example each page).
+- **Data** is for anything else you want kept safe: saved emails (.eml or .msg), PDFs, Word and Excel files, photos and so on. Each file becomes its own entry, which you can put in a folder. An .eml email gets its subject, sender and date filled in, and its message is shown on its page.
+
+Adding: **Add document…** or **Add files…**, or drag files onto the page. In Documents, all the files you choose become one document, and OpenSafe asks for its details. Programs and scripts (.exe, .bat, .js and so on) can't be stored, because opening one could run it. Each file can be up to 500 MB.
+
+**Scanning paper letters:** use **📄 Scan a document** in OpenSafe Capture on your phone (see below). Each scan arrives as one PDF in Documents.
+
+**Search:** OpenSafe reads the words inside the files on this PC, with no internet, in the background after you add them, so the search box finds words in letters, not just titles. It reads:
+- PDFs (and scanned PDFs with no text, by reading the page picture);
+- photos and scans of pages (JPG, PNG, WebP, BMP);
+- Word (.docx), Excel (.xlsx), PowerPoint (.pptx) and OpenDocument files;
+- emails (.eml), web pages, RTF and plain text.
+
+It can't read Outlook .msg files, old .doc/.xls files, handwriting or videos; those are stored but only their details can be searched. Reading is automatic, so a poor photo can give mistakes. **Show the words found** on a file shows what was read.
+
+**Reply or act by:** give a letter a date to reply by and it shows in **Reminders** until you tick **Done**.
+
+**Privacy:** with password protection on, the files and the words read from them are encrypted like everything else. **More → Move into the vault** puts a whole document or entry behind the vault PIN; while the vault is locked it's hidden and left out of search. Deleted documents and data stay in their own bin for 30 days. Backups include them.
 
 ## Password protection and the vault
 
@@ -123,6 +147,19 @@ Tap **📋 Stock check**, choose a place (for example Garage), and scan every la
 - any labels that aren't in the inventory copy on the phone.
 
 It uses the inventory copy on the phone plus any changes waiting to export, so load a recent inventory file first.
+
+### Scan a document
+
+Tap **📄 Scan a document** and point the camera at a letter. A green outline shows when it finds the page; tap the round button. Then:
+- drag the four corners if they're not quite on the page's corners;
+- choose **Black & white** (clean, small files, best for letters) or **Colour**, and **⟳** to turn the page;
+- **Use this page**, and the camera is ready for the next page.
+
+The page is straightened and the lighting evened out (shadows, a dim corner) on the phone. Tap **Done**, add a title, type, who it's from, its date, a reference and a reply-by date if you like, and **Save document**. You can also add pages from photos you already have with **🖼 Choose photos** (handy for sharper pictures from the phone's own camera app).
+
+Scanned documents go in your next **Export to PC** (they need OpenSafe 2.6 or later on the PC). On the PC each one becomes a single PDF in **Documents**, and the words on its pages are read so you can search them. Importing the same file twice doesn't add it twice.
+
+Tips: the page is found most reliably on a darker surface, with the whole sheet in view and no fingers over the corners. Good, even light gives the clearest text.
 
 ### Scan a room
 
@@ -194,6 +231,8 @@ src/store.js        Data store (JSON file + attachments folder, daily backups, e
 src/secure.js       Encryption primitives (AES-256-GCM, scrypt, recovery key, X25519)
 src/phoneServer.js  Wi-Fi phone link (token-protected local web server)
 src/report.js       Insurance/inventory PDF layout
+src/doctext.js      Reads the words in PDFs, Office files, emails and pictures (for Documents and Data search)
+src/phonedocs.js    Turns scanned documents from the phone into PDFs
 src/renderer/       Desktop UI (plain HTML/CSS/JS)
 src/phone/          Phone page for the Wi-Fi link
 mobile/             OpenSafe Capture phone/tablet app (published to GitHub Pages)
@@ -201,3 +240,5 @@ test/               Unit tests and a screenshot smoke test
 ```
 
 MIT licence.
+
+OpenSafe uses [pdf.js](https://github.com/mozilla/pdf.js) (Mozilla, Apache-2.0) to read PDFs, [@napi-rs/canvas](https://github.com/Brooooooklyn/canvas) (MIT) to draw scanned PDF pages for reading, [Tesseract.js](https://github.com/naptha/tesseract.js) (Apache-2.0) to read text in pictures, and [pdf-lib](https://github.com/Hopding/pdf-lib) (MIT) to make PDFs.
