@@ -370,3 +370,10 @@ body.viewing{overflow:hidden}
 .libprevmsg{max-height:460px;overflow:auto;text-align:left;cursor:pointer;margin:0}
 .libnoprev{height:220px;flex-direction:column;gap:10px;cursor:pointer;font-size:14px}
 .libnoprev .ic{width:40px;height:40px}
+.libgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,400px);gap:16px;align-items:start}
+.libleft{display:flex;flex-direction:column;gap:16px;min-width:0}
+.libright{position:sticky;top:12px}
+.libright .libbig{max-height:min(520px,calc(100vh - 220px))}
+.libright .libbig.ph{height:260px}
+.libright .libprevmsg{max-height:min(520px,calc(100vh - 220px));font-size:13px}
+@media (max-width:1100px){.libgrid{grid-template-columns:1fr}.libright{position:static;order:-1}}

@@ -633,8 +633,7 @@
       <button class="btn primary" data-action="libEdit">${icon('edit')}Edit details</button></div>
     <div class="dhead libhead"><div><div class="meta">${esc(e.kind === 'document' ? e.docType : (e.folder || 'Data'))}${e.from ? ' · ' + esc(e.from) : ''}</div><h1 style="margin:2px 0 6px">${esc(e.title)}</h1>
       <div>${e.inVault ? `<span class="pill vault">${icon('lock')}Vault</span> ` : ''}${e.actBy ? (e.actDone ? `<span class="pill good">${icon('check')}Done (was due ${ukDate(e.actBy)})</span>` : `<span class="pill ${e.actBy < today ? 'bad' : 'warn'}">${icon('calendar')}Reply or act by ${ukDate(e.actBy)}</span>`) : ''}</div></div></div>
-    <div class="dash"><div class="dash-main">
-      ${big ? `<div class="card libpreview">${big}<p class="faint small" style="margin:8px 0 0"><b>${esc(first.name)}</b>${first.name.toLowerCase().endsWith('.pdf') ? ' · first page' : ''}. ${e.files.length > 1 ? 'Click a file below to preview it here; double-click to open it.' : 'Click to read it, or double-click the file below.'}</p></div>` : ''}
+    <div class="libgrid"><div class="libleft">
       <div class="card" id="libFiles"><h2>${icon('file')}Files <span class="faint">(${e.files.length})</span></h2>
         ${e.files.length ? `<div class="rows">${e.files.map(x => { const k = fileKind(x.name); return `<div class="rowi libfile ${x.id === sel.id ? 'on' : ''}" data-libsel="${esc(x.id)}" title="Click to preview, double-click to open">${icon(k[1])}<span style="flex:1;min-width:0"><b class="ell">${esc(x.name)}</b><div class="meta">${k[0]} · ${fileSize(x.size || 0)} · ${(e.textByFile || {})[x.id] !== undefined ? '' : ''}<span data-textstate="${esc(x.id)}">${libTextState(e, x)}</span></div></span>
           <button class="btn small primary" data-action="libFileView" data-file="${esc(x.id)}">${icon('file')}View</button>
@@ -644,7 +643,6 @@
             <button data-action="libFileText" data-file="${esc(x.id)}">${icon('search')}Show the words found</button>
             <button data-action="libFileRemove" data-file="${esc(x.id)}" class="danger">${icon('trash')}Remove this file</button></div></span></div>`; }).join('')}</div>` : '<p class="muted">No files.</p>'}
         <div class="drop" id="libDrop2">Drag more files anywhere on this page, or <a href="#" data-action="libAddMore">choose files…</a>${e.kind === 'document' ? ' (for example the other pages of the letter)' : ''}</div></div>
-    </div><div class="dash-side">
       <div class="card"><h2>Details</h2>
         ${row(e.kind === 'document' ? 'Type' : 'Folder', esc(e.kind === 'document' ? e.docType : e.folder))}${row('From', esc(e.from))}${row(e.kind === 'document' ? 'Date on it' : 'Date', e.docDate ? ukDate(e.docDate) : '')}${row('Reference', esc(e.ref))}
         ${row('Tags', e.tags.map(t => `<span class="pill">${esc(t)}</span>`).join(' '))}
@@ -652,6 +650,8 @@
         ${row('Added', ukDate(e.createdAt) + (e.source === 'phone' ? ' · scanned on the phone' : ''))}
         ${e.actBy && !e.actDone ? `<p style="margin:12px 0 0"><button class="btn small" data-action="libDone">${icon('check')}Mark as done</button></p>` : ''}
         ${!e.from && !e.docDate && !e.ref && e.kind === 'document' ? `<p class="muted small" style="margin:10px 0 0">Add who it's from, its date and any reference with <b>Edit details</b>.</p>` : ''}</div>
+    </div><div class="libright">
+      ${big ? `<div class="card libpreview">${big}<p class="faint small" style="margin:8px 0 0"><b>${esc(first.name)}</b>${first.name.toLowerCase().endsWith('.pdf') ? ' · first page' : ''}. ${e.files.length > 1 ? 'Click a file to preview it here; double-click to open it.' : 'Click to read it, or double-click the file.'}</p></div>` : ''}
     </div></div>`;
   }
   function libTextState(e, x) {
