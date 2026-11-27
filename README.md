@@ -13,8 +13,10 @@ The menu on the left is grouped by job:
 - **Home** (totals, what's coming up, gaps to fill, places, recalls) and **Reminders**.
 - **Inventory:** **Items**, **Documents** (scanned letters and important papers), **Data** (saved emails, PDFs, Word files, photos and anything else), **Places** (every room, shelf and box with what's in it, its photos and videos, and its label) and **Packing lists**.
 - **Protection:** **Insurance** and the **Vault**.
-- **Tools:** **Reports & printing**, **Phone app** and **Import & backup**.
+- **Tools:** **Reports & printing**, **Phone app**, **Import & backup** and **Help and what's new**.
 - **Settings**, **Lock OpenSafe** (when password protection is on) and **+ Add item** sit at the bottom.
+
+**Help and what's new** (under Tools) lists what changed in recent versions, and has a short checklist for trying the newest features on your own PC and phone, with ticks, notes and **Copy results**. After an update, Home shows a one-line note with a link to it.
 
 **+ New** at the bottom of the menu adds an item, a document, Data files, a packing list or an insurance policy from any page.
 

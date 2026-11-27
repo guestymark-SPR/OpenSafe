@@ -732,6 +732,7 @@ function registerIpc() {
   });
   h('lib:readNow', () => { readSoon(); return true; });
   // Bundle PDF: chosen entries in date order, with a contents page and page numbers
+  h('help:guide', () => shell.openExternal('https://github.com/guestymark-SPR/OpenSafe#readme').then(() => true));
   h('sync:now', () => syncTick({ quiet: false }));
   h('sync:resolve', async () => { const p = sync.plan(); if (p.action === 'conflict' || p.action === 'first') await askSync(p); else await syncTick({ quiet: false }); return sync.status(); });
   h('sync:stop', () => { clearInterval(syncTimer); syncTimer = null; sync.setFolder(''); sync.cfg.conflict = false; sync._writeLocal(); notifyChanged(); return sync.status(); });

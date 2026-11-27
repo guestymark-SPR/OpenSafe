@@ -118,6 +118,7 @@ contextBridge.exposeInMainWorld('keep', {
   syncResolve: () => call('sync:resolve'),
   syncStop: () => call('sync:stop'),
   syncChoose: () => call('sync:choose'),
+  openGuide: () => call('help:guide'),
   onLibrary: (fn) => ipcRenderer.on('lib:changed', () => fn()),
   libPick: (kind, entryId) => call('lib:pick', kind, entryId),
   // Where each dropped file is on disk ('' for files some apps, such as Outlook, drop without a path).

@@ -170,3 +170,13 @@ tr[draggable=true]{cursor:pointer}
 mark{background:color-mix(in srgb,#f5c542 45%,transparent);color:inherit;border-radius:3px;padding:0 1px}
 .snippet{font-style:italic}
 .snippet{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;max-width:720px}
+/* Help and what's new */
+.helpgrid{align-items:start}
+.news{padding:8px 0;border-bottom:1px solid var(--line)}.news:last-child{border-bottom:0}
+.news ul,.helplist{margin:6px 0 0;padding-left:18px}.news li,.helplist li{margin:3px 0;line-height:1.45}
+.checks{display:grid;gap:8px;margin-top:6px}
+.checkrow{display:grid;grid-template-columns:1fr minmax(200px,280px);gap:12px;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:10px}
+.checkrow.done{background:color-mix(in srgb,var(--good,#2f7d4f) 7%,transparent)}
+.checkrow .switch{display:flex;gap:10px;align-items:flex-start;font-weight:400}.checkrow .switch input{margin-top:3px}
+.checknote{width:100%}
+.newsbar{margin-bottom:16px}

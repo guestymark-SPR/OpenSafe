@@ -971,6 +971,63 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
   document.addEventListener('dragend', () => setTimeout(endDrag, 50));
 
   // ---------- one search for everything ----------
+  // ---------- Help and What's new ----------
+  const NEWS = [
+    ['2.12.0', 'Help and checks', ['This page: what changed in recent versions, and a short checklist for trying the new features on your own PC and phone.']],
+    ['2.11.0', 'Two PCs', ['Keep OpenSafe the same on two PCs through a shared folder such as OneDrive (Import & backup → Two PCs). If both were changed, it asks which copy to keep and saves the other as a backup.']],
+    ['2.10.0', 'Bundles and documents on the phone', ['<b>Bundle PDF</b>: tick letters → one PDF in date order with a contents page and page numbers.', '<b>Keep a copy on my phone</b>: chosen documents go in the phone inventory file, to read offline in Capture.']],
+    ['2.9.0', 'Search everything', ['One search box for items, Documents and Data, including the words inside letters and the receipts and manuals on items.', 'Who a letter is from, its date and reference are suggested after it\'s read.', 'Outlook .msg emails can be read inside OpenSafe.']],
+    ['2.8.0', 'New look', ['Drop-down menus, filter chips, right-click menus and <b>+ New</b>.', 'Drag items onto places; move entries between Documents and Data; link documents to items.']],
+    ['2.7.x', 'Reading files', ['PDFs, emails, Word and Excel files open inside OpenSafe. Click to preview, double-click to read. Drag and drop anywhere on Documents and Data.']],
+    ['2.6.0', 'Documents and Data', ['Keep letters and files that aren\'t about one item, searchable by the words in them, with <b>📄 Scan a document</b> on the phone. Capture also gained <b>Scan a room</b> around this time.']]
+  ];
+  const CHECKS = [
+    ['pdf', 2, 'Open one of your real PDF letters', 'Documents → click a letter, then double-click its PDF. Every page should show, and zoom should work.'],
+    ['search', 1, 'Search for a word inside a letter', 'Type a word that\'s only in the body of a letter (not its title) in <b>Search everything</b>. The letter should be found, with the word highlighted.'],
+    ['msg', 2, 'Add an Outlook email', 'In classic Outlook, drag an email to your desktop (it saves as a .msg file), then drag that file onto Data. Its subject and date should fill in, and it should open in the reader.'],
+    ['bundle', 1, 'Make a bundle', 'Tick two or three letters and choose <b>Bundle PDF…</b>; the PDF should open with a contents page and "Page 1 of …" at the bottom of every page.'],
+    ['drag', 1, 'Drag with the mouse', 'Items → drag an item by its row. A panel of places should appear; drop it on one and its place should change.'],
+    ['label', 1, 'Scan a QR label with the phone', 'Print one label (an item → More → Print QR label…), scan it with Capture. The item should open.'],
+    ['phonedoc', 2, 'Read a document on the phone', 'Right-click a letter → <b>Keep a copy on my phone</b>, then Phone app → Save inventory for phone, and load it in Capture. It should be under My inventory → 📄 Documents.'],
+    ['scan', 2, 'Scan a paper letter', 'Capture → 📄 Scan a document, take one page, export, import on the PC. It should arrive in Documents as a PDF.'],
+    ['room', 2, 'Scan a room (optional)', 'Capture → Scan a room, point at a TV or laptop. Draft items should appear. The first time downloads about 15 MB.'],
+    ['reminder', 0, 'Reminders while closed (optional, takes a day)', 'Settings → Keep reminders running. With something due in the next 7 days, a Windows notification should appear once a day, even with OpenSafe closed.'],
+    ['twopc', 3, 'Two PCs (only if you have a second PC)', 'Choose the same OneDrive folder on both under Import & backup → Two PCs. Add an item on one; once OneDrive has copied it (usually a few minutes), it should appear on the other.']
+  ];
+  const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (_) { return d; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) { /* not kept */ } };
+  function newsBanner() {
+    const v = state.snap.version, seen = lsGet('seenVersion', null);
+    if (seen === v) return '';
+    if (seen === null) { lsSet('seenVersion', v); return ''; } // first run: nothing "new" yet
+    const n = NEWS.find(x => v && v.startsWith(x[0].replace('.x', '')));
+    return `<div class="card sugbar newsbar">${icon('bell')}<span><b>OpenSafe was updated to ${esc(v)}</b>${n ? `: ${esc(n[1])}` : ''}.</span><span class="spacer"></span><button class="btn small primary" data-action="newsOpen">What's new</button><button class="btn small ghost" data-action="newsHide">Hide</button></div>`;
+  }
+  function viewHelp() {
+    const done = lsGet('checks', {});
+    const n = CHECKS.filter(c => done[c[0]]).length;
+    return `<div class="head"><h1>Help and what's new</h1><span class="sub">OpenSafe ${esc(state.snap.version || '')}</span><span class="spacer"></span><button class="btn" data-action="helpGuide">${icon('help')}Full guide (opens GitHub)</button></div>
+    <div class="grid g2 helpgrid">
+      <div class="card"><h2>${icon('bell')}What's new</h2>
+        ${NEWS.map(([ver, title, lines]) => `<div class="news"><div class="nv"><span class="pill">${esc(ver)}</span> <b>${esc(title)}</b></div><ul>${lines.map(l => `<li>${l}</li>`).join('')}</ul></div>`).join('')}</div>
+      <div class="card"><h2>${icon('help')}Finding your way</h2><ul class="helplist">
+        <li><b>Search everything</b> (top left) finds items, letters and files, and the words inside them.</li>
+        <li><b>Right-click</b> an item, document, file or place for what you can do with it.</li>
+        <li><b>Drag</b> items onto places, or documents between Documents and Data; tick several first to move them together.</li>
+        <li><b>+ New</b> (bottom left) adds an item, document, files, packing list or policy from any page.</li>
+        <li><b>More ▾</b> on each page holds the less-used actions.</li>
+        <li>Your data stays on this PC. Only barcode look-ups, recall checks, currency rates and updates use the internet.</li></ul>
+        <h2 style="margin-top:14px">${icon('shield')}Keeping it safe</h2><ul class="helplist">
+        <li>Turn on <b>password protection</b> (Settings) and keep the recovery key somewhere safe.</li>
+        <li>Set up <b>Automatic backups</b> to OneDrive or a USB stick (Import & backup).</li></ul></div>
+    </div>
+    <div class="card" style="margin-top:16px"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h2 style="margin:0">${icon('check')}Check it on your own PC and phone</h2><span class="pill checkcount ${n === CHECKS.length ? 'good' : ''}">${n} of ${CHECKS.length} done</span><span class="spacer"></span>
+        <button class="btn small" data-action="checksCopy">${icon('copy')}Copy results</button><button class="btn small ghost" data-action="checksReset">Clear ticks</button></div>
+      <p class="muted">These were tested on test machines, not on your own devices. The first five take about 7 minutes on this PC; the phone ones need your phone. If something doesn't happen as described, untick it, write what you saw, and use <b>Copy results</b> to paste it to whoever is helping you.</p>
+      <div class="checks">${CHECKS.map(([id, mins, title, how]) => `<div class="checkrow ${done[id] ? 'done' : ''}"><label class="switch"><input type="checkbox" data-action="checkTick" data-id="${id}" ${done[id] ? 'checked' : ''}><span><b>${esc(title)}</b>${mins ? ` <span class="faint">· about ${mins} min</span>` : ''}<br><span class="muted">${how}</span></span></label>
+        <input class="checknote" data-check="${id}" placeholder="What happened? (optional)" value="${esc(lsGet('checkNotes', {})[id] || '')}"></div>`).join('')}</div></div>`;
+  }
+
   function viewSearch() {
     const q = state.gq || '', r = state.gres || { items: [], library: [] };
     if (q.length < 2) return `<div class="head"><h1>Search</h1></div><div class="card empty">Type in the search box at the top of the menu to search your items, the words in their receipts and manuals, Documents and Data.</div>`;
@@ -1154,7 +1211,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     const pageKey = [state.view, state.itemId, state.libId].join('|');
     if (pageKey !== state.lastPageKey) { state.lastPageKey = pageKey; v.classList.remove('enter'); void v.offsetWidth; v.classList.add('enter'); }
     else v.classList.remove('enter');
-    const views = { dashboard: viewDashboard, items: viewItems, item: viewItem, reminders: viewReminders, phone: viewPhone, reports: viewReports, settings: viewSettings, vault: viewVault, policies: viewPolicies, bin: viewBin, trips: viewTrips, places: viewPlaces, data: viewData, docs: () => viewLibrary('docs'), files: () => viewLibrary('files'), libitem: viewLibItem, search: viewSearch };
+    const views = { dashboard: viewDashboard, items: viewItems, item: viewItem, reminders: viewReminders, phone: viewPhone, reports: viewReports, settings: viewSettings, vault: viewVault, policies: viewPolicies, bin: viewBin, trips: viewTrips, places: viewPlaces, data: viewData, docs: () => viewLibrary('docs'), files: () => viewLibrary('files'), libitem: viewLibItem, search: viewSearch, help: viewHelp };
     v.innerHTML = (views[state.view] || viewDashboard)();
     if (state.view === 'phone') { loadCapture(); loadPhone(); const d = $('#wifiDetails'); if (d) d.ontoggle = () => { state.wifiOpen = d.open; }; }
     if (state.view === 'item') wireDrop();
@@ -1191,6 +1248,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     const gapsN = { serial: s.noSerial, receipt: s.noReceipt, insurer: s.uninsured, photo: assets.filter(a => !INACTIVE.includes(a.status) && a.status !== 'Borrowed' && !a.photos.length).length };
     const topLocs = locs.filter(([p]) => p.split(' / ').length <= 2).slice(0, 8);
     return `<div class="head"><h1>Home</h1><span class="sub">${s.count} item${s.count === 1 ? '' : 's'}</span></div>
+    ${newsBanner()}
     <div class="grid g4" style="margin-bottom:16px">
       <div class="card stat"><div class="lbl">Value now</div><div class="num">${money0(s.currentTotal)}</div><div class="foot">${s.estimatedCount ? `${s.estimatedCount} estimated; price paid where no value is set` : 'Price paid where no value is set'}</div></div>
       <div class="card stat"><div class="lbl">Total paid</div><div class="num">${money0(s.purchaseTotal)}</div><div class="foot">For the things you have now</div></div>
@@ -2104,6 +2162,10 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
       else { const list = libFiltered(LIB[state.view].kind); if (act.checked) list.forEach(x => state.libPick.add(x.id)); else state.libPick.clear(); }
       refreshLibList(); return;
     }
+    if (act && act.dataset.action === 'checkTick') { // read the tick now too
+      const d = lsGet('checks', {}); if (act.checked) d[act.dataset.id] = true; else delete d[act.dataset.id]; lsSet('checks', d);
+      const sc = $('#view').scrollTop; render(); $('#view').scrollTop = sc; return;
+    }
     if (act && act.dataset.action.startsWith('lib')) { e.preventDefault(); if (!(await viewerAction(act))) await libAction(act); return; }
     if (act) {
       const a = state.itemId && asset(state.itemId);
@@ -2222,6 +2284,15 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
         case 'addValuation': valuationForm(a); break;
         case 'rmValuation': if (confirm('Delete this valuation from the history? The item\'s value now isn\'t changed.')) { await run(() => keep.removeValuation(a.id, act.dataset.vid), 'Deleted'); await refresh(); } break;
         case 'bcLookup': barcodeLookup(a); break;
+        case 'newsOpen': lsSet('seenVersion', state.snap.version); go('help'); break;
+        case 'newsHide': lsSet('seenVersion', state.snap.version); render(); break;
+        case 'helpGuide': await run(() => keep.openGuide()); break;
+        case 'checksReset': if (confirm('Clear all the ticks and notes?')) { lsSet('checks', {}); lsSet('checkNotes', {}); render(); } break;
+        case 'checksCopy': {
+          const d = lsGet('checks', {}), notes = lsGet('checkNotes', {});
+          const text = [`OpenSafe ${state.snap.version} — checks on my own devices`, ...CHECKS.map(([id, , title]) => `${d[id] ? '[x]' : '[ ]'} ${title}${notes[id] ? ' — ' + notes[id] : ''}`)].join('\n');
+          await run(() => keep.copyPlain(text), '✓ Copied. Paste it into a message.'); break;
+        }
         case 'syncChoose': { const st = await run(() => keep.syncChoose()); if (st) toast(st.lastError ? st.lastError : '✓ Keeping in step through that folder', 4500); await refresh(); break; }
         case 'syncNow': { act.disabled = true; const st = await run(() => keep.syncNow()); if (st && !st.lastError) toast('✓ ' + (st.dirty ? 'Copying…' : 'In step')); await refresh(); break; }
         case 'syncResolve': await run(() => keep.syncResolve()); await refresh(); break;
@@ -2326,6 +2397,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     catch (ex) { e.target.checked = !e.target.checked; toast('⚠ ' + ex.message, 5000); }
   });
   document.addEventListener('input', (e) => {
+    if (e.target.dataset && e.target.dataset.check) { const n = lsGet('checkNotes', {}); n[e.target.dataset.check] = e.target.value.slice(0, 500); lsSet('checkNotes', n); return; }
     if (e.target.id === 'q') {
       state.f.q = e.target.value;
       clearTimeout(qTimer);
