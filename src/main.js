@@ -351,6 +351,8 @@ const doctext = require('./doctext');
 const phonedocs = require('./phonedocs');
 const viewer = require('./viewer');
 const bundle = require('./bundle');
+const redact = require('./redact');
+const letter = require('./letter');
 const { Sync } = require('./sync');
 /** Turn a page of HTML into an A4 PDF, with scripts off and nothing loaded from the internet. */
 async function renderHtmlToPdf(html) {
@@ -765,6 +767,45 @@ function registerIpc() {
     if (!syncTimer) syncTimer = setInterval(() => syncTick().catch(() => {}), 90 * 1000);
     return syncTick({ quiet: false });
   });
+  // ---- letters you write ----
+  h('letter:draft', (replyToId) => {
+    const book = store.letterBook();
+    if (replyToId) {
+      const e = store.getLibraryEntry(String(replyToId));
+      const d = letter.draftReply(e, book.me);
+      d.toAddress = book.addresses[(e.from || '').toLowerCase()] || '';
+      d.replyTo = e.id;
+      return { letter: d, caseName: e.caseName || '', addresses: book.addresses };
+    }
+    return { letter: Object.assign(letter.draftReply({}, book.me), { subject: '', body: '' }), caseName: '', addresses: book.addresses };
+  });
+  h('letter:save', async (p) => {
+    p = p || {};
+    const L = letter.normalise(p.letter || {});
+    if (!L.toName) throw new Error('Who is the letter to?');
+    if (!L.body) throw new Error('The letter is empty.');
+    const formats = (Array.isArray(p.formats) ? p.formats : ['pdf', 'docx']).filter(f => f === 'pdf' || f === 'docx');
+    if (!formats.length) throw new Error('Choose PDF, Word or both.');
+    const base = (L.subject || 'Letter').replace(/^re:\s*/i, 'Reply - ').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Letter';
+    const files = [];
+    if (formats.includes('pdf')) files.push({ name: base + '.pdf', buf: Buffer.from(await renderHtmlToPdf(letter.html(L))) });
+    if (formats.includes('docx')) files.push({ name: base + '.docx', buf: await letter.docx(L) });
+    const rep = Object.assign({}, L, { replyTo: String((p.letter && p.letter.replyTo) || '') });
+    let e;
+    const details = { title: L.subject || `Letter to ${L.toName}`, docType: 'Letter', from: L.toName, docDate: L.date, ref: L.yourRef || L.ourRef, sent: true, reply: rep,
+      caseName: String(p.caseName || '').slice(0, 120) };
+    if (p.expectDays) { const d = new Date(L.date + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + Math.max(1, Math.min(365, Number(p.expectDays) || 28))); details.expectBy = d.toISOString().slice(0, 10); }
+    if (p.entryId) {
+      e = store.saveLibraryEntry(Object.assign({ id: String(p.entryId) }, details));
+      for (const f of e.files.slice()) store.removeLibraryFile(e.id, f.id); // the letter changed: new files replace the old ones
+    } else e = store.saveLibraryEntry(Object.assign({ kind: 'document' }, details));
+    for (const f of files) store.addLibraryFile(e.id, f.name, f.buf);
+    // the letter you replied to joins the same case
+    if (rep.replyTo && details.caseName) { try { store.moveLibrary([rep.replyTo], { caseName: details.caseName }); } catch (_) { /* gone or in the locked vault */ } }
+    store.rememberLetter(L); store.save();
+    libChanged(); readSoon();
+    return { id: e.id };
+  });
   h('lib:renameCase', (from, to) => libNote(store.renameCase(String(from || ''), String(to || ''))));
   h('lib:onPhone', (ids, on) => libNote(store.setLibraryOnPhone((Array.isArray(ids) ? ids : [ids]).map(String), !!on)));
   h('lib:bundle', async (ids, opts) => {
@@ -783,10 +824,21 @@ function registerIpc() {
       entries, viewer, title,
       order: opts.order === 'newest' ? 'newest' : 'oldest', contents: opts.contents !== false, numbers: opts.numbers !== false,
       readFile: (id, fileId) => store.readLibraryFile(id, fileId),
-      renderHtml: renderHtmlToPdf
+      renderHtml: renderHtmlToPdf,
+      redact: opts.redact && typeof opts.redact === 'object' ? {
+        kinds: (Array.isArray(opts.redact.kinds) ? opts.redact.kinds : []).map(String).filter(k => redact.KINDS[k]),
+        words: (Array.isArray(opts.redact.words) ? opts.redact.words : []).map(w => String(w).slice(0, 120)).slice(0, 100)
+      } : null,
+      ocrWords: (png) => ocr.readWords(png)
     });
     fs.writeFileSync(r.filePath, result.bytes);
-    if (result.skipped.length) dialog.showMessageBox(win, { type: 'warning', title: 'Bundle PDF', message: 'Bundle saved, but some files weren\'t included', detail: result.skipped.join('\n') });
+    if (result.skipped.length) await dialog.showMessageBox(win, { type: 'warning', title: 'Bundle PDF', message: 'Bundle saved, but some files weren\'t included', detail: result.skipped.join('\n') });
+    if (result.found) {
+      const names = { ni: 'National Insurance number', bank: 'bank detail', card: 'card number', phone: 'phone number', email: 'email address', words: 'of your words' };
+      const list = Object.entries(result.found).map(([k, n]) => k === 'words' ? `${n} place${n === 1 ? '' : 's'} with your words` : `${n} ${names[k]}${n === 1 ? '' : 's'}`);
+      await dialog.showMessageBox(win, { type: list.length ? 'info' : 'warning', title: 'Bundle PDF', message: list.length ? `Hidden: ${list.join(', ')}.` : 'Nothing was found to hide.',
+        detail: 'Every page was redrawn as a picture, so what was hidden can\'t be copied out of the PDF.\n\nCheck every page before you send it: details can be missed, especially handwriting, faint scans or unusual layouts.' });
+    }
     shell.openPath(r.filePath);
     return { path: r.filePath, pages: result.pages, documents: result.documents, skipped: result.skipped };
   });

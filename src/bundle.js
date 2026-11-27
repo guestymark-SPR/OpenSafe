@@ -5,6 +5,7 @@
 
 const path = require('path');
 const { PDFDocument, StandardFonts, rgb, degrees } = require('pdf-lib');
+const redact = require('./redact');
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const ukDate = (s) => s ? new Date(s + 'T00:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '';
@@ -108,7 +109,7 @@ function contentsHtml(title, rows, total, { prepared }) {
  * @param viewer    ./viewer (to turn emails, Word and Excel files into pages)
  * @returns { bytes, pages, documents, skipped: string[] }
  */
-async function buildBundle({ entries, readFile, renderHtml, viewer, title = 'Bundle', order = 'oldest', contents = true, numbers = true, now = new Date() }) {
+async function buildBundle({ entries, readFile, renderHtml, viewer, title = 'Bundle', order = 'oldest', contents = true, numbers = true, now = new Date(), redact: hide = null, ocrWords = null, progress = () => {} }) {
   if (!entries || !entries.length) throw new Error('Choose at least one document.');
   const list = orderEntries(entries, order);
   const body = await PDFDocument.create();
@@ -147,6 +148,16 @@ async function buildBundle({ entries, readFile, renderHtml, viewer, title = 'Bun
     rows.push(row);
   }
   if (!body.getPageCount()) throw new Error('None of the chosen files could be put in a PDF.\n\n' + skipped.join('\n'));
+  // hide private details: every page becomes a picture with the details blacked out
+  let found = null, body2 = body;
+  if (redact.active(hide)) {
+    progress('Hiding private details…');
+    const r = await redact.redactPdf(await body.save(), hide, { ocrWords });
+    found = r.found;
+    body2 = await PDFDocument.load(r.bytes);
+    title = redact.redactText(title, hide);
+    for (const row of rows) { row.title = redact.redactText(row.title, hide); row.from = redact.redactText(row.from, hide); row.ref = redact.redactText(row.ref, hide); row.missing = row.missing.map(m => redact.redactText(m, hide)); }
+  }
 
   const out = await PDFDocument.create();
   let front = 0;
@@ -156,18 +167,18 @@ async function buildBundle({ entries, readFile, renderHtml, viewer, title = 'Bun
     let pdf = null;
     for (let tries = 0, guess = 1; tries < 4; tries++) {
       const shifted = rows.map(r => Object.assign({}, r, { start: r.start + guess }));
-      pdf = await PDFDocument.load(await renderHtml(contentsHtml(title, shifted, body.getPageCount() + guess, { prepared })));
+      pdf = await PDFDocument.load(await renderHtml(contentsHtml(title, shifted, body2.getPageCount() + guess, { prepared })));
       if (pdf.getPageCount() === guess) break;
       guess = pdf.getPageCount();
     }
     const cp = await out.copyPages(pdf, pdf.getPageIndices());
     cp.forEach(p => out.addPage(p)); front = cp.length;
   }
-  const bp = await out.copyPages(body, body.getPageIndices());
+  const bp = await out.copyPages(body2, body2.getPageIndices());
   bp.forEach(p => out.addPage(p));
-  if (numbers) await stampNumbers(out, winAnsi(title).slice(0, 60));
+  if (numbers) await stampNumbers(out, winAnsi(title.replace(/█+/g, '[hidden]')).slice(0, 60));
   out.setTitle(title); out.setProducer('OpenSafe'); out.setCreator('OpenSafe');
-  return { bytes: await out.save(), pages: out.getPageCount(), documents: rows.length, front, rows: rows.map(r => Object.assign({}, r, { start: r.start + front })), skipped };
+  return { bytes: await out.save(), pages: out.getPageCount(), documents: rows.length, front, found, rows: rows.map(r => Object.assign({}, r, { start: r.start + front })), skipped };
 }
 
 module.exports = { buildBundle, fileHtml, orderEntries, stampNumbers, winAnsi, contentsHtml };

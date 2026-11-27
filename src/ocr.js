@@ -34,6 +34,17 @@ async function readText(imageBuffer) {
   return data.text || '';
 }
 
+/** Each word read from a picture, with its box in that picture's pixels. */
+async function readWords(imageBuffer) {
+  const worker = await getWorker();
+  const { data } = await worker.recognize(imageBuffer, {}, { blocks: true, text: false });
+  const out = [];
+  for (const b of data.blocks || []) for (const p of b.paragraphs || []) for (const l of p.lines || []) for (const w of l.words || []) {
+    if (w.text && w.bbox) out.push({ text: w.text, x0: w.bbox.x0, y0: w.bbox.y0, x1: w.bbox.x1, y1: w.bbox.y1 });
+  }
+  return out;
+}
+
 async function stop() {
   if (!workerP) return;
   try { const w = await workerP; await w.terminate(); } catch (_) { /* ignore */ }
@@ -113,4 +124,4 @@ function parseLabel(text) {
   return { serial, model, imei: im ? im[1] : '', text: t.trim() };
 }
 
-module.exports = { readText, parseReceipt, parseLabel, stop, _paths: paths };
+module.exports = { readText, readWords, parseReceipt, parseLabel, stop, _paths: paths };

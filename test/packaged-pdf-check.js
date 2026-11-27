@@ -44,6 +44,15 @@ const F = path.join(__dirname, 'fixtures', 'library');
     const page = await viewer.pdfPage('bundle', Buffer.from(r.bytes), r.pages, 600);
     console.log('ok   bundle made', r.pages, 'pages; last page drawn', page.length, 'bytes');
   } catch (e) { bad++; console.log('FAIL bundle', e.message); }
+  try {
+    const letter = require(path.join(R, 'app.asar', 'src', 'letter.js'));
+    const w = await letter.docx({ fromName: 'Me', toName: 'CMS', body: 'Hello' });
+    if (w.slice(0, 2).toString() !== 'PK') throw new Error('not a Word file');
+    const red = require(path.join(R, 'app.asar', 'src', 'redact.js'));
+    const rr = await red.redactPdf(fs.readFileSync(path.join(F, 'scanned.pdf')), { kinds: [], words: ['tariff'] }, { ocrWords: require(path.join(R, 'app.asar', 'src', 'ocr.js')).readWords });
+    if (!rr.found.words) throw new Error('word on the scan not found');
+    console.log('ok   letter and redaction');
+  } catch (e) { bad++; console.log('FAIL letter/redaction', e.message); }
   try { require(path.join(R, 'app.asar', 'src', 'sync.js')); console.log('ok   sync loads'); } catch (e) { bad++; console.log('FAIL sync', e.message); }
   viewer.clear(); await require(path.join(R, 'app.asar', 'src', 'ocr.js')).stop();
   process.exit(bad ? 1 : 0);

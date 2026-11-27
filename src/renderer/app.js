@@ -244,13 +244,23 @@
         <label class="f s3">Order<select name="order"><option value="oldest">By the date on each one, oldest first</option><option value="newest">By the date on each one, newest first</option></select></label>
         <label class="switch s3" style="font-weight:500;display:flex;gap:10px"><input type="checkbox" name="contents" checked> Contents page at the front (date, who from, title, reference, page numbers)</label>
         <label class="switch s3" style="font-weight:500;display:flex;gap:10px"><input type="checkbox" name="numbers" checked> Page numbers on every page (“Page 3 of 40”)</label>
+        <details class="s3 hidebox" ${lsGet('redactOn', false) ? 'open' : ''}><summary><b>Hide private details</b> <span class="faint">(optional)</span></summary>
+          <p class="faint small" style="margin:6px 0">Blacks out what you choose on every page of this PDF. Your own copies aren't changed. Pages become pictures, so the PDF is bigger and its text can't be copied.</p>
+          <div class="hidekinds">${[['ni', 'National Insurance numbers'], ['bank', 'Bank sort codes and account numbers'], ['card', 'Card numbers'], ['phone', 'Phone numbers'], ['email', 'Email addresses']].map(([k, l]) => `<label class="switch"><input type="checkbox" name="hide_${k}" ${(lsGet('redactKinds', ['ni', 'bank', 'card'])).includes(k) && lsGet('redactOn', false) ? 'checked' : ''}> ${l}</label>`).join('')}</div>
+          <label class="f" style="margin-top:6px">Also hide these words (one per line: names, an address line…)<textarea name="hideWords" rows="3" maxlength="3000" placeholder="e.g. your children's names"></textarea><span class="faint small">Not saved anywhere: type them each time.</span></label>
+          <p class="faint small" style="margin:4px 0 0">Scanned pages are read on this PC to find the words, which takes a few seconds a page. Always check the PDF before sending it.</p></details>
         ${undated ? `<p class="s3 note" style="margin:0">${undated === 1 ? '1 entry has' : undated + ' entries have'} no date, so ${undated === 1 ? 'it goes' : 'they go'} at the end. Add the date on the letter with <b>Edit details</b> to put ${undated === 1 ? 'it' : 'them'} in order.</p>` : ''}
         <div class="err" id="bundleErr"></div></div>
       <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Save bundle PDF…</button></div></form>`);
     $('#bundleForm').onsubmit = async (ev) => {
       ev.preventDefault();
       const f = ev.target, el = f.elements, opts = { title: el.title.value, order: el.order.value, contents: el.contents.checked, numbers: el.numbers.checked };
-      busy(f, true, 'Building PDF…');
+      const kinds = ['ni', 'bank', 'card', 'phone', 'email'].filter(k => el['hide_' + k].checked);
+      const words = el.hideWords.value.split(/\n+/).map(w => w.trim()).filter(Boolean);
+      const on = f.querySelector('.hidebox').open && (kinds.length || words.length);
+      lsSet('redactOn', !!on); if (on) lsSet('redactKinds', kinds);
+      if (on) opts.redact = { kinds, words };
+      busy(f, true, opts.redact ? 'Building PDF and hiding details…' : 'Building PDF…');
       try { const r = await keep.libBundle(entries.map(e => e.id), opts); if (r) { closeModal(); toast(`✓ Bundle saved: ${r.documents} ${r.documents === 1 ? 'entry' : 'entries'}, ${r.pages} pages`, 4500); } else busy(f, false); }
       catch (ex) { $('#bundleErr').textContent = ex.message; busy(f, false); }
     };
@@ -643,6 +653,42 @@
       <div class="meta">${c.first ? ukDate(c.first) : ''}${c.last && c.last !== c.first ? ' – ' + ukDate(c.last) : ''}</div>
       ${c.overdue ? `<span class="pill bad">${icon('bell')}${c.overdue} waiting past the date</span>` : c.waiting ? `<span class="pill warn">${icon('bell')}${c.waiting} waiting for a reply</span>` : ''}</div>`).join('')}</div>`;
   }
+  /** Write (or change) a letter: laid out on A4, saved as PDF and Word in Documents, marked as sent by you. */
+  function letterForm(d, entryId) {
+    const L = d.letter, me = !L.fromName;
+    const cases = (state.snap.data.libCases || []).map(c => c.name);
+    const tb = (name, label, v, extra = '') => `<label class="f">${label}<input name="${name}" value="${esc(v || '')}" ${extra}></label>`;
+    openModal(`<form class="dialog wide" id="letterForm"><div class="dh"><h2>${entryId ? 'Change letter' : L.replyTo ? 'Write a reply' : 'Write a letter'}</h2></div><div class="db letterdb">
+      <details class="s3 hidebox" ${me ? 'open' : ''}><summary><b>Your details</b> <span class="faint">${me ? '(filled in once, then remembered)' : esc(L.fromName)}</span></summary>
+        <div class="grid g2" style="margin-top:8px">${tb('fromName', 'Your name', L.fromName, 'maxlength="120"')}${tb('fromPhone', 'Phone (optional)', L.fromPhone, 'maxlength="60"')}
+          <label class="f">Your address<textarea name="fromAddress" rows="4" maxlength="600">${esc(L.fromAddress)}</textarea></label>${tb('fromEmail', 'Email (optional)', L.fromEmail, 'maxlength="120" type="email"')}</div></details>
+      ${tb('toName', 'To', L.toName, 'maxlength="200" required list="ltTo" placeholder="e.g. Child Maintenance Service"')}<datalist id="ltTo">${Object.keys(d.addresses || {}).map(k => `<option value="${esc(k)}">`).join('')}</datalist>
+      ${tb('date', 'Date', L.date, 'type="date"')}
+      <label class="f">Their address<textarea name="toAddress" rows="4" maxlength="600" placeholder="As on their letter">${esc(L.toAddress)}</textarea></label>
+      <div class="grid" style="gap:8px">${tb('yourRef', 'Their reference (Your ref)', L.yourRef, 'maxlength="120"')}${tb('theirDate', 'Their letter dated', L.theirDate, 'type="date"')}${tb('ourRef', 'My reference (optional)', L.ourRef, 'maxlength="120"')}</div>
+      <label class="f">Greeting<input name="greeting" list="ltGreet" maxlength="120" value="${esc(L.greeting)}"><datalist id="ltGreet"><option value="Dear Sir or Madam,"><option value="Dear Mr ,"><option value="Dear Ms ,"></datalist><span class="faint small">Ends <b id="ltClose">${/sir|madam|to whom/i.test(L.greeting) ? 'Yours faithfully' : 'Yours sincerely'}</b></span></label>
+      ${tb('subject', 'Subject (in bold)', L.subject, 'maxlength="200"')}
+      <label class="f s3">Letter<textarea name="body" rows="12" maxlength="20000" required>${esc(L.body)}</textarea><span class="faint small">Leave a blank line between paragraphs. Your name and the ending are added for you.</span></label>
+      <label class="f">Case<input name="caseName" list="ltCases" maxlength="120" value="${esc(d.caseName || '')}" placeholder="${L.replyTo ? 'Both letters go in it' : 'Optional'}"><datalist id="ltCases">${cases.map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
+      <label class="f">Expect a reply within<select name="expect"><option value="">No reminder</option>${[14, 28, 56].map(n => `<option value="${n}" ${n === 28 && !entryId ? 'selected' : ''}>${n} days</option>`).join('')}</select></label>
+      <div class="f"><span>Save as</span><span style="display:flex;gap:16px"><label class="switch"><input type="checkbox" name="fmtPdf" checked> PDF</label><label class="switch"><input type="checkbox" name="fmtDocx" checked> Word</label></span></div>
+      <div class="err s3" id="ltErr"></div></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">${icon('check')}${entryId ? 'Save changes' : 'Save letter'}</button></div></form>`);
+    const f = $('#letterForm'), el = f.elements;
+    el.greeting.oninput = () => { $('#ltClose').textContent = /sir|madam|to whom/i.test(el.greeting.value) ? 'Yours faithfully' : 'Yours sincerely'; };
+    el.toName.onchange = () => { const a = (d.addresses || {})[el.toName.value.trim().toLowerCase()]; if (a && !el.toAddress.value.trim()) el.toAddress.value = a; };
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const letter = { replyTo: L.replyTo || '' };
+      for (const k of ['fromName', 'fromAddress', 'fromPhone', 'fromEmail', 'toName', 'toAddress', 'date', 'yourRef', 'theirDate', 'ourRef', 'greeting', 'subject', 'body']) letter[k] = el[k].value;
+      const formats = [el.fmtPdf.checked && 'pdf', el.fmtDocx.checked && 'docx'].filter(Boolean);
+      busy(f, true, 'Saving letter…');
+      try {
+        const r = await keep.letterSave({ letter, formats, caseName: el.caseName.value.trim(), expectDays: el.expect.value ? Number(el.expect.value) : 0, entryId: entryId || '' });
+        closeModal(); await refresh(); go('libitem', { libId: r.id }); toast('✓ Letter saved in Documents, marked as sent by you', 4500);
+      } catch (ex) { $('#ltErr').textContent = ex.message; busy(f, false); }
+    };
+  }
   /** A small "type a name" box (with suggestions). Resolves to the text, or null if cancelled. */
   function promptText(title, label, value = '', suggestions = []) {
     return new Promise((resolve) => {
@@ -681,7 +727,7 @@
     let lastYear = '';
     return `<div class="head"><a href="#" data-nav="docs" class="back">${icon('back')}Documents</a><h1>${esc(name)}</h1><span class="sub">${list.length} letter${list.length === 1 ? '' : 's'}${c && c.refs.length ? ' · Ref ' + esc(c.refs.join(', ')) : ''}</span><span class="spacer"></span>
         <button class="btn" data-action="libBundle" data-ids="${esc(ids)}">${icon('printer')}Bundle PDF of the case…</button>
-        ${dd('More', [{ label: 'Rename case…', action: 'libCaseRename', icon: 'edit' }, { label: 'Add documents to this case…', action: 'libCaseAdd', icon: 'plus' }])}</div>
+        ${dd('More', [{ label: 'Write a letter in this case…', action: 'libLetterNew', icon: 'edit' }, { label: 'Add documents to this case…', action: 'libCaseAdd', icon: 'plus' }, '-', { label: 'Rename case…', action: 'libCaseRename', icon: 'edit' }])}</div>
       ${!list.length ? '<div class="card empty">Nothing in this case now.</div>' : `<div class="timeline">${list.map(e => {
         const d = e.docDate || e.createdAt.slice(0, 10), y = d.slice(0, 4);
         const yr = y !== lastYear ? `<div class="tyear">${esc(y)}</div>` : ''; lastYear = y;
@@ -764,6 +810,7 @@
     return `<div class="head"><button class="btn ghost" data-nav="${libKindPage(e.kind)}">${icon('back')}${L.title}</button><span class="spacer"></span>
       <span class="menuwrap"><button class="btn" data-action="moreMenu">${icon('more')}More</button><div class="menu hidden">
         ${state.snap.security.vault.unlocked ? `<button data-action="libVault" data-to="${e.inVault ? '' : '1'}">${icon(e.inVault ? 'unlock' : 'lock')}${e.inVault ? 'Move out of the vault' : 'Move into the vault'}</button>` : state.snap.security.vault.exists ? '' : ''}
+        ${e.reply ? `<button data-action="libLetterEdit">${icon('edit')}Change this letter…</button>` : !e.sent ? `<button data-action="libLetterReply">${icon('edit')}Write a reply…</button>` : ''}
         <button data-action="libOnPhone" data-ids="${esc(JSON.stringify([e.id]))}" data-on="${e.onPhone ? '' : '1'}">${icon('phone')}${e.onPhone ? 'Take off my phone' : 'Keep a copy on my phone'}</button>
         <button data-action="libBundle" data-ids="${esc(JSON.stringify([e.id]))}">${icon('printer')}Make a PDF with contents page…</button>
         <button data-action="libDel" class="danger">${icon('trash')}Delete</button></div></span>
@@ -893,6 +940,9 @@
         return true;
       }
       case 'libCaseAdd': casePicker(state.caseName); return true;
+      case 'libLetterReply': { const d = await run(() => keep.letterDraft(e.id)); if (d) letterForm(d, null); return true; }
+      case 'libLetterNew': { const d = await run(() => keep.letterDraft('')); if (d) { if (state.view === 'case') d.caseName = state.caseName; letterForm(d, null); } return true; }
+      case 'libLetterEdit': { const d = await run(() => keep.letterDraft('')); if (d) letterForm({ letter: Object.assign({}, e.reply), caseName: e.caseName || '', addresses: d.addresses, expectBy: e.expectBy }, e.id); return true; }
       case 'libCaseSet': { const ids = JSON.parse(act.dataset.ids); const name = await promptText('Put in a case', 'Case name (a new one, or one you already have)', '', (state.snap.data.libCases || []).map(c => c.name)); if (name !== null && name !== undefined) { const ok = await run(() => keep.libMove(ids, { caseName: name.trim() }), name.trim() ? `✓ Put in "${name.trim()}"` : '✓ Taken out of the case'); if (ok !== undefined) { state.libPick && state.libPick.clear(); await refresh(); } } return true; }
       case 'libBundle': bundleForm(act.dataset.ids ? JSON.parse(act.dataset.ids) : [...(state.libPick || [])], state.view === 'case' ? state.caseName : ''); return true;
       case 'libMoveTo': { const ids = JSON.parse(act.dataset.ids), to = { kind: act.dataset.kind }; if (act.dataset.folder !== undefined) to.folder = act.dataset.folder; await libMoveIds(ids, to, to.kind === 'document' ? 'Documents' : to.folder ? 'Data › ' + to.folder : 'Data'); return true; }
@@ -1082,6 +1132,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
   // ---------- one search for everything ----------
   // ---------- Help and What's new ----------
   const NEWS = [
+    ['2.14.0', 'Write letters, hide details', ['<b>Write a reply…</b> on a letter (More menu), or <b>+ New → Letter…</b>: a properly laid-out letter with their reference and date filled in, saved as PDF and Word, marked as sent and put in the case.', '<b>Hide private details</b> in Bundle PDF: black out NI numbers, bank details, card and phone numbers, emails and any words you type, including on scanned pages.']],
     ['2.13.0', 'Cases and replies', ['<b>Cases</b>: put letters about one matter in a case and see them as a timeline, sent and received, with a Bundle PDF of the whole case.', '<b>I sent this</b>: track letters you sent; Reminders shows "No reply yet" after the date, until their reply is added to the case.', 'Filter Documents and Data by who it\'s from or to, by tag and by case; a warning when the same file is added twice.']],
     ['2.12.0', 'Help and checks', ['This page: what changed in recent versions, and a short checklist for trying the new features on your own PC and phone.']],
     ['2.11.0', 'Two PCs', ['Keep OpenSafe the same on two PCs through a shared folder such as OneDrive (Import & backup → Two PCs). If both were changed, it asks which copy to keep and saves the other as a backup.']],

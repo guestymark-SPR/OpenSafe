@@ -515,6 +515,12 @@ class Store {
     if (existing && LIBRARY_DOC_TYPES.includes(existing.prevDocType)) e.prevDocType = existing.prevDocType;
     if (existing && existing.suggestDone) e.suggestDone = true;
     if (get('onPhone') === true) e.onPhone = true; // a copy goes in the inventory file for the phone
+    const rep = get('reply'); // a letter written in OpenSafe: what's needed to change it later
+    if (rep && typeof rep === 'object') {
+      e.reply = {};
+      for (const [k, n] of [['fromName', 120], ['fromAddress', 600], ['fromPhone', 60], ['fromEmail', 120], ['toName', 200], ['toAddress', 600], ['yourRef', 120], ['ourRef', 120], ['subject', 200], ['greeting', 120], ['body', 20000], ['replyTo', 80]]) e.reply[k] = String(rep[k] || '').slice(0, n);
+      for (const k of ['date', 'theirDate']) e.reply[k] = cleanDate(rep[k]);
+    }
     if (existing && existing.suggest && typeof existing.suggest === 'object') { // drop suggestions for details now filled in
       const sg = {}; for (const k of ['from', 'docDate', 'ref']) if (existing.suggest[k] && !e[k]) sg[k] = String(existing.suggest[k]).slice(0, 200);
       if (Object.keys(sg).length) e.suggest = sg;
@@ -697,6 +703,21 @@ class Store {
     this.save();
     return n;
   }
+  // ---------- letters you write ----------
+  /** Your name and address for letters, and the addresses of people you've written to. */
+  letterBook() {
+    const st = this.data.settings;
+    return { me: Object.assign({ name: '', address: '', phone: '', email: '' }, st.letterFrom || {}), addresses: Object.assign({}, this.data.addressBook || {}) };
+  }
+  rememberLetter(rep) {
+    const st = this.data.settings;
+    st.letterFrom = { name: cleanString(rep.fromName, 120), address: String(rep.fromAddress || '').slice(0, 600), phone: cleanString(rep.fromPhone, 60), email: cleanString(rep.fromEmail, 120) };
+    if (rep.toName && rep.toAddress) {
+      this.data.addressBook = this.data.addressBook || {};
+      this.data.addressBook[cleanString(rep.toName, 200).toLowerCase()] = String(rep.toAddress).slice(0, 600);
+    }
+  }
+
   // ---------- cases and replies ----------
   _allLibrary() { const { normal, vault } = this._libLists(); return [...normal, ...(vault || [])]; }
   /** A later letter received in the same case counts as the reply to one you sent. */
