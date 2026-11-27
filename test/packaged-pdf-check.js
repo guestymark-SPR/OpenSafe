@@ -61,6 +61,15 @@ const F = path.join(__dirname, 'fixtures', 'library');
     console.log('ok   letter and redaction');
   } catch (e) { bad++; console.log('FAIL letter/redaction', e.message); }
   try { require(path.join(R, 'app.asar', 'src', 'sync.js')); console.log('ok   sync loads'); } catch (e) { bad++; console.log('FAIL sync', e.message); }
+  try {
+    const kp = require(path.join(R, 'app.asar', 'src', 'kinpack.js'));
+    const html = kp.build({ owner: 'M', letter: 'hi' }, 'tulip anchor rain velvet');
+    if (kp.decrypt(JSON.parse(html.match(/const PACK = (\{.*?\});/)[1]), 'tulip anchor rain velvet').letter !== 'hi') throw new Error('pack did not open');
+    const oi = require(path.join(R, 'app.asar', 'src', 'orderinfo.js'));
+    if (oi.parse('Order #12345\nWidget\n£5.00\nOrder total: £5.00', { from: 'Shop <a@shop.co.uk>' }).orderNo !== '12345') throw new Error('order not read');
+    require(path.join(R, 'app.asar', 'src', 'summary.js'));
+    console.log('ok   family pack and orders');
+  } catch (e) { bad++; console.log('FAIL family pack/orders', e.message); }
   viewer.clear(); await require(path.join(R, 'app.asar', 'src', 'ocr.js')).stop();
   process.exit(bad ? 1 : 0);
 })();

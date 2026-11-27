@@ -460,6 +460,13 @@
       <p class="faint" style="margin:4px 0 0">Backups run while OpenSafe is open (and unlocked). Older ones in the folder are removed automatically.</p></div>`;
   }
 
+  function kinCard() {
+    const k = (state.snap.data && state.snap.data.kinPack) || {};
+    return `<div class="card tile" id="kinCard"><h2>${icon('lock')}If something happens to me</h2>
+      <p class="muted">A locked file for your next of kin: a letter from you, who to contact, your insurance, your valuable things and the documents you choose. It opens in any web browser with a passphrase you give them.</p>
+      ${k.madeAt ? `<p class="faint" style="margin:0 0 8px">Last made ${esc(new Date(k.madeAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }))}. Make a new one when things change.</p>` : ''}
+      <div class="acts"><button class="btn primary" data-action="kinOpen">${k.madeAt ? 'Make a new pack…' : 'Make the pack…'}</button></div></div>`;
+  }
   function watchCard() {
     const w = state.snap.watch || {};
     const when = (t) => t ? new Date(t).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '';
@@ -833,6 +840,32 @@
       if (ok) { closeModal(); await refresh(); }
     };
   }
+  /** Items from an order confirmation email: suggestions to check, then items with the email as their receipt. */
+  function orderForm(e, o) {
+    const rows = o.lines.length ? o.lines : [{ name: '', price: o.total, qty: 1 }];
+    openModal(`<form class="dialog wide" id="ordForm"><div class="dh"><h2>Make items from this order</h2></div><div class="db">
+      <p class="s3 muted" style="margin:0">${o.isOrder ? 'OpenSafe read this email and found what\'s below.' : 'This doesn\'t look like an order email, but you can still fill this in.'} Shops lay out their emails differently, so check each line. Each ticked line becomes an item, with the email saved on it as a PDF receipt and linked here.</p>
+      <label class="f">Shop<input name="shop" maxlength="120" value="${esc(o.shop)}"></label>
+      <label class="f">Date bought<input type="date" name="date" value="${esc(o.date || e.docDate || '')}"></label>
+      <label class="f">Order number<input name="orderNo" maxlength="60" value="${esc(o.orderNo)}"></label>
+      <div class="s3"><table class="list ordlines"><thead><tr><th style="width:32px"></th><th>What</th><th style="width:110px">Price (£)</th><th style="width:60px">Qty</th><th style="width:150px">Category</th><th style="width:150px">Where it lives</th></tr></thead><tbody>
+        ${rows.map((x, i) => `<tr><td><input type="checkbox" name="on${i}" checked></td><td><input name="name${i}" value="${esc(x.name)}" maxlength="200" style="width:100%"></td><td><input name="price${i}" value="${x.price != null ? esc(String(x.price.toFixed ? x.price.toFixed(2) : x.price)) : ''}" inputmode="decimal" style="width:100%"></td><td><input name="qty${i}" type="number" min="1" value="${x.qty || 1}" style="width:100%"></td>
+          <td><select name="cat${i}"><option value=""></option>${o.categories.map(c => `<option>${esc(c)}</option>`).join('')}</select></td><td><select name="loc${i}"><option value=""></option>${o.locations.map(c => `<option>${esc(c)}</option>`).join('')}</select></td></tr>`).join('')}
+      </tbody></table>${o.total != null ? `<div class="faint small" style="margin-top:4px">Order total: £${o.total.toFixed(2)}</div>` : ''}</div>
+      <div class="err s3" id="ordErr"></div></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">${icon('plus')}Add ticked items</button></div></form>`);
+    const f = $('#ordForm'), el = f.elements;
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const items = rows.map((_, i) => ({ on: el['on' + i].checked, name: el['name' + i].value, price: el['price' + i].value, qty: el['qty' + i].value, category: el['cat' + i].value, location: el['loc' + i].value })).filter(x => x.on && x.name.trim());
+      busy(f, true, 'Adding…');
+      try {
+        const r = await keep.orderMake(e.id, { shop: el.shop.value, date: el.date.value, orderNo: el.orderNo.value, items });
+        closeModal(); await refresh(); toast(`✓ Added ${r.ids.length} item${r.ids.length === 1 ? '' : 's'}${r.receipt ? ', each with the email as its receipt' : ''}`, 4500);
+        if (r.ids.length === 1) go('item', { itemId: r.ids[0] });
+      } catch (ex) { $('#ordErr').textContent = ex.message; busy(f, false); }
+    };
+  }
   /** Draft (or change) a statement about a case, then save it as Word and/or PDF in the case. */
   function statementForm(d, entryId) {
     openModal(`<form class="dialog wide" id="stForm"><div class="dh"><h2>${entryId ? 'Change statement' : 'Draft a statement'}</h2></div><div class="db">
@@ -850,6 +883,52 @@
         const r = await keep.statementSave({ title: el.title.value, text: el.text.value, caseName: d.caseName, formats: [el.fmtDocx.checked && 'docx', el.fmtPdf.checked && 'pdf'].filter(Boolean), entryId: entryId || '' });
         closeModal(); await refresh(); go('libitem', { libId: r.id }); toast('✓ Statement saved in the case', 4000);
       } catch (ex) { $('#stErr').textContent = ex.message; busy(f, false); }
+    };
+  }
+  /** "If something happens to me": choose what goes in, set a passphrase, save one locked file. */
+  function kinForm(d) {
+    const c = d.choices, mb = (n) => (n / 1048576).toFixed(n < 1048576 ? 2 : 1) + ' MB';
+    const contacts = c.contacts.concat(Array.from({ length: Math.max(3, 6 - c.contacts.length) }, () => ({ name: '', role: '', contact: '' })));
+    const docs = d.docs.slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    openModal(`<form class="dialog wide" id="kinForm"><div class="dh"><h2>If something happens to me</h2></div><div class="db">
+      <p class="s3 muted" style="margin:0">One file for your next of kin. It opens in any web browser on any computer or phone, with nothing to install, once they type the passphrase. Without the passphrase it can't be read. OpenSafe remembers what you chose here but <b>never the passphrase</b>.</p>
+      <label class="f s3">A letter to them<textarea name="letter" rows="6" maxlength="20000" placeholder="Anything you want them to know or do first.">${esc(c.letter)}</textarea></label>
+      <label class="f s3">Where things are<textarea name="where" rows="4" maxlength="20000" placeholder="For example: the will is with … solicitors; spare keys are …; the boiler service company is …">${esc(c.where)}</textarea><span class="faint small">Don't put passwords or bank PINs in here. Tell them where to find those instead.</span></label>
+      <div class="s3"><div class="section-title" style="margin:6px 0">People to contact</div><table class="list" id="kinPeople"><thead><tr><th>Name</th><th>Who they are</th><th>Phone, email or address</th></tr></thead><tbody>
+        ${contacts.map((x, i) => `<tr><td><input name="cn${i}" maxlength="120" value="${esc(x.name)}" style="width:100%"></td><td><input name="cr${i}" maxlength="120" value="${esc(x.role)}" placeholder="${i === 0 ? 'Solicitor' : i === 1 ? 'Accountant' : ''}" style="width:100%"></td><td><input name="cc${i}" maxlength="300" value="${esc(x.contact)}" style="width:100%"></td></tr>`).join('')}</tbody></table></div>
+      <label class="switch s3"><input type="checkbox" name="policies" ${c.policies ? 'checked' : ''} ${d.policies ? '' : 'disabled'}> Include my insurance policies (${d.policies}): insurer, policy number, claims line and renewal date</label>
+      <label class="f">Include items worth at least (£)<input name="minValue" type="number" min="0" step="1" value="${esc(String(c.minValue))}"></label>
+      <div class="s3"><div class="section-title" style="margin:6px 0">Documents to put in it <span class="faint small" id="kinSize"></span></div>
+        <input type="search" id="kinQ" placeholder="Filter by title or sender" style="width:100%;margin-bottom:6px">
+        <div id="kinDocs" style="max-height:220px;overflow:auto;border:1px solid var(--line2);border-radius:8px;padding:4px 8px">${docs.length ? docs.map(x => `<label class="switch kindoc" style="display:flex;gap:8px;padding:3px 0" data-q="${esc((x.title + ' ' + x.from).toLowerCase())}"><input type="checkbox" name="doc" value="${esc(x.id)}" data-size="${x.size}" ${c.docIds.includes(x.id) ? 'checked' : ''}><span style="flex:1">${esc(x.title)} <span class="faint">${esc([x.from, x.date && ukDate(x.date)].filter(Boolean).join(' · '))}${x.inVault ? ' · vault' : ''}</span></span><span class="faint small nowrap">${mb(x.size)}</span></label>`).join('') : '<p class="muted">There are no documents in OpenSafe yet.</p>'}</div>
+        <span class="faint small">Good ones to include: the will, life insurance, pension and mortgage letters, the deeds. Everything you tick is copied into the file, so keep it under 80 MB.</span></div>
+      <label class="f">Passphrase<input type="password" name="pass" autocomplete="new-password" maxlength="200"></label>
+      <label class="f">Type it again<input type="password" name="pass2" autocomplete="new-password" maxlength="200"></label>
+      <p class="s3 faint small" style="margin:0">At least 12 characters: three or four random words is easy to say and hard to guess. Give it to them separately from the file (on paper, or with your will), and keep a copy. If it's lost, the file can't be opened, by anyone. Make a new pack when things change: an old copy keeps the old details.</p>
+      <div class="err s3" id="kinErr"></div></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button type="button" class="btn" id="kinSaveOnly">Save my choices</button><button class="btn primary" type="submit">${icon('lock')}Make the pack…</button></div></form>`);
+    const f = $('#kinForm'), el = f.elements;
+    const size = () => { const t = [...f.querySelectorAll('input[name=doc]:checked')].reduce((n, x) => n + Number(x.dataset.size || 0), 0); $('#kinSize').textContent = t ? `${f.querySelectorAll('input[name=doc]:checked').length} chosen, ${mb(t)}` : ''; };
+    f.addEventListener('change', (ev) => { if (ev.target.name === 'doc') size(); });
+    $('#kinQ').oninput = () => { const q = $('#kinQ').value.trim().toLowerCase(); f.querySelectorAll('.kindoc').forEach(r => { r.style.display = !q || r.dataset.q.includes(q) ? '' : 'none'; }); };
+    size();
+    const choices = () => ({ letter: el.letter.value, where: el.where.value, policies: el.policies.checked, minValue: el.minValue.value,
+      contacts: contacts.map((_, i) => ({ name: el['cn' + i].value, role: el['cr' + i].value, contact: el['cc' + i].value })),
+      docIds: [...f.querySelectorAll('input[name=doc]:checked')].map(x => x.value) });
+    $('#kinSaveOnly').onclick = async () => { try { await keep.kinSave(choices()); closeModal(); await refresh(); toast('✓ Choices saved', 3000); } catch (ex) { $('#kinErr').textContent = ex.message; } };
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      if (el.pass.value !== el.pass2.value) { $('#kinErr').textContent = 'The two passphrases don\'t match.'; return; }
+      busy(f, true, 'Making…');
+      try {
+        const r = await keep.kinMake(choices(), el.pass.value);
+        el.pass.value = el.pass2.value = '';
+        if (!r) { busy(f, false); return; }
+        closeModal(); await refresh();
+        openModal(`<div class="dialog narrow"><div class="dh"><h2>Pack saved</h2></div><div class="db"><p class="s3" style="margin:0">Saved to <span class="mono">${esc(r.path)}</span>, with ${r.documents} document${r.documents === 1 ? '' : 's'}, ${r.items} item${r.items === 1 ? '' : 's'}, ${r.policies} polic${r.policies === 1 ? 'y' : 'ies'} and ${r.contacts} contact${r.contacts === 1 ? '' : 's'}.</p>
+          <p class="s3 muted">Open it in your browser now and type the passphrase, to check it works before you hand it over. Then put it somewhere they can get to: a USB stick with your will, or a shared folder.</p></div>
+          <div class="df"><button class="btn primary" data-action="close">Done</button></div></div>`);
+      } catch (ex) { el.pass.value = el.pass2.value = ''; $('#kinErr').textContent = ex.message; busy(f, false); }
     };
   }
   /** A small "type a name" box (with suggestions). Resolves to the text, or null if cancelled. */
@@ -975,6 +1054,7 @@
       <span class="menuwrap"><button class="btn" data-action="moreMenu">${icon('more')}More</button><div class="menu hidden">
         ${state.snap.security.vault.unlocked ? `<button data-action="libVault" data-to="${e.inVault ? '' : '1'}">${icon(e.inVault ? 'unlock' : 'lock')}${e.inVault ? 'Move out of the vault' : 'Move into the vault'}</button>` : state.snap.security.vault.exists ? '' : ''}
         ${e.statement ? `<button data-action="libStatementEdit">${icon('edit')}Change this statement…</button>` : ''}
+        ${e.files.some(f => /\.(eml|msg)$/i.test(f.name)) ? `<button data-action="libOrderItems">${icon('box')}Make items from this order…</button>` : ''}
         ${e.reply ? `<button data-action="libLetterEdit">${icon('edit')}Change this letter…</button>` : e.statement ? '' : !e.sent ? `<button data-action="libLetterReply">${icon('edit')}Write a reply…</button>` : ''}
         <button data-action="libOnPhone" data-ids="${esc(JSON.stringify([e.id]))}" data-on="${e.onPhone ? '' : '1'}">${icon('phone')}${e.onPhone ? 'Take off my phone' : 'Keep a copy on my phone'}</button>
         <button data-action="libBundle" data-ids="${esc(JSON.stringify([e.id]))}">${icon('printer')}Make a PDF with contents page…</button>
@@ -1122,6 +1202,7 @@
       case 'libComplaintClose': complaintStep(act.dataset.id, -1, 'close'); return true;
       case 'libComplaintSource': await run(() => keep.openLink(act.dataset.url)); return true;
       case 'libSarNew': { const org = await promptText('Subject access request', 'Which organisation? (e.g. Child Maintenance Service)', '', Object.keys((await keep.sarDraft('')).addresses || {})); if (org && org.trim()) { const d = await run(() => keep.sarDraft(org.trim())); if (d) { d.addresses = d.addresses || {}; d.letter.toAddress = d.addresses[org.trim().toLowerCase()] || ''; d.caseName = state.view === 'case' ? state.caseName : ''; d.sar = true; letterForm(d, null); } } return true; }
+      case 'libOrderItems': { const o = await run(() => keep.orderRead(e.id)); if (o) orderForm(e, o); return true; }
       case 'libStatementNew': { const d = await run(() => keep.statementDraft(state.caseName)); if (d) statementForm({ title: d.title, text: d.text, caseName: state.caseName, count: d.count }, null); return true; }
       case 'libStatementEdit': statementForm({ title: e.title, text: e.statement.text, caseName: e.caseName || '' }, e.id); return true;
       case 'libLetterReply': { const d = await run(() => keep.letterDraft(e.id)); if (d) letterForm(d, null); return true; }
@@ -1316,6 +1397,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
   // ---------- one search for everything ----------
   // ---------- Help and What's new ----------
   const NEWS = [
+    ['2.19.0', 'Order emails, a weekly summary, and a pack for your family', ['<b>Make items from this order…</b> (More, on an order email in Data or Documents): the things you bought become items, each with the email as its receipt.', '<b>Monday summary</b>: a notification on Mondays with what\'s due that week and letters waiting for a reply (Settings to turn it off).', '<b>If something happens to me</b> (Import & backup): one locked file for your next of kin with a letter, contacts, insurance, valuable things and chosen documents. It opens in any web browser with a passphrase.']],
     ['2.18.0', 'Complaints and subject access', ['<b>Start a complaint…</b> (a case\'s More menu, or + New): each stage with its time limits for DWP and the CMS, Veterans UK, government, councils, banks, energy and phone companies, from their published rules. Deadlines go into Reminders.', '<b>Subject access request…</b>: a letter asking for the information an organisation holds on you, with the one-month reply date and what to do next.']],
     ['2.17.0', 'Statements and forms', ['<b>Draft a statement…</b> on a case (More menu): a numbered, dated account built from its letters, your highlights and notes, to edit and save as Word or PDF.', '<b>Fill in this form…</b> on a PDF\'s ⋯ menu: fillable forms get your name, address and earlier answers suggested; a filled-in copy is saved.']],
     ['2.16.0', 'Highlights and notes', ['In the reader, <b>Highlight</b> and drag over a PDF page to mark it; click a highlight to add a note. OpenSafe keeps the words under it, and search finds your notes.', 'A document\'s page lists its highlights; Bundle PDF can show them, with your notes on the contents page.']],
@@ -1348,6 +1430,9 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     ['statement', 2, 'Draft a statement', 'Open a case → More → <b>Draft a statement…</b>. Each letter should be a numbered paragraph in date order, with your highlights and notes. Save it and open the Word file.'],
     ['form', 2, 'Fill in a real form', 'Add a fillable PDF form you need (for example from a council or government site) and choose <b>⋯ → Fill in this form…</b>. Your name and address should be suggested; check the filled-in copy in your PDF app.'],
     ['complaint', 2, 'Start a complaint', 'Open a case → More → <b>Start a complaint…</b>, pick who it\'s about and the date you complained. The stages should appear with their time limits; click <b>Got their reply…</b> and the date for the next stage should be worked out.'],
+    ['order', 2, 'Items from an order email', 'Drag an order confirmation email (.eml, or .msg from Outlook) into Data, open it, then More → <b>Make items from this order…</b>. The shop, order number and lines should be filled in; check them, add, and each item should have the email as a PDF receipt.'],
+    ['weekly', 3, 'Monday summary', 'Settings → <b>Show it now</b>. A Windows notification should appear with this week\'s reminders. Next Monday it should come by itself when you open OpenSafe (or from the tray, with Keep reminders running on).'],
+    ['kinpack', 1, 'If something happens to me', 'Import & backup → <b>Make the pack…</b>. Tick a document, set a passphrase, save. Double-click the saved file: it should open in your browser, refuse a wrong passphrase, and show everything with the right one. Try opening a document from it, and try it on your phone too.'],
     ['twopc', 3, 'Two PCs (only if you have a second PC)', 'Choose the same OneDrive folder on both under Import & backup → Two PCs. Add an item on one; once OneDrive has copied it (usually a few minutes), it should appear on the other.']
   ];
   const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (_) { return d; } };
@@ -1643,7 +1728,8 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     if (state.view === 'vault') wireVaultForm();
     if (state.view === 'reports') spendingCard();
     if (state.view === 'trips' && $('#extraForm')) $('#extraForm').onsubmit = async (e) => { e.preventDefault(); const v = e.target.text.value; if (!v.trim()) return; await run(() => keep.addTripExtra(state.tripId, v)); await refresh(); };
-    if (state.view === 'settings' && !state.bg) keep.bgGet().then(b => { state.bg = b; if (state.view === 'settings' && $('#bgOn')) $('#bgOn').checked = b.enabled; }).catch(() => {});
+    if (state.view === 'settings' && !state.bg) keep.bgGet().then(b => { state.bg = b; if (state.view === 'settings' && $('#bgOn')) { $('#bgOn').checked = b.enabled; $('#weeklyOn').checked = b.weekly !== false; } }).catch(() => {});
+    if (state.view === 'settings' && $('#weeklyOn')) $('#weeklyOn').onchange = async (ev) => { const on = ev.target.checked; await run(() => keep.summarySet(on), on ? '✓ Monday summary on' : 'Monday summary off'); if (state.bg) state.bg.weekly = on; };
   }
 
   function viewDashboard() {
@@ -2237,7 +2323,9 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
       ${autoBackupCard()}
       ${syncCard()}
       ${watchCard()}
-    </div>`;
+    </div>
+    <div class="section-title">For your family</div>
+    <div class="tiles">${kinCard()}</div>`;
   }
 
   // ---------- Places ----------
@@ -2313,7 +2401,11 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
         <div id="bgCard" style="border-top:1px solid var(--line2);padding-top:14px;margin-top:6px"><b>Reminders when OpenSafe is closed</b>
           <p class="muted" style="margin:6px 0 10px">OpenSafe starts quietly with Windows and waits by the clock. Once a day (8am to 9pm) it shows a notification if anything is due in the next 7 days. Closing the window still locks OpenSafe.</p>
           ${state.snap.security.encrypted ? '<p class="note" style="margin:0 0 10px">With password protection on, the notification only says how many things are due, and only the due dates (no item names) are kept in OpenSafe\'s settings file.</p>' : ''}
-          <label class="switch" style="font-weight:500"><input type="checkbox" id="bgOn" ${state.bg && state.bg.enabled ? 'checked' : ''}> Keep reminders running</label></div></div>
+          <label class="switch" style="font-weight:500"><input type="checkbox" id="bgOn" ${state.bg && state.bg.enabled ? 'checked' : ''}> Keep reminders running</label></div>
+        <div style="border-top:1px solid var(--line2);padding-top:14px;margin-top:14px"><b>Monday summary</b>
+          <p class="muted" style="margin:6px 0 10px">On Monday morning, one notification about the week ahead: what's due, what's overdue, and letters still waiting for a reply and for how long. It comes when OpenSafe is open or running in the background on a Monday.</p>
+          <label class="switch" style="font-weight:500"><input type="checkbox" id="weeklyOn" ${!state.bg || state.bg.weekly !== false ? 'checked' : ''}> Monday summary</label>
+          <button class="btn small" data-action="summaryShow" style="margin-left:10px">Show it now</button></div></div>
     </div>
     <div class="section-title">Your lists</div>
     <div class="grid g2">
@@ -2703,8 +2795,10 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
         case 'addValuation': valuationForm(a); break;
         case 'rmValuation': if (confirm('Delete this valuation from the history? The item\'s value now isn\'t changed.')) { await run(() => keep.removeValuation(a.id, act.dataset.vid), 'Deleted'); await refresh(); } break;
         case 'bcLookup': barcodeLookup(a); break;
+        case 'kinOpen': { const d = await run(() => keep.kinInfo()); if (d) kinForm(d); break; }
         case 'watchChoose': { const st = await run(() => keep.watchChoose(act.dataset.kind)); if (st) toast(`✓ Watching that folder for ${st.kind === 'data' ? 'Data' : 'Documents'}`, 4000); await refresh(); break; }
         case 'watchStop': await run(() => keep.watchStop(), 'Stopped watching the folder'); await refresh(); break;
+        case 'summaryShow': { const t = await run(() => keep.summaryText()); if (t !== undefined) { await keep.summaryShow().catch(() => {}); toast('This week: ' + t.replace(/\n/g, ' · '), 7000); } break; }
         case 'remIcs': { const res = await run(() => keep.remindersIcs()); if (res) icsDone(res); break; }
         case 'newsOpen': lsSet('seenVersion', state.snap.version); go('help'); break;
         case 'newsHide': lsSet('seenVersion', state.snap.version); render(); break;

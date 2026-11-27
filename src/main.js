@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
 const QRCode = require('qrcode');
-const { Store, STATUSES, CONDITIONS, DOC_TYPES, POLICY_TYPES, LIBRARY_DOC_TYPES } = require('./store');
+const { Store, STATUSES, CONDITIONS, DOC_TYPES, POLICY_TYPES, LIBRARY_DOC_TYPES, valueNow } = require('./store');
 const { PhoneServer } = require('./phoneServer');
 const { buildReportHtml } = require('./report');
 const { buildClaimPack } = require('./claim');
@@ -62,9 +62,12 @@ const dayDiff = (a, b) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(
 function writeSchedule() {
   if (!store || store.isLocked()) return;
   const enc = store.isEncrypted();
-  const entries = store.reminders(new Date(), 400).map(r => enc ? { date: r.date } : { date: r.date, label: `${r.kind}: ${r.assetName}` });
+  const entries = store.reminders(new Date(), 400).map(r => enc ? { date: r.date, kind: r.kind } : { date: r.date, kind: r.kind, label: `${r.kind}: ${r.assetName}` });
+  // letters you sent that haven't had a reply (for the Monday summary)
+  const rs = store.replyStatus(), lib = store.libraryView();
+  const waiting = lib.filter(e => e.sent && rs[e.id] && !rs[e.id].replied).map(e => enc ? { sentOn: e.docDate || e.createdAt.slice(0, 10) } : { sentOn: e.docDate || e.createdAt.slice(0, 10), who: e.from || e.title });
   const p = readPrefs();
-  p.schedule = { updatedAt: new Date().toISOString(), named: !enc, entries };
+  p.schedule = { updatedAt: new Date().toISOString(), named: !enc, entries, waiting };
   writePrefs(p);
 }
 function scheduleSoon() { clearTimeout(scheduleTimer); scheduleTimer = setTimeout(() => { try { writeSchedule(); } catch (_) {} }, 1500); }
@@ -74,6 +77,7 @@ function dueFromSchedule(today = localISO()) {
 }
 function backgroundRemind(force) {
   if (!Notification.isSupported()) return;
+  if (!force) weeklySummary(false);
   const today = localISO(), hour = new Date().getHours();
   const p = readPrefs();
   if (!force && (p.lastNotified === today || hour < 8 || hour >= 21)) return;
@@ -89,6 +93,20 @@ function backgroundRemind(force) {
   n.show();
   const q = readPrefs(); q.lastNotified = today; writePrefs(q);
 }
+/** Monday summary: one notification on Monday morning about the week ahead (on unless turned off). */
+function weeklySummary(force) {
+  if (!Notification.isSupported()) return false;
+  const now = new Date(), today = localISO(now), p = readPrefs();
+  if (p.weekly === false && !force) return false;
+  if (!force && (now.getDay() !== 1 || p.lastWeekly === today || now.getHours() < 8 || now.getHours() >= 21)) return false;
+  if (store && !store.isLocked()) writeSchedule();
+  const text = summaryText(readPrefs().schedule, today);
+  const n = new Notification({ title: 'OpenSafe: your week', body: text });
+  n.on('click', () => { showWindow(); if (win) win.webContents.once('did-finish-load', () => win.webContents.send('nav', 'reminders')); if (win && !win.webContents.isLoading()) win.webContents.send('nav', 'reminders'); });
+  n.show();
+  const q = readPrefs(); q.lastWeekly = today; writePrefs(q);
+  return true;
+}
 const ukShort = (iso) => new Date(iso + 'T00:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
 function showWindow() { if (win && !win.isDestroyed()) { win.show(); win.focus(); } else createWindow(); }
 function ensureTray() {
@@ -98,6 +116,7 @@ function ensureTray() {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Open OpenSafe', click: showWindow },
     { label: 'Check reminders now', click: () => backgroundRemind(true) },
+    { label: 'Show this week\'s summary', click: () => weeklySummary(true) },
     { type: 'separator' },
     { label: 'Quit OpenSafe', click: () => { quitting = true; app.quit(); } }
   ]));
@@ -370,6 +389,9 @@ const statement = require('./statement');
 const pdfform = require('./pdfform');
 const complaints = require('./complaints');
 const { FolderWatch } = require('./watcher');
+const { summaryText } = require('./summary');
+const orderinfo = require('./orderinfo')
+const kinpack = require('./kinpack');
 const { Sync } = require('./sync');
 /** Turn a page of HTML into an A4 PDF, with scripts off and nothing loaded from the internet. */
 async function renderHtmlToPdf(html) {
@@ -520,6 +542,7 @@ function createWindow() {
 }
 
 function remindOnStartup() {
+  try { if (!store.isLocked()) weeklySummary(false); } catch (_) { /* a notification is never worth failing over */ }
   if (!Notification.isSupported() || store.isLocked() || readPrefs().lastNotified === localISO()) return; // at most one reminder notification a day
   const due = store.reminders().filter(r => r.daysLeft <= 7);
   if (!due.length) return;
@@ -630,7 +653,7 @@ function registerIpc() {
     return n;
   });
   h('clip:plain', (text) => { clipboard.writeText(String(text || '').slice(0, 20000)); return true; });
-  h('bg:get', () => ({ enabled: bgEnabled(), platform: process.platform }));
+  h('bg:get', () => ({ enabled: bgEnabled(), weekly: readPrefs().weekly !== false, platform: process.platform }));
   h('bg:set', (on) => setBackground(!!on));
   // Password attempts: after 5 wrong in a row, wait 30 s (doubling).
   const pw = { fails: 0, until: 0 };
@@ -800,6 +823,9 @@ function registerIpc() {
     notifyChanged();
     return st;
   });
+  h('summary:set', (on) => { const p = readPrefs(); p.weekly = !!on; writePrefs(p); return !!on; });
+  h('summary:show', () => weeklySummary(true));
+  h('summary:text', () => { writeSchedule(); return summaryText(readPrefs().schedule, localISO()); });
   h('reminders:ics', async () => {
     const list = store.reminders(new Date(), 366).filter(r => r.daysLeft >= 0);
     if (!list.length) throw new Error('There are no reminders in the next 12 months.');
@@ -833,6 +859,92 @@ function registerIpc() {
   h('complaint:delete', (id) => { store.deleteComplaint(String(id)); notifyChanged(); return true; });
   h('complaint:templates', () => Object.fromEntries(Object.entries(complaints.TEMPLATES).map(([k, t]) => [k, { name: t.name, steps: t.steps.map(x => ({ name: x.name, how: x.how })) }])));
   h('letter:sarDraft', (org) => ({ letter: letter.draftSar(store.letterBook().me, String(org || '')), caseName: '', addresses: store.letterBook().addresses }));
+  // ---- items from an order confirmation email ----
+  const orderEmail = (id) => {
+    const e = store.getLibraryEntry(String(id));
+    const f = e.files.find(x => /\.(eml|msg)$/i.test(x.name));
+    if (!f) throw new Error('This entry has no email (.eml or .msg) in it.');
+    const { name, buffer } = store.readLibraryFile(e.id, f.id);
+    return { e, f, name, buffer };
+  };
+  h('order:read', async (id) => {
+    const { e, name, buffer } = orderEmail(id);
+    const info = /\.msg$/i.test(name) ? doctext.msgInfo(buffer) : doctext.emailInfo(buffer);
+    const text = await doctext.extractText(name, buffer);
+    const r = orderinfo.parse(text, { from: info.from || e.from, subject: info.subject || e.title, date: info.date || e.docDate });
+    return Object.assign(r, { categories: store.data.categories, locations: store.data.locations });
+  });
+  h('order:make', async (id, p) => {
+    p = p || {};
+    const { e, f, name, buffer } = orderEmail(id);
+    const list = (Array.isArray(p.items) ? p.items : []).filter(x => x && String(x.name || '').trim()).slice(0, 30);
+    if (!list.length) throw new Error('Tick at least one thing to add.');
+    // the email as a PDF receipt for each item (item receipts can't be email files)
+    let receipt = null;
+    try { const html = await bundle.fileHtml(name, buffer, viewer); if (html) receipt = Buffer.from(await renderHtmlToPdf(html)); } catch (_) { receipt = null; }
+    const shop = String(p.shop || '').slice(0, 120), orderNo = String(p.orderNo || '').slice(0, 60);
+    const ids = [];
+    for (const x of list) {
+      const qty = Math.max(1, Math.min(999, Number(x.qty) || 1));
+      const a = store.saveAsset({ name: String(x.name).trim().slice(0, 200), purchasePrice: x.price, purchaseDate: p.date, supplier: shop, category: x.category || '', location: x.location || '',
+        notes: [orderNo && `Order ${orderNo}`, qty > 1 && `Bought ${qty} (the price is for all of them)`].filter(Boolean).join('. ') });
+      if (receipt) store.addDocument(a.id, `Receipt ${shop || 'order'}${orderNo ? ' ' + orderNo : ''}.pdf`.replace(/[\\/:*?"<>|]+/g, ' '), receipt, 'Receipt');
+      store.linkLibrary([e.id], a.id, true);
+      ids.push(a.id);
+    }
+    if (!e.from && shop) store.saveLibraryEntry({ id: e.id, from: shop });
+    libChanged(); notifyChanged();
+    return { ids, receipt: !!receipt };
+  });
+  // ---- "If something happens to me" pack ----
+  const KIN_TYPES = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', txt: 'text/plain', html: 'text/html', htm: 'text/html',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', doc: 'application/msword', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', eml: 'message/rfc822' };
+  const KIN_MAX = 80 * 1024 * 1024;
+  h('kin:info', () => {
+    const docs = store.libraryView().filter(e => e.files.length).map(e => ({ id: e.id, title: e.title || (e.files[0] || {}).name || 'Untitled', from: e.from || '', date: e.docDate || '', kind: e.kind, inVault: e.inVault,
+      size: e.files.reduce((t, f) => t + (f.size || 0), 0), files: e.files.length }));
+    return { choices: store.kinChoices(), docs, policies: (store.data.policies || []).length, me: store.letterBook().me };
+  });
+  h('kin:save', (c) => store.saveKinChoices(c, false));
+  h('kin:make', async (c, pass) => {
+    const problem = kinpack.weakness(pass);
+    if (problem) throw new Error(problem);
+    const ch = store.saveKinChoices(c, false);
+    const rates = store.data.settings.depreciation || {};
+    const items = store.allAssets().filter(a => !['Sold', 'Disposed', 'Lost / Stolen', 'Given back', 'Borrowed'].includes(a.status))
+      .map(a => ({ a, v: valueNow(a, rates) })).filter(x => x.v >= ch.minValue).sort((x, y) => y.v - x.v).slice(0, 500)
+      .map(({ a, v }) => ({ name: a.name, location: a.location || '', value: '£' + v.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        details: [a.brand, a.model, a.serial && 'Serial ' + a.serial, a.insurer && 'Insured with ' + a.insurer].filter(Boolean).join(', ') }));
+    const all = store.libraryView();
+    let total = 0;
+    const documents = [];
+    for (const id of ch.docIds) {
+      const e = all.find(x => x.id === id);
+      if (!e) continue;
+      const files = [];
+      for (const f of e.files) {
+        const { name, buffer } = store.readLibraryFile(e.id, f.id);
+        total += buffer.length;
+        if (total > KIN_MAX) throw new Error('The documents you chose come to more than 80 MB. Choose fewer, so the file stays small enough to open and copy.');
+        const ext = (name.split('.').pop() || '').toLowerCase();
+        files.push({ name, type: KIN_TYPES[ext] || 'application/octet-stream', data: buffer.toString('base64') });
+      }
+      documents.push({ title: e.title || (files[0] || {}).name || 'Document', from: e.from || '', date: e.docDate || '', files });
+    }
+    const me = store.letterBook().me;
+    const uk = (d) => d ? new Date(d + 'T00:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) : '';
+    for (const d of documents) d.date = uk(d.date);
+    const content = { owner: me.name || '', made: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }),
+      letter: ch.letter, where: ch.where, contacts: ch.contacts,
+      policies: ch.policies ? (store.data.policies || []).map(p => ({ insurer: p.insurer, type: p.type, policyNumber: p.policyNumber, claimsPhone: p.claimsPhone, renewalDate: uk(p.renewalDate) })) : [],
+      items, documents };
+    const r = await dialog.showSaveDialog(win, { title: 'Save the pack', defaultPath: path.join(app.getPath('documents'), `For my family ${new Date().toISOString().slice(0, 10)}.html`), filters: [{ name: 'Web page', extensions: ['html'] }] });
+    if (r.canceled || !r.filePath) return null;
+    fs.writeFileSync(r.filePath, kinpack.build(content, pass), 'utf8');
+    store.saveKinChoices(ch, true);
+    notifyChanged();
+    return { path: r.filePath, documents: documents.length, items: items.length, policies: content.policies.length, contacts: ch.contacts.length };
+  });
   // ---- statements ----
   const caseEntries = (name) => { const k = String(name || '').toLowerCase(); return [...store.libraryView('document'), ...store.libraryView('data')].filter(e => (e.caseName || '').toLowerCase() === k && !e.statement); };
   h('statement:draft', (caseName) => {

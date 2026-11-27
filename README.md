@@ -131,6 +131,12 @@ Emails, Word files and saved web pages are shown with scripts switched off. Use 
 
 **Watch a folder:** **Import & backup → Watch a folder** takes anything saved into a folder you choose (your scanner's folder, or one you save emails and downloads into) and adds it to Documents (each file its own document) or Data, once the file has finished saving. Each file is then moved into an **Added to OpenSafe** folder inside it; a file that's already kept is just moved. Temporary files (such as unfinished downloads) are left alone, and while OpenSafe is locked or closed, files wait. The folder is set per PC.
 
+**Items from order emails:** open an order confirmation email (.eml or .msg) in Data or Documents, then **More → Make items from this order…**. OpenSafe reads the shop, order number, date and the things bought with their prices; check each line (shops lay their emails out differently), choose a category and place, and each ticked line becomes an item with the email saved on it as a PDF receipt and linked back to the email.
+
+**Monday summary:** on Mondays between 8am and 9pm, once a day, a Windows notification lists what's due that week and the letters still waiting for a reply. It comes when you open (and unlock) OpenSafe, or, with **Keep reminders running** on, from the tray check every 30 minutes. With password protection on, it gives counts, not names. Turn it off, or see it now, under **Settings → Monday summary**; the tray menu also has **Show this week's summary**.
+
+**If something happens to me:** **Import & backup → If something happens to me** makes one locked file for your next of kin: a letter from you, where things are, people to contact, your insurance policies, items worth more than an amount you choose, and the documents you tick (copied into the file, up to 80 MB). It's a web page that opens in any browser (Chrome, Edge, Firefox or Safari, on a computer or phone) with nothing to install and nothing sent over the internet, once the passphrase is typed. It's encrypted with AES-256-GCM, with the key made from the passphrase by PBKDF2-SHA256 (600,000 rounds); without the passphrase it can't be read, so give the passphrase to them separately and keep a copy. OpenSafe remembers your choices, never the passphrase. The file is a snapshot: make a new one when things change.
+
 **Same file twice:** adding a file that's already kept (exactly the same file, in Documents or Data, or in the vault while it's unlocked) asks first: **Skip those** or **Add anyway**.
 
 **Bundle PDF:** tick letters (or Data entries) and choose **Bundle PDF…** (also on right-click and a document's **More** menu) to get one PDF for an MP, a solicitor, a tribunal or an appeal. They go in by the date on each one (oldest or newest first; undated ones last), with a contents page at the front (date, who from, title, reference and the pages each one is on) and *Page 3 of 40* on every page. PDFs and photos go in as they are; emails (.eml and .msg), Word and Excel files are turned into pages. Pictures from the internet in emails are never loaded. Anything that can't go in a PDF (such as videos) is listed on the contents page as not included. **Hide private details** (in the same window) blacks out what you tick (National Insurance numbers, bank sort codes and account numbers, card numbers, phone numbers, email addresses) and any words you type, such as names. Words are found in each page's text or, on scanned pages, by reading the page on this PC. Every page is then redrawn as a picture, so hidden details can't be copied out of the PDF; your own copies aren't changed. It tells you what it hid. Always check the PDF before sending: things can be missed, especially handwriting or faint scans. Typed words aren't saved.
@@ -310,6 +316,9 @@ src/watcher.js      Watches a folder for new files
 src/statement.js    Drafts a statement from a case
 src/pdfform.js      Fills in PDF forms
 src/complaints.js   Complaint stages and time limits
+src/orderinfo.js    Reads order confirmation emails
+src/summary.js      Monday summary wording
+src/kinpack.js      "If something happens to me" locked file
 src/bundle.js       Bundle PDF: chosen documents in date order with a contents page and page numbers
 src/renderer/       Desktop UI (plain HTML/CSS/JS)
 src/phone/          Phone page for the Wi-Fi link

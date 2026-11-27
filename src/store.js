@@ -762,6 +762,26 @@ class Store {
     }
   }
 
+  // ---------- "If something happens to me" pack choices (never the passphrase) ----------
+  kinChoices() {
+    const k = this.data.kinPack || {};
+    return { letter: String(k.letter || ''), where: String(k.where || ''), contacts: Array.isArray(k.contacts) ? k.contacts.map(c => Object.assign({}, c)) : [],
+      docIds: Array.isArray(k.docIds) ? k.docIds.slice() : [], minValue: Number.isFinite(k.minValue) ? k.minValue : 250, policies: k.policies !== false, madeAt: k.madeAt || '' };
+  }
+  saveKinChoices(c, made) {
+    c = c || {};
+    const prev = this.data.kinPack || {};
+    this.data.kinPack = {
+      letter: String(c.letter || '').slice(0, 20000), where: String(c.where || '').slice(0, 20000),
+      contacts: (Array.isArray(c.contacts) ? c.contacts : []).map(x => ({ name: cleanString(x && x.name, 120), role: cleanString(x && x.role, 120), contact: cleanString(x && x.contact, 300) })).filter(x => x.name || x.contact).slice(0, 40),
+      docIds: (Array.isArray(c.docIds) ? c.docIds : []).map(String).slice(0, 200),
+      minValue: Math.max(0, Math.min(1e7, Number(c.minValue) || 0)), policies: c.policies !== false,
+      madeAt: made ? nowIso() : (prev.madeAt || '')
+    };
+    this.save();
+    return this.kinChoices();
+  }
+
   /** Answers typed into PDF forms, by box label, offered again for boxes with the same label. */
   formAnswers() { return Object.assign({}, this.data.formAnswers || {}); }
   rememberFormAnswers(byLabel) {
