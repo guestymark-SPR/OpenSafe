@@ -366,6 +366,8 @@ const bundle = require('./bundle');
 const redact = require('./redact');
 const letter = require('./letter');
 const ics = require('./ics');
+const statement = require('./statement');
+const pdfform = require('./pdfform');
 const { FolderWatch } = require('./watcher');
 const { Sync } = require('./sync');
 /** Turn a page of HTML into an A4 PDF, with scripts off and nothing loaded from the internet. */
@@ -803,6 +805,51 @@ function registerIpc() {
     const out = ics.build(list);
     fs.writeFileSync(r.filePath, out.text, 'utf8');
     return { path: r.filePath, count: out.count };
+  });
+  // ---- PDF forms ----
+  h('form:read', async (id, fileId) => {
+    const { name, buffer } = store.readLibraryFile(String(id), String(fileId));
+    if (!/\.pdf$/i.test(name)) throw new Error('Only PDF forms can be filled in.');
+    const r = await pdfform.read(buffer, { me: store.letterBook().me, remembered: store.formAnswers() });
+    return Object.assign(r, { name });
+  });
+  h('form:fill', async (id, fileId, values, opts) => {
+    opts = opts || {};
+    const { name, buffer } = store.readLibraryFile(String(id), String(fileId));
+    const clean = {};
+    for (const [k, v] of Object.entries(values || {})) clean[String(k).slice(0, 300)] = typeof v === 'boolean' ? v : String(v ?? '').slice(0, 5000);
+    const r = await pdfform.fill(buffer, clean, { flatten: !!opts.flatten });
+    const base = name.replace(/\.pdf$/i, '').replace(/ \(filled( in)?\)$/i, '');
+    const rec = store.addLibraryFile(String(id), `${base} (filled in).pdf`, Buffer.from(r.bytes));
+    if (opts.remember && opts.labels) store.rememberFormAnswers(Object.fromEntries(Object.entries(opts.labels).filter(([, v]) => typeof v === 'string')));
+    libChanged(); readSoon();
+    return { fileId: rec.id, filled: r.filled };
+  });
+  // ---- statements ----
+  const caseEntries = (name) => { const k = String(name || '').toLowerCase(); return [...store.libraryView('document'), ...store.libraryView('data')].filter(e => (e.caseName || '').toLowerCase() === k && !e.statement); };
+  h('statement:draft', (caseName) => {
+    const list = caseEntries(caseName);
+    if (!list.length) throw new Error('There\'s nothing in this case yet.');
+    return { title: `Statement about ${caseName}`, text: statement.draft(String(caseName), list, store.replyStatus(), store.letterBook().me), count: list.length };
+  });
+  h('statement:save', async (p) => {
+    p = p || {};
+    const text = String(p.text || '').slice(0, 200000), title = String(p.title || 'Statement').trim().slice(0, 200) || 'Statement';
+    if (!statement.paragraphs(text).length) throw new Error('The statement is empty.');
+    const formats = (Array.isArray(p.formats) ? p.formats : ['docx']).filter(f => f === 'pdf' || f === 'docx');
+    if (!formats.length) throw new Error('Choose Word, PDF or both.');
+    const me = store.letterBook().me, today = new Date().toISOString().slice(0, 10);
+    const base = title.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Statement';
+    const files = [];
+    if (formats.includes('docx')) files.push({ name: base + '.docx', buf: await statement.docx(title, text, me, today) });
+    if (formats.includes('pdf')) files.push({ name: base + '.pdf', buf: Buffer.from(await renderHtmlToPdf(statement.html(title, text, me, today))) });
+    const details = { title, docType: 'Legal', docDate: today, caseName: String(p.caseName || '').slice(0, 120), statement: { text } };
+    let e;
+    if (p.entryId) { e = store.saveLibraryEntry(Object.assign({ id: String(p.entryId) }, details)); for (const f of e.files.slice()) store.removeLibraryFile(e.id, f.id); }
+    else e = store.saveLibraryEntry(Object.assign({ kind: 'document' }, details));
+    for (const f of files) store.addLibraryFile(e.id, f.name, f.buf);
+    libChanged(); readSoon();
+    return { id: e.id };
   });
   // ---- letters you write ----
   h('letter:draft', (replyToId) => {

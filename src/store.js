@@ -527,6 +527,8 @@ class Store {
     if (existing && existing.suggestDone) e.suggestDone = true;
     if (get('onPhone') === true) e.onPhone = true; // a copy goes in the inventory file for the phone
     e.marks = (Array.isArray(get('marks')) ? get('marks') : []).map(cleanMark).filter(Boolean).slice(0, 500); // highlights and notes on PDF pages
+    const stm = get('statement'); // a statement written in OpenSafe: its text, to change it later
+    if (stm && typeof stm === 'object' && typeof stm.text === 'string') e.statement = { text: stm.text.slice(0, 200000) };
     const rep = get('reply'); // a letter written in OpenSafe: what's needed to change it later
     if (rep && typeof rep === 'object') {
       e.reply = {};
@@ -758,6 +760,20 @@ class Store {
       this.data.addressBook = this.data.addressBook || {};
       this.data.addressBook[cleanString(rep.toName, 200).toLowerCase()] = String(rep.toAddress).slice(0, 600);
     }
+  }
+
+  /** Answers typed into PDF forms, by box label, offered again for boxes with the same label. */
+  formAnswers() { return Object.assign({}, this.data.formAnswers || {}); }
+  rememberFormAnswers(byLabel) {
+    const fa = this.data.formAnswers = this.data.formAnswers || {};
+    for (const [k, v] of Object.entries(byLabel || {})) {
+      const key = String(k).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 120);
+      if (!key) continue;
+      const val = String(v ?? '').slice(0, 500);
+      if (val) fa[key] = val; else delete fa[key];
+    }
+    const keys = Object.keys(fa); if (keys.length > 500) for (const k of keys.slice(0, keys.length - 500)) delete fa[k];
+    this.save();
   }
 
   // ---------- cases and replies ----------

@@ -119,6 +119,10 @@ Emails, Word files and saved web pages are shown with scripts switched off. Use 
 
 **Writing letters:** on a letter you received, **More → Write a reply…** starts a reply with their name, reference ("Your ref") and the date of their letter ("Your letter dated") filled in; **+ New → Letter…** (or a case's **More → Write a letter in this case…**) starts a blank one. Your name and address are asked for once and remembered, as is each organisation's address. The letter is laid out the UK way (your address top right, the date, theirs on the left, the subject in bold, *Yours faithfully* after *Dear Sir or Madam*, otherwise *Yours sincerely*) and saved in Documents as PDF and/or Word, marked **sent by me**, in the case, with an optional reminder if no reply comes within 14, 28 or 56 days. **More → Change this letter…** rewrites it and replaces the files. To print or post it, open the PDF; to email it, use **Save a copy…**.
 
+**Statements:** on a case, **More → Draft a statement…** writes a first draft of a numbered, dated statement: who you are, then each letter in date order (received from, or sent to), with the words you highlighted and your notes, and whether a reply came. "Document 3" means the third in a Bundle PDF of the case (oldest first, with a contents page). Edit it freely (paragraphs are renumbered when saved) and save it in the case as Word and/or PDF, with lines to sign and date. **More → Change this statement…** reopens it. It's a starting point in your words, not legal advice: courts and tribunals can ask for particular wording.
+
+**Filling in PDF forms:** on a PDF's **⋯** menu, **Fill in this form…** lists the boxes a fillable form has, page by page, and suggests answers: your name, address, postcode, phone, email and today's date from your letter details, and anything you typed into a box with the same label in an earlier form. A filled-in copy is added beside the empty form, either still editable or with the answers locked in. Scanned or printed forms have no boxes to fill; Adobe XFA-only forms can't be filled here. Remembered answers are kept with your other data (encrypted when password protection is on).
+
 **Filters:** besides Type (or Folder) and Sort, Documents and Data can be filtered by **From / to**, **Tag**, **Case** and **Sent** (sent by me, or waiting for a reply). Each filter appears once there's something to choose.
 
 **Watch a folder:** **Import & backup → Watch a folder** takes anything saved into a folder you choose (your scanner's folder, or one you save emails and downloads into) and adds it to Documents (each file its own document) or Data, once the file has finished saving. Each file is then moved into an **Added to OpenSafe** folder inside it; a file that's already kept is just moved. Temporary files (such as unfinished downloads) are left alone, and while OpenSafe is locked or closed, files wait. The folder is set per PC.
@@ -299,6 +303,8 @@ src/letter.js       Letters you write (A4 page and Word file)
 src/redact.js       Hides private details in Bundle PDFs
 src/ics.js          Reminders as a calendar file
 src/watcher.js      Watches a folder for new files
+src/statement.js    Drafts a statement from a case
+src/pdfform.js      Fills in PDF forms
 src/bundle.js       Bundle PDF: chosen documents in date order with a contents page and page numbers
 src/renderer/       Desktop UI (plain HTML/CSS/JS)
 src/phone/          Phone page for the Wi-Fi link

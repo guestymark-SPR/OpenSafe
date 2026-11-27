@@ -220,3 +220,6 @@ mark{background:color-mix(in srgb,#f5c542 45%,transparent);color:inherit;border-
 .markcolors{display:flex;gap:10px}.markcolors input{display:none}.markcolors .sw{display:inline-block;width:26px;height:26px;border-radius:50%;border:2px solid transparent;cursor:pointer}
 .markcolors input:checked+.sw{border-color:var(--ink,#222)}
 .sw.yellow{background:#ffe000}.sw.green{background:#50c86e}.sw.pink{background:#ff69aa}.sw.blue{background:#4696ff}
+.fpage{font-weight:700;color:var(--muted,#666);margin-top:6px;border-bottom:1px solid var(--line);padding-bottom:2px}
+.frow{display:grid;grid-template-columns:minmax(180px,38%) 1fr;gap:10px;align-items:center}
+.frow input.suggested{background:rgba(255,224,0,.12)}

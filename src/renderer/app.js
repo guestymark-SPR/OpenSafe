@@ -713,6 +713,62 @@
       <p class="mono small">${esc(res.path)}</p></div></div>
       <div class="df"><button class="btn" data-action="close">Close</button></div></div>`);
   }
+  /** Fill in a PDF form's boxes: suggestions from your details and earlier answers; saves a filled-in copy. */
+  function formFillForm(e, fileId, f) {
+    const usable = f.fields.filter(x => !x.readOnly);
+    if (!usable.length) {
+      openModal(`<div class="dialog narrow"><div class="dh"><h2>No boxes to fill in</h2></div><div class="db"><p class="s3" style="margin-top:0">${esc(f.name)} has no boxes OpenSafe can fill in. ${f.xfa ? 'It\'s an Adobe XFA form, which only Adobe Reader can fill.' : 'It may be a scanned or printed form: fill it in on paper, or in a PDF app that lets you type on the page.'}</p></div><div class="df"><button class="btn" data-action="close">Close</button></div></div>`);
+      return;
+    }
+    const n = usable.filter(x => x.suggest).length;
+    let lastPage = 0;
+    const row = (x, i) => {
+      const head = x.page && x.page !== lastPage ? `<div class="s3 fpage">Page ${x.page}</div>` : ''; lastPage = x.page || lastPage;
+      const id = `ff${i}`, val = x.value || x.suggest || '';
+      const inp = x.type === 'check' ? `<span class="switch"><input type="checkbox" id="${id}" data-name="${esc(x.name)}" ${x.value ? 'checked' : ''}> Tick</span>`
+        : x.type === 'radio' || x.type === 'choice' ? `<select id="${id}" data-name="${esc(x.name)}"><option value="">—</option>${x.options.map(o => `<option ${o === x.value ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`
+        : `<input id="${id}" data-name="${esc(x.name)}" data-label="${esc(x.label)}" value="${esc(val)}" ${x.maxLength ? `maxlength="${x.maxLength}"` : ''} class="${x.suggest && !x.value ? 'suggested' : ''}">`;
+      return `${head}<label class="f s3 frow" for="${id}"><span>${esc(x.label)}${x.suggest && !x.value ? ' <span class="faint small">(suggested)</span>' : ''}</span>${inp}</label>`;
+    };
+    openModal(`<form class="dialog wide" id="ffForm"><div class="dh"><h2>Fill in ${esc(f.name)}</h2></div><div class="db">
+      <p class="s3 muted" style="margin:0">${usable.length} box${usable.length === 1 ? '' : 'es'} on ${f.pages} page${f.pages === 1 ? '' : 's'}. ${n ? `<b>${n}</b> filled in from your details and earlier forms: check them.` : 'Type your answers below.'} Box names come from the form, so some may be unclear: open the PDF alongside if you need to see where a box is. A filled-in copy is added to this document; the empty form stays as it is.</p>
+      ${f.xfa ? '<p class="s3 note" style="margin:0">This form also has an Adobe XFA version. The filled-in copy uses the ordinary PDF boxes, which most PDF apps show; check it before sending.</p>' : ''}
+      ${usable.map(row).join('')}
+      <label class="switch s3"><input type="checkbox" name="remember" checked> Remember my answers for other forms</label>
+      <label class="switch s3"><input type="checkbox" name="flatten"> Lock the answers into the page (they can't be changed later)</label>
+      <div class="err s3" id="ffErr"></div></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">${icon('check')}Save filled-in copy</button></div></form>`);
+    const form = $('#ffForm');
+    form.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const values = {}, labels = {};
+      for (const el of form.querySelectorAll('[data-name]')) { values[el.dataset.name] = el.type === 'checkbox' ? el.checked : el.value; if (el.dataset.label) labels[el.dataset.label] = el.value; }
+      busy(form, true, 'Saving…');
+      try {
+        const r = await keep.formFill(e.id, fileId, values, { flatten: form.elements.flatten.checked, remember: form.elements.remember.checked, labels });
+        closeModal(); await refresh(); toast(`✓ Filled-in copy added (${r.filled} answer${r.filled === 1 ? '' : 's'})`, 4000);
+      } catch (ex) { $('#ffErr').textContent = ex.message; busy(form, false); }
+    };
+  }
+  /** Draft (or change) a statement about a case, then save it as Word and/or PDF in the case. */
+  function statementForm(d, entryId) {
+    openModal(`<form class="dialog wide" id="stForm"><div class="dh"><h2>${entryId ? 'Change statement' : 'Draft a statement'}</h2></div><div class="db">
+      ${entryId ? '' : `<p class="s3 muted" style="margin:0">A first draft from the ${d.count} document${d.count === 1 ? '' : 's'} in <b>${esc(d.caseName)}</b>, oldest first, with what you highlighted and your notes. "Document 3" means the third in a Bundle PDF of this case (oldest first). Read it through and change anything: it's your account, in your words. Courts and tribunals can ask for particular wording, so check what they need.</p>`}
+      <label class="f s3">Title<input name="title" maxlength="200" value="${esc(d.title)}" required></label>
+      <label class="f s3">Statement<textarea name="text" rows="18" maxlength="200000" required>${esc(d.text)}</textarea><span class="faint small">One paragraph each, with a blank line between. Numbers are redone when it's saved, so you can add, move or delete paragraphs freely.</span></label>
+      <div class="f"><span>Save as</span><span style="display:flex;gap:16px"><label class="switch"><input type="checkbox" name="fmtDocx" checked> Word</label><label class="switch"><input type="checkbox" name="fmtPdf"> PDF</label></span></div>
+      <div class="err s3" id="stErr"></div></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">${icon('check')}Save in the case</button></div></form>`);
+    const f = $('#stForm'), el = f.elements;
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      busy(f, true, 'Saving…');
+      try {
+        const r = await keep.statementSave({ title: el.title.value, text: el.text.value, caseName: d.caseName, formats: [el.fmtDocx.checked && 'docx', el.fmtPdf.checked && 'pdf'].filter(Boolean), entryId: entryId || '' });
+        closeModal(); await refresh(); go('libitem', { libId: r.id }); toast('✓ Statement saved in the case', 4000);
+      } catch (ex) { $('#stErr').textContent = ex.message; busy(f, false); }
+    };
+  }
   /** A small "type a name" box (with suggestions). Resolves to the text, or null if cancelled. */
   function promptText(title, label, value = '', suggestions = []) {
     return new Promise((resolve) => {
@@ -751,7 +807,7 @@
     let lastYear = '';
     return `<div class="head"><a href="#" data-nav="docs" class="back">${icon('back')}Documents</a><h1>${esc(name)}</h1><span class="sub">${list.length} letter${list.length === 1 ? '' : 's'}${c && c.refs.length ? ' · Ref ' + esc(c.refs.join(', ')) : ''}</span><span class="spacer"></span>
         <button class="btn" data-action="libBundle" data-ids="${esc(ids)}">${icon('printer')}Bundle PDF of the case…</button>
-        ${dd('More', [{ label: 'Write a letter in this case…', action: 'libLetterNew', icon: 'edit' }, { label: 'Add documents to this case…', action: 'libCaseAdd', icon: 'plus' }, '-', { label: 'Rename case…', action: 'libCaseRename', icon: 'edit' }])}</div>
+        ${dd('More', [{ label: 'Draft a statement…', action: 'libStatementNew', icon: 'file' }, { label: 'Write a letter in this case…', action: 'libLetterNew', icon: 'edit' }, { label: 'Add documents to this case…', action: 'libCaseAdd', icon: 'plus' }, '-', { label: 'Rename case…', action: 'libCaseRename', icon: 'edit' }])}</div>
       ${!list.length ? '<div class="card empty">Nothing in this case now.</div>' : `<div class="timeline">${list.map(e => {
         const d = e.docDate || e.createdAt.slice(0, 10), y = d.slice(0, 4);
         const yr = y !== lastYear ? `<div class="tyear">${esc(y)}</div>` : ''; lastYear = y;
@@ -834,7 +890,8 @@
     return `<div class="head"><button class="btn ghost" data-nav="${libKindPage(e.kind)}">${icon('back')}${L.title}</button><span class="spacer"></span>
       <span class="menuwrap"><button class="btn" data-action="moreMenu">${icon('more')}More</button><div class="menu hidden">
         ${state.snap.security.vault.unlocked ? `<button data-action="libVault" data-to="${e.inVault ? '' : '1'}">${icon(e.inVault ? 'unlock' : 'lock')}${e.inVault ? 'Move out of the vault' : 'Move into the vault'}</button>` : state.snap.security.vault.exists ? '' : ''}
-        ${e.reply ? `<button data-action="libLetterEdit">${icon('edit')}Change this letter…</button>` : !e.sent ? `<button data-action="libLetterReply">${icon('edit')}Write a reply…</button>` : ''}
+        ${e.statement ? `<button data-action="libStatementEdit">${icon('edit')}Change this statement…</button>` : ''}
+        ${e.reply ? `<button data-action="libLetterEdit">${icon('edit')}Change this letter…</button>` : e.statement ? '' : !e.sent ? `<button data-action="libLetterReply">${icon('edit')}Write a reply…</button>` : ''}
         <button data-action="libOnPhone" data-ids="${esc(JSON.stringify([e.id]))}" data-on="${e.onPhone ? '' : '1'}">${icon('phone')}${e.onPhone ? 'Take off my phone' : 'Keep a copy on my phone'}</button>
         <button data-action="libBundle" data-ids="${esc(JSON.stringify([e.id]))}">${icon('printer')}Make a PDF with contents page…</button>
         <button data-action="libDel" class="danger">${icon('trash')}Delete</button></div></span>
@@ -849,6 +906,7 @@
           <span class="menuwrap"><button class="btn small" data-action="moreMenu">${icon('more')}</button><div class="menu hidden">
             <button data-action="libFileOpen" data-file="${esc(x.id)}">${icon('upload')}Open in another app</button>
             <button data-action="libFileCopy" data-file="${esc(x.id)}">${icon('download')}Save a copy…</button>
+            ${/\.pdf$/i.test(x.name) ? `<button data-action="libFormFill" data-file="${esc(x.id)}">${icon('edit')}Fill in this form…</button>` : ''}
             <button data-action="libFileText" data-file="${esc(x.id)}">${icon('search')}Show the words found</button>
             <button data-action="libFileRemove" data-file="${esc(x.id)}" class="danger">${icon('trash')}Remove this file</button></div></span></div>`; }).join('')}</div>` : '<p class="muted">No files.</p>'}
         <div class="drop" id="libDrop2">Drag more files anywhere on this page, or <a href="#" data-action="libAddMore">choose files…</a>${e.kind === 'document' ? ' (for example the other pages of the letter)' : ''}</div></div>
@@ -972,6 +1030,9 @@
         await viewerAction({ dataset: { action: 'libMarkGo', mark: k.id } });
         return true;
       }
+      case 'libFormFill': { const f = await run(() => keep.formRead(e.id, act.dataset.file)); if (f) formFillForm(e, act.dataset.file, f); return true; }
+      case 'libStatementNew': { const d = await run(() => keep.statementDraft(state.caseName)); if (d) statementForm({ title: d.title, text: d.text, caseName: state.caseName, count: d.count }, null); return true; }
+      case 'libStatementEdit': statementForm({ title: e.title, text: e.statement.text, caseName: e.caseName || '' }, e.id); return true;
       case 'libLetterReply': { const d = await run(() => keep.letterDraft(e.id)); if (d) letterForm(d, null); return true; }
       case 'libLetterNew': { const d = await run(() => keep.letterDraft('')); if (d) { if (state.view === 'case') d.caseName = state.caseName; letterForm(d, null); } return true; }
       case 'libLetterEdit': { const d = await run(() => keep.letterDraft('')); if (d) letterForm({ letter: Object.assign({}, e.reply), caseName: e.caseName || '', addresses: d.addresses, expectBy: e.expectBy }, e.id); return true; }
@@ -1164,6 +1225,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
   // ---------- one search for everything ----------
   // ---------- Help and What's new ----------
   const NEWS = [
+    ['2.17.0', 'Statements and forms', ['<b>Draft a statement…</b> on a case (More menu): a numbered, dated account built from its letters, your highlights and notes, to edit and save as Word or PDF.', '<b>Fill in this form…</b> on a PDF\'s ⋯ menu: fillable forms get your name, address and earlier answers suggested; a filled-in copy is saved.']],
     ['2.16.0', 'Highlights and notes', ['In the reader, <b>Highlight</b> and drag over a PDF page to mark it; click a highlight to add a note. OpenSafe keeps the words under it, and search finds your notes.', 'A document\'s page lists its highlights; Bundle PDF can show them, with your notes on the contents page.']],
     ['2.15.0', 'Getting things in, and your calendar', ['<b>Watch a folder</b> (Import & backup): files saved into it are added to Documents or Data by themselves.', '<b>Share to OpenSafe</b> on the phone: share a PDF, photo or email from another app straight into Capture.', '<b>Add to my calendar…</b> on Reminders: a calendar file for Outlook, Google Calendar or your phone.']],
     ['2.14.0', 'Write letters, hide details', ['<b>Write a reply…</b> on a letter (More menu), or <b>+ New → Letter…</b>: a properly laid-out letter with their reference and date filled in, saved as PDF and Word, marked as sent and put in the case.', '<b>Hide private details</b> in Bundle PDF: black out NI numbers, bank details, card and phone numbers, emails and any words you type, including on scanned pages.']],
@@ -1191,6 +1253,8 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     ['hide', 2, 'Hide details in a bundle', 'Tick a letter with your NI number on it → Bundle PDF… → <b>Hide private details</b>, tick National Insurance numbers. In the PDF, the number should be blacked out.'],
     ['share', 1, 'Share a PDF to Capture on the phone', 'In your phone\'s Files or Gmail app, share a PDF and pick <b>OpenSafe</b>. Capture should open and ask where to keep it. (Capture must be installed on the home screen; the Share option may not appear straight away after the update.)'],
     ['mark', 1, 'Highlight a line in a PDF', 'Open a PDF letter in the reader, click <b>Highlight</b> and drag across a line. Click the yellow box and add a note. Searching for a word in your note should find the letter.'],
+    ['statement', 2, 'Draft a statement', 'Open a case → More → <b>Draft a statement…</b>. Each letter should be a numbered paragraph in date order, with your highlights and notes. Save it and open the Word file.'],
+    ['form', 2, 'Fill in a real form', 'Add a fillable PDF form you need (for example from a council or government site) and choose <b>⋯ → Fill in this form…</b>. Your name and address should be suggested; check the filled-in copy in your PDF app.'],
     ['twopc', 3, 'Two PCs (only if you have a second PC)', 'Choose the same OneDrive folder on both under Import & backup → Two PCs. Add an item on one; once OneDrive has copied it (usually a few minutes), it should appear on the other.']
   ];
   const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (_) { return d; } };

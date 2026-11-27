@@ -51,6 +51,13 @@ const F = path.join(__dirname, 'fixtures', 'library');
     const red = require(path.join(R, 'app.asar', 'src', 'redact.js'));
     const rr = await red.redactPdf(fs.readFileSync(path.join(F, 'scanned.pdf')), { kinds: [], words: ['tariff'] }, { ocrWords: require(path.join(R, 'app.asar', 'src', 'ocr.js')).readWords });
     if (!rr.found.words) throw new Error('word on the scan not found');
+    const st = require(path.join(R, 'app.asar', 'src', 'statement.js'));
+    if ((await st.docx('T', '1. A', { name: 'M' }, '2026-01-01')).slice(0, 2).toString() !== 'PK') throw new Error('statement not a Word file');
+    const pf = require(path.join(R, 'app.asar', 'src', 'pdfform.js'));
+    const { PDFDocument } = require(path.join(R, 'app.asar', 'node_modules', 'pdf-lib'));
+    const fd = await PDFDocument.create(); const fp = fd.addPage(); fd.getForm().createTextField('Your full name').addToPage(fp, { x: 10, y: 10, width: 100, height: 20 });
+    const filled = await pf.fill(Buffer.from(await fd.save()), { 'Your full name': 'Me' });
+    if ((await pf.read(Buffer.from(filled.bytes))).fields[0].value !== 'Me') throw new Error('form not filled');
     console.log('ok   letter and redaction');
   } catch (e) { bad++; console.log('FAIL letter/redaction', e.message); }
   try { require(path.join(R, 'app.asar', 'src', 'sync.js')); console.log('ok   sync loads'); } catch (e) { bad++; console.log('FAIL sync', e.message); }

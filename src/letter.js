@@ -63,9 +63,9 @@ ${paras(d.body).map(p => `<p>${p.map(esc).join('<br>')}</p>`).join('')}
 
 // ---- Word ----
 const x = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
-function wp(text, { right = false, bold = false, after = 0, before = 0, breaks = null } = {}) {
-  const ppr = `<w:pPr><w:spacing w:before="${before}" w:after="${after}"/>${right ? '<w:jc w:val="right"/>' : ''}</w:pPr>`;
-  const rpr = bold ? '<w:rPr><w:b/></w:rPr>' : '';
+function wp(text, { right = false, center = false, bold = false, italic = false, size = 0, after = 0, before = 0, breaks = null, indent = 0, hanging = 0 } = {}) {
+  const ppr = `<w:pPr><w:spacing w:before="${before}" w:after="${after}"/>${indent || hanging ? `<w:ind w:left="${indent}" w:hanging="${hanging}"/>` : ''}${right ? '<w:jc w:val="right"/>' : center ? '<w:jc w:val="center"/>' : ''}</w:pPr>`;
+  const rpr = bold || italic || size ? `<w:rPr>${bold ? '<w:b/>' : ''}${italic ? '<w:i/>' : ''}${size ? `<w:sz w:val="${size * 2}"/><w:szCs w:val="${size * 2}"/>` : ''}</w:rPr>` : '';
   const parts = breaks || [text];
   const runs = parts.map((t, i) => `<w:r>${rpr}${i ? '<w:br/>' : ''}<w:t xml:space="preserve">${x(t)}</w:t></w:r>`).join('');
   return `<w:p>${ppr}${runs}</w:p>`;
@@ -85,6 +85,11 @@ async function docx(d0) {
   for (const p of paras(d.body)) body.push(wp('', { after: 200, breaks: p }));
   body.push(wp(d.closing, { before: 120, after: 800 }));
   body.push(wp(d.fromName));
+  return packDocx(body, { title: d.subject, creator: d.fromName });
+}
+/** A Word file from paragraphs made with wp(). */
+async function packDocx(body, { title = '', creator = '' } = {}) {
+  const d = { subject: title, fromName: creator };
   const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
   const zip = new JSZip();
   zip.file('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>`);
@@ -108,4 +113,4 @@ function draftReply(e, me = {}) {
   };
 }
 
-module.exports = { html, docx, normalise, draftReply, signOff, longDate };
+module.exports = { html, docx, normalise, draftReply, signOff, longDate, wp, packDocx };
