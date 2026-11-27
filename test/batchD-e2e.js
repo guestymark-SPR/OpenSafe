@@ -31,7 +31,7 @@ let started = false;
 app.on('browser-window-created', (_e, win) => {
   if (started) return; started = true;
   win.webContents.once('did-finish-load', async () => {
-    const js = (code) => win.webContents.executeJavaScript(code);
+    const js = (code) => win.webContents.executeJavaScript(code).catch(() => { throw new Error('Step failed: ' + code.slice(0, 160)); });
     const shot = async (name) => { await wait(600); fs.writeFileSync(path.join(OUT, name + '.png'), (await win.webContents.capturePage()).toPNG()); };
     const open = async (name) => { await js(`document.querySelector('[data-nav=items]').click()`); await wait(400); await js(`[...document.querySelectorAll('[data-open]')].find(e => e.querySelector('.name').innerText.startsWith(${JSON.stringify(name)})).click()`); await wait(500); };
     const waitFile = async (f) => { for (let i = 0; i < 60 && !fs.existsSync(f); i++) await wait(200); await wait(500); return fs.existsSync(f); };
@@ -52,7 +52,7 @@ app.on('browser-window-created', (_e, win) => {
       await js(`document.querySelector('[data-action=del]').click()`); await wait(800);
       R.deleteDialog = boxes[boxes.length - 1] && boxes[boxes.length - 1].detail;
       R.binButton = await js(`(document.querySelector('[data-nav=bin]') || {}).innerText`);
-      await js(`document.querySelector('[data-nav=bin]').click()`); await wait(400);
+      await js(`document.querySelector('[data-action=goBin]').click()`); await wait(400);
       R.binRows = await js(`[...document.querySelectorAll('table.list tbody tr')].map(r => r.innerText.replace(/\\s+/g, ' ').trim())`);
       await shot('d2-bin');
       await js(`document.querySelector('[data-action=binRestore]').click()`); await wait(800);
@@ -61,7 +61,7 @@ app.on('browser-window-created', (_e, win) => {
       R.restoredPhotos = st1.getAsset(drill.id) && st1.getAsset(drill.id).photos.length;
       await open('Makita drill');
       await js(`document.querySelector('[data-action=del]').click()`); await wait(800);
-      await js(`document.querySelector('[data-nav=bin]').click()`); await wait(400);
+      await js(`document.querySelector('[data-action=goBin]').click()`); await wait(400);
       await js(`document.querySelector('[data-action=binPurge]').click()`); await wait(800);
       R.binAfterPurge = await js(`document.querySelector('.empty') ? document.querySelector('.empty').innerText : 'not empty'`);
       R.filesGone = !fs.existsSync(path.join(dir, 'attachments', drill.id));

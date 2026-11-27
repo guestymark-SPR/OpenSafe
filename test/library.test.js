@@ -154,3 +154,28 @@ test('backup and restore include documents and data', () => {
   assert.strictEqual(back.length, 1);
   assert.ok(s.readLibraryFile(e.id, f.id).buffer.equals(Buffer.from('%PDF TAX')));
 });
+
+test('move between Documents and Data, into folders, and link to items', () => {
+  const s = tmpStore();
+  const a = s.saveAsset({ name: 'Boiler' });
+  const d = s.saveLibraryEntry({ kind: 'document', title: 'Boiler service letter', docType: 'Home' });
+  const x = s.saveLibraryEntry({ kind: 'data', title: 'Manual.pdf' });
+  assert.strictEqual(s.moveLibrary([d.id], { kind: 'data', folder: 'House' }), 1);
+  let e = s.getLibraryEntry(d.id);
+  assert.strictEqual(e.kind, 'data'); assert.strictEqual(e.folder, 'House'); assert.strictEqual(e.docType, '');
+  s.moveLibrary(d.id, { kind: 'document' });
+  e = s.getLibraryEntry(d.id);
+  assert.strictEqual(e.kind, 'document'); assert.strictEqual(e.docType, 'Home', 'type comes back');
+  s.moveLibrary([x.id], { folder: 'Manuals' });
+  assert.strictEqual(s.getLibraryEntry(x.id).folder, 'Manuals');
+  assert.strictEqual(s.getLibraryEntry(x.id).kind, 'data');
+  // links
+  assert.strictEqual(s.linkLibrary([d.id, x.id], a.id, true), 2);
+  assert.strictEqual(s.linkLibrary([d.id], a.id, true), 0, 'already linked');
+  assert.deepStrictEqual(s.libraryView().filter(v => v.assetIds.includes(a.id)).map(v => v.title).sort(), ['Boiler service letter', 'Manual.pdf']);
+  s.linkLibrary(x.id, a.id, false);
+  assert.deepStrictEqual(s.libraryView().filter(v => v.assetIds.includes(a.id)).map(v => v.title), ['Boiler service letter']);
+  assert.throws(() => s.linkLibrary(d.id, 'nope', true), /Item not found/);
+  const s2 = new Store(s.dir); s2.load();
+  assert.deepStrictEqual(s2.getLibraryEntry(d.id).assetIds, [a.id]);
+});

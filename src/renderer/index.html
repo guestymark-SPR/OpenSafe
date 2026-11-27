@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' keep: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
 <link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="premium.css">
 <title>OpenSafe</title>
 </head>
 <body>
@@ -30,7 +31,17 @@
   <div class="sidefoot">
     <button data-nav="settings" class="navbtn"><span data-icon="gear"></span>Settings</button>
     <button id="lockBtn" class="navbtn hidden" data-action="lockApp" title="Lock OpenSafe now"><span data-icon="lock"></span>Lock OpenSafe</button>
-    <button id="addBtn" class="btn primary wide" data-action="new"><span data-icon="plus"></span>Add item</button>
+    <span class="menuwrap dd newdd"><button id="addBtn" type="button" class="btn primary wide ddbtn" data-action="moreMenu"><span data-icon="plus"></span><span>New</span><span data-icon="down" class="caretwrap"></span></button>
+      <div class="menu hidden left up newmenu">
+        <button type="button" data-action="new"><span data-icon="box"></span><span>Item</span><span class="kbd">Ctrl+N</span></button>
+        <button type="button" data-action="libAdd" data-kind="document"><span data-icon="letter"></span><span>Document from files…</span></button>
+        <button type="button" data-action="libAdd" data-kind="data"><span data-icon="folder"></span><span>Data files…</span></button>
+        <hr>
+        <button type="button" data-action="tripNewGo"><span data-icon="bag"></span><span>Packing list</span></button>
+        <button type="button" data-action="polNewGo"><span data-icon="shield"></span><span>Insurance policy</span></button>
+        <hr>
+        <button type="button" data-nav="phone"><span data-icon="phone"></span><span>From your phone…</span></button>
+      </div></span>
   </div>
 </aside>
 <div class="mainwrap"><div id="updBar" class="updbar hidden"></div><main id="view" tabindex="-1"></main></div>

@@ -517,6 +517,8 @@ function registerIpc() {
     res.errors.unshift(...errors);
     return res;
   });
+  h('lib:move', (ids, to) => libNote(store.moveLibrary(Array.isArray(ids) ? ids.map(String) : [String(ids)], to || {})));
+  h('lib:link', (ids, assetId, on) => libNote(store.linkLibrary(Array.isArray(ids) ? ids.map(String) : [String(ids)], String(assetId), on !== false)));
   h('lib:save', (e) => libNote(store.saveLibraryEntry(e || {})));
   h('lib:get', (id) => store.getLibraryEntry(String(id)));
   h('lib:text', (id, fileId) => store.libraryText(String(id), String(fileId)));

@@ -499,6 +499,7 @@ class Store {
     e.notes = cleanString(get('notes'), MAX_STRING);
     e.tags = cleanTags(get('tags'));
     e.assetIds = (Array.isArray(get('assetIds')) ? get('assetIds') : []).map(x => cleanString(x, 80)).filter(Boolean).slice(0, 200);
+    if (existing && LIBRARY_DOC_TYPES.includes(existing.prevDocType)) e.prevDocType = existing.prevDocType;
     return e;
   }
   _libLists() { return { normal: this.data.library, vault: this.vault ? (this.vault.library = this.vault.library || []) : null }; }
@@ -637,6 +638,40 @@ class Store {
     (toVault ? this.vault.library : this.data.library).push(e);
     this.save();
     return e;
+  }
+  /** Move entries between Documents and Data and/or into a folder. to: { kind?, folder? } (folder '' = no folder). */
+  moveLibrary(ids, to) {
+    const list = (Array.isArray(ids) ? ids : [ids]).map(String);
+    const kind = to && LIBRARY_KINDS.includes(to.kind) ? to.kind : null;
+    const folder = to && to.folder !== undefined ? cleanString(to.folder, 120) : undefined;
+    let n = 0;
+    for (const id of list) {
+      const { e } = this._libFind(id);
+      if (kind && e.kind !== kind) {
+        if (kind === 'data') e.prevDocType = e.docType;
+        e.kind = kind;
+        e.docType = kind === 'document' ? (LIBRARY_DOC_TYPES.includes(e.prevDocType) ? e.prevDocType : 'Letter') : '';
+      }
+      if (folder !== undefined) e.folder = folder;
+      e.updatedAt = nowIso(); n++;
+    }
+    this.save();
+    return n;
+  }
+  /** Link (or unlink) documents/data to items, so they show on the items' pages. */
+  linkLibrary(ids, assetId, on = true) {
+    const aid = cleanString(assetId, 80);
+    if (on && !this.getAsset(aid)) throw new Error('Item not found');
+    let n = 0;
+    for (const id of (Array.isArray(ids) ? ids : [ids]).map(String)) {
+      const { e } = this._libFind(id);
+      const has = e.assetIds.includes(aid);
+      if (on && !has) { e.assetIds.push(aid); n++; }
+      if (!on && has) { e.assetIds = e.assetIds.filter(x => x !== aid); n++; }
+      e.updatedAt = nowIso();
+    }
+    this.save();
+    return n;
   }
   /** Folders used in Data, for suggestions. */
   libraryFolders() { const s = new Set(); for (const e of this.libraryView('data')) if (e.folder) s.add(e.folder); return [...s].sort((a, b) => a.localeCompare(b)); }

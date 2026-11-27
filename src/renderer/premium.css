@@ -1,0 +1,163 @@
+/* OpenSafe premium layer: refines styles.css (spacing, depth, motion). Loaded after it. */
+:root{
+  --ease:cubic-bezier(.2,.8,.2,1); --ease-out:cubic-bezier(.16,1,.3,1);
+  --t-fast:120ms; --t:180ms; --t-slow:260ms;
+  --shadow-sm:0 1px 2px rgba(16,32,30,.06);
+  --shadow:0 1px 2px rgba(16,32,30,.05),0 4px 14px rgba(16,32,30,.05);
+  --shadow-md:0 2px 6px rgba(16,32,30,.06),0 10px 28px rgba(16,32,30,.09);
+  --shadow-lg:0 12px 40px rgba(16,32,30,.18),0 3px 10px rgba(16,32,30,.08);
+  --ring:0 0 0 3px color-mix(in srgb,var(--accent-2) 28%,transparent);
+  --r:10px; --r-lg:14px;
+}
+@media (prefers-color-scheme: dark){
+  :root{--shadow:0 1px 2px rgba(0,0,0,.3),0 4px 14px rgba(0,0,0,.25);--shadow-md:0 2px 8px rgba(0,0,0,.35),0 12px 30px rgba(0,0,0,.35);--shadow-lg:0 16px 44px rgba(0,0,0,.55),0 4px 12px rgba(0,0,0,.35)}
+}
+body{font-feature-settings:"tnum" 0,"cv11" 1;text-rendering:optimizeLegibility}
+::selection{background:color-mix(in srgb,var(--accent-2) 30%,transparent)}
+
+/* ---------- sidebar ---------- */
+.side{background:linear-gradient(180deg,var(--side) 0%,color-mix(in srgb,var(--side) 88%,#000) 100%);box-shadow:inset -1px 0 0 var(--side-line)}
+.brand img{box-shadow:0 2px 8px rgba(0,0,0,.25);transition:transform var(--t-slow) var(--ease)}
+.brand:hover img{transform:rotate(-6deg) scale(1.06)}
+nav button,.navbtn{transition:background var(--t) var(--ease),color var(--t) var(--ease),transform var(--t-fast) var(--ease)}
+nav button .ic,.navbtn .ic{transition:transform var(--t) var(--ease),color var(--t)}
+nav button:hover .ic,.navbtn:hover .ic{transform:scale(1.12);color:#9fe0d4}
+nav button:active,.navbtn:active{transform:scale(.98)}
+nav button.on .ic,.navbtn.on .ic{color:#8fdccd}
+nav button.on::before,.navbtn.on::before{animation:navbar-in var(--t-slow) var(--ease-out)}
+@keyframes navbar-in{from{transform:scaleY(0)}to{transform:scaleY(1)}}
+.sidesearch{transition:border-color var(--t),background var(--t),box-shadow var(--t)}
+.sidesearch:focus-within{background:color-mix(in srgb,var(--side-2) 80%,#fff 4%);box-shadow:0 0 0 3px rgba(111,195,181,.18)}
+
+/* ---------- buttons ---------- */
+.btn{border-radius:8px;transition:background var(--t) var(--ease),border-color var(--t) var(--ease),box-shadow var(--t) var(--ease),transform var(--t-fast) var(--ease),color var(--t);box-shadow:var(--shadow-sm)}
+.btn:hover{box-shadow:var(--shadow)}
+.btn:active:not(:disabled){transform:translateY(1px) scale(.98);box-shadow:none}
+.btn.primary{background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 88%,#fff) 0%,var(--accent) 100%);box-shadow:0 1px 2px rgba(16,32,30,.15),inset 0 1px 0 rgba(255,255,255,.12)}
+.btn.primary:hover{background:linear-gradient(180deg,color-mix(in srgb,var(--accent-2) 90%,#fff) 0%,var(--accent-2) 100%);border-color:var(--accent-2);box-shadow:0 4px 14px color-mix(in srgb,var(--accent-2) 35%,transparent)}
+.btn.ghost,.btn.ghost:hover{box-shadow:none}
+.btn:focus-visible{outline:none;box-shadow:var(--ring)}
+.btn .ic{transition:transform var(--t) var(--ease)}
+/* icon micro-animations */
+.btn:hover .ic-plus,.ddbtn:hover .ic-plus{transform:rotate(90deg)}
+.btn:hover .ic-back{transform:translateX(-3px)}
+.btn:hover .ic-download{transform:translateY(2px)}
+.btn:hover .ic-upload{transform:translateY(-2px)}
+.btn:hover .ic-edit{transform:rotate(-12deg)}
+.btn:hover .ic-trash,.menu button:hover .ic-trash{animation:wiggle .4s var(--ease)}
+.btn:hover .ic-search{transform:scale(1.15)}
+.btn:hover .ic-printer{transform:translateY(-1px)}
+.btn:hover .ic-more{transform:scale(1.2)}
+.btn:hover .ic-lock,.btn:hover .ic-unlock{transform:translateY(-1px) rotate(-8deg)}
+.btn:hover .ic-file,.btn:hover .ic-letter{transform:translateY(-1px) rotate(-4deg)}
+.btn:hover .ic-qr,.btn:hover .ic-check{transform:scale(1.15)}
+.btn:hover .ic-duplicate{transform:translate(1px,-1px)}
+@keyframes wiggle{0%,100%{transform:rotate(0)}25%{transform:rotate(-12deg)}60%{transform:rotate(9deg)}}
+.caret{width:14px;height:14px;transition:transform var(--t) var(--ease);opacity:.75;margin-right:-3px}
+.open > .ddbtn .caret,.menuwrap.open > .btn .caret{transform:rotate(180deg)}
+
+/* ---------- inputs ---------- */
+input,select,textarea{border-radius:8px;transition:border-color var(--t),box-shadow var(--t),background var(--t)}
+input:hover,select:hover,textarea:hover{border-color:var(--line-strong)}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent-2);box-shadow:var(--ring)}
+
+/* ---------- cards, tables, rows ---------- */
+.card{border-radius:var(--r-lg);border-color:color-mix(in srgb,var(--line) 80%,transparent);transition:box-shadow var(--t) var(--ease),border-color var(--t)}
+.tile:hover,.dcard:hover{box-shadow:var(--shadow-md)}
+.icard{border-radius:var(--r-lg);transition:transform var(--t) var(--ease),box-shadow var(--t) var(--ease)}
+.icard:hover{transform:translateY(-3px);box-shadow:var(--shadow-md)}
+.icard .img img{transition:transform var(--t-slow) var(--ease)}
+.icard:hover .img img{transform:scale(1.04)}
+table.list{border-radius:var(--r-lg)}
+.list tbody tr{transition:background var(--t-fast)}
+.list tbody tr.sel{background:color-mix(in srgb,var(--accent-2) 10%,transparent)}
+.rowi{transition:background var(--t-fast),padding var(--t) var(--ease);border-radius:8px}
+.rowi[data-open]:hover,.rowi[data-action]:hover{padding-left:6px}
+.thumb{border-radius:8px}
+.stat .num{background:linear-gradient(90deg,var(--ink),color-mix(in srgb,var(--ink) 70%,var(--accent-2)));-webkit-background-clip:text;background-clip:text;color:transparent}
+.pill{transition:transform var(--t-fast)}
+.ptree .prow{transition:background var(--t-fast),color var(--t-fast)}
+
+/* ---------- page and overlays ---------- */
+main.enter > *{animation:page-in var(--t-slow) var(--ease-out) backwards}
+main.enter > *:nth-child(2){animation-delay:25ms} main.enter > *:nth-child(3){animation-delay:50ms} main.enter > *:nth-child(4){animation-delay:75ms} main.enter > *:nth-child(n+5){animation-delay:100ms}
+@keyframes page-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.modal{backdrop-filter:blur(3px);animation:fade-in var(--t) ease both}
+.modal .dialog{animation:dialog-in var(--t-slow) var(--ease-out) both;border-radius:16px;box-shadow:var(--shadow-lg)}
+@keyframes dialog-in{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}
+@keyframes fade-in{from{opacity:0}to{opacity:1}}
+.toast:not(.hidden){animation:toast-in var(--t-slow) var(--ease-out) both}
+@keyframes toast-in{from{opacity:0;transform:translate(-50%,12px)}to{opacity:1;transform:translate(-50%,0)}}
+.viewer:not(.hidden){animation:fade-in var(--t) ease both}
+
+/* ---------- menus (drop-down, More, right-click) ---------- */
+.menu{border-radius:12px;box-shadow:var(--shadow-lg);padding:6px;transform-origin:top right;animation:menu-in var(--t) var(--ease-out) both;border-color:color-mix(in srgb,var(--line) 80%,transparent)}
+.menu.left{right:auto;left:0;transform-origin:top left}
+.menu.up{top:auto;bottom:calc(100% + 6px);transform-origin:bottom right}
+@keyframes menu-in{from{opacity:0;transform:translateY(-4px) scale(.97)}to{opacity:1;transform:none}}
+.menu button{border-radius:8px;transition:background var(--t-fast),padding var(--t) var(--ease)}
+.menu button:hover,.menu button.kb,.menu button:focus-visible{background:var(--hover);padding-left:13px;outline:none;box-shadow:none}
+.menu button:focus{outline:none}
+.menu button .ic{color:var(--muted);transition:transform var(--t) var(--ease),color var(--t)}
+.menu button:hover .ic{color:var(--accent-2);transform:scale(1.1)}
+.menu button.danger .ic,.menu button.danger:hover .ic{color:var(--bad)}
+.menu .mh{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);padding:8px 10px 4px}
+.menu .kbd{margin-left:auto;color:var(--faint);font-size:11.5px}
+.menu.ctx{position:fixed;right:auto;top:0;left:0;z-index:60;transform-origin:top left}
+.menu.scroll{max-height:min(420px,60vh);overflow:auto}
+
+/* ---------- filter chips ---------- */
+.chips{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.chip{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 12px;border:1px solid var(--line);border-radius:999px;background:var(--surface);cursor:pointer;color:var(--ink);font-weight:550;font-size:13px;transition:all var(--t) var(--ease);box-shadow:var(--shadow-sm);white-space:nowrap}
+.chip:hover{border-color:var(--line-strong);box-shadow:var(--shadow)}
+.chip.on{background:color-mix(in srgb,var(--accent-2) 12%,var(--surface));border-color:color-mix(in srgb,var(--accent-2) 45%,transparent);color:var(--accent-text)}
+.chip .k{color:var(--muted);font-weight:500}
+.chip.on .k{color:inherit;opacity:.75}
+.chip .x{display:inline-flex;margin-right:-4px;border-radius:50%;padding:1px;opacity:.6}
+.chip .x:hover{opacity:1;background:color-mix(in srgb,var(--accent-2) 18%,transparent)}
+.chip .ic{width:15px;height:15px}
+
+/* ---------- drag and drop ---------- */
+[draggable=true]{-webkit-user-drag:element}
+.dragging{opacity:.45}
+.droppanel{position:fixed;right:22px;top:80px;bottom:22px;width:300px;z-index:55;background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;animation:panel-in var(--t-slow) var(--ease-out) both;overflow:hidden}
+@keyframes panel-in{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:none}}
+.droppanel .dh{padding:14px 16px 10px;border-bottom:1px solid var(--line2)}
+.droppanel .dh b{display:block;font-size:14px}
+.droppanel .db{overflow:auto;padding:8px;flex:1}
+.droptarget{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:9px;border:1.5px dashed transparent;color:var(--ink);transition:all var(--t-fast) var(--ease);font-weight:500}
+.droptarget .ic{color:var(--muted)}
+.droptarget.over{border-color:var(--accent-2);background:color-mix(in srgb,var(--accent-2) 12%,transparent);transform:scale(1.02)}
+.droptarget.over .ic{color:var(--accent-2)}
+.droptarget .c{margin-left:auto;color:var(--faint);font-size:12px}
+.dragghost{position:fixed;top:-100px;left:-100px;padding:6px 12px;border-radius:999px;background:var(--accent);color:#fff;font-weight:600;font-size:13px;box-shadow:var(--shadow-md)}
+
+@media (prefers-reduced-motion: reduce){*,*::before,*::after{animation-duration:1ms!important;animation-delay:0ms!important;transition-duration:1ms!important}}
+
+/* + New in the sidebar */
+.newdd{display:block;margin-top:8px}
+.newdd > .btn{margin-top:0!important}
+.newdd .ic-down{width:14px;height:14px;opacity:.8;margin-left:auto;transition:transform var(--t) var(--ease)}
+.newdd > .btn{justify-content:flex-start;padding-left:16px}
+.newdd.open .ic-down{transform:rotate(180deg)}
+.newmenu{width:100%;min-width:220px;bottom:calc(100% + 8px)}
+.toolbar{gap:10px}
+.sidesearch.itemsearch{width:300px;flex:none;min-width:220px}
+.menu button.cur{font-weight:650;color:var(--accent-text)}
+.menu button.cur .ic{color:var(--accent-2)}
+.ic.xrot{transform:rotate(45deg);width:14px;height:14px}
+.selbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 14px;margin-bottom:12px;border-radius:12px;background:color-mix(in srgb,var(--accent-2) 10%,var(--surface));border:1px solid color-mix(in srgb,var(--accent-2) 30%,transparent);animation:page-in var(--t) var(--ease-out) backwards;position:sticky;top:-26px;z-index:5;box-shadow:var(--shadow)}
+
+.seg{border-radius:9px;box-shadow:var(--shadow-sm);background:var(--surface)}
+.seg button{display:inline-flex;align-items:center;gap:6px;transition:background var(--t),color var(--t);min-height:32px}
+.seg button .ic{width:15px;height:15px}
+.seg button:hover{color:var(--ink)}
+.picker .pkrows{max-height:min(420px,55vh);overflow:auto}
+.pkrow{padding:8px 8px!important}
+.pkrow .ic-chevron{color:var(--faint);transition:transform var(--t) var(--ease)}
+.pkrow:hover .ic-chevron{transform:translateX(3px);color:var(--accent-2)}
+.pkic{width:42px;height:42px;border-radius:8px;background:var(--surface2);display:flex;align-items:center;justify-content:center;color:var(--muted);flex:none}
+.droppanel .menu-h{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);padding:10px 10px 4px}
+.droptarget .ell{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+tr[draggable=true]{cursor:pointer}
+.menuwrap.open{z-index:25}

@@ -555,9 +555,10 @@
     const reading = all.reduce((n, e) => n + (e.textPending || 0), 0);
     return head + `<div class="libbar">
         <div class="sidesearch libsearch">${icon('search')}<input id="libQ" type="search" placeholder="Search titles, senders, references and the words inside" value="${esc(f.q || '')}" autocomplete="off"></div>
-        ${kind === 'document' ? `<select id="libType"><option value="">All types</option>${types.filter(t => all.some(e => e.docType === t)).map(t => opt(t, t, f.type || '')).join('')}</select>`
-          : `<select id="libFolder"><option value="">All folders</option>${folders.map(x => opt(x, x, f.folder || '')).join('')}${all.some(e => !e.folder) ? opt('(none)', 'No folder', f.folder || '') : ''}</select>`}
-        <select id="libSort">${opt('added', 'Newest added', f.sort)}${opt('date', kind === 'document' ? 'Date on the letter' : 'Date', f.sort)}${opt('title', 'Title A–Z', f.sort)}</select>
+        <div class="chips">${kind === 'document'
+          ? chip('Type', 'type', f.type || '', [['', 'All types'], ...types.filter(t => all.some(e => e.docType === t)).map(t => [t, t])], '', false, 'setLF')
+          : chip('Folder', 'folder', f.folder || '', [['', 'All folders'], ...folders.map(x => [x, x]), ...(all.some(e => !e.folder) ? [['(none)', 'No folder']] : [])], '', false, 'setLF')}
+        ${chip('Sort', 'sort', f.sort || 'added', [['added', 'Newest added'], ['date', kind === 'document' ? 'Date on the letter' : 'Date'], ['title', 'Title A–Z']], 'added', true, 'setLF')}</div>
       </div>
       ${reading ? `<p class="faint small" style="margin:-6px 0 10px">${icon('search')}Reading the words in ${reading} file${reading === 1 ? '' : 's'}… They can be searched once this finishes.</p>` : ''}
       ${vaultLocked ? `<p class="faint small" style="margin:-6px 0 10px">${icon('lock')}Anything in the vault is hidden. <a href="#" data-nav="vault">Unlock the vault</a> to see and search it.</p>` : ''}
@@ -566,11 +567,14 @@
   function libListHtml(kind) {
     const list = libFiltered(kind);
     if (!list.length) return `<div class="card empty">${state.lf.q ? `Nothing matches "<b>${esc(state.lf.q)}</b>".` : 'Nothing matches.'}</div>`;
-    return `<div class="card" style="padding:0"><table class="list libtable"><thead><tr><th style="width:64px"></th><th>Title</th><th>${kind === 'document' ? 'Type' : 'Folder'}</th><th>From</th><th>Date</th><th class="r">Files</th></tr></thead><tbody>
+    state.libPick = state.libPick || new Set();
+    for (const id of [...state.libPick]) if (!libEntry(id) || libEntry(id).kind !== kind) state.libPick.delete(id);
+    const allOn = list.length && list.every(e => state.libPick.has(e.id));
+    return libSelBar(kind) + `<div class="card" style="padding:0"><table class="list libtable"><thead><tr><th style="width:34px"><input type="checkbox" data-action="libSelAll" title="Select all shown" ${allOn ? 'checked' : ''}></th><th style="width:64px"></th><th>Title</th><th>${kind === 'document' ? 'Type' : 'Folder'}</th><th>From</th><th>Date</th><th class="r">Files</th></tr></thead><tbody>
       ${list.map(e => {
         const hit = state.libHits && state.libHits.get(e.id);
         const due = e.actBy && !e.actDone ? `<span class="pill ${e.actBy < new Date().toISOString().slice(0, 10) ? 'bad' : 'warn'}">${icon('calendar')}Reply by ${ukDate(e.actBy)}</span>` : '';
-        return `<tr data-action="libOpen" data-lib="${esc(e.id)}"><td>${libThumb(e)}</td>
+        return `<tr data-action="libOpen" data-lib="${esc(e.id)}" draggable="true" class="${state.libPick.has(e.id) ? 'sel' : ''}"><td><input type="checkbox" data-action="libSelBox" data-lib="${esc(e.id)}" ${state.libPick.has(e.id) ? 'checked' : ''} aria-label="Select"></td><td>${libThumb(e)}</td>
           <td><b>${esc(e.title)}</b> ${e.inVault ? `<span class="pill vault">${icon('lock')}Vault</span>` : ''} ${due}
             ${e.ref ? `<div class="meta">Ref ${esc(e.ref)}</div>` : ''}${hit ? `<div class="meta snippet">…${esc(hit)}…</div>` : ''}</td>
           <td class="meta">${kind === 'document' ? esc(e.docType) : e.folder ? esc(e.folder) : `<span class="faint">${esc(fileKind((e.files[0] || { name: '' }).name)[0])}</span>`}</td>
@@ -593,7 +597,6 @@
         refreshLibList();
       }, 200);
     };
-    for (const [id, key] of [['#libType', 'type'], ['#libFolder', 'folder'], ['#libSort', 'sort']]) if ($(id)) $(id).onchange = (e) => { state.lf[key] = e.target.value; refreshLibList(); };
     wireLibDrop($('#libDrop') || $('#libList'), kind, '');
     loadLibThumbs();
   }
@@ -610,6 +613,7 @@
     await refresh();
     // a new document: open it and ask for its details
     if (!entryId && kind === 'document' && r.ids.length === 1) { go('libitem', { libId: r.ids[0] }); libForm(libEntry(r.ids[0]), true); }
+    else if (!entryId && r.ids.length && state.view !== libKindPage(kind)) go(libKindPage(kind));
   }
 
   function viewLibItem() {
@@ -729,11 +733,187 @@
       case 'libCopyText': await run(() => keep.copyPlain(state.libTextCopy || ''), '✓ Copied'); return true;
       case 'libFileRemove': if (e) { const f = e.files.find(x => x.id === act.dataset.file); if (f && confirm(`Remove "${f.name}" from this ${e.kind === 'document' ? 'document' : 'entry'}?\n\nThis deletes the file from OpenSafe and can't be undone. (Use Save a copy first if you want to keep it.)`)) { await run(() => keep.libRemoveFile(e.id, f.id), 'File removed'); await refresh(); } } return true;
       case 'libBin': libBinForm(act.dataset.kind); return true;
+      case 'libSelClear': state.libPick.clear(); refreshLibList(); return true;
+      case 'libMoveTo': { const ids = JSON.parse(act.dataset.ids), to = { kind: act.dataset.kind }; if (act.dataset.folder !== undefined) to.folder = act.dataset.folder; await libMoveIds(ids, to, to.kind === 'document' ? 'Documents' : to.folder ? 'Data › ' + to.folder : 'Data'); return true; }
+      case 'libMoveNewFolder': newFolderForm(JSON.parse(act.dataset.ids)); return true;
+      case 'libLinkPick': linkPick(act.dataset.ids ? JSON.parse(act.dataset.ids) : [state.libId]); return true;
+      case 'libUnlink': { const ok = await run(() => keep.libLink([act.dataset.lib], act.dataset.asset, false), 'Unlinked'); if (ok !== undefined) await refresh(); return true; }
+      case 'libVaultMany': { const ids = JSON.parse(act.dataset.ids), to = !!act.dataset.to; await run(() => Promise.all(ids.map(id => keep.libVault(id, to))), to ? '✓ Moved into the vault' : '✓ Moved out of the vault'); if (state.libPick) state.libPick.clear(); await refresh(); return true; }
+      case 'libDelMany': { const ids = act.dataset.ids ? JSON.parse(act.dataset.ids) : [...(state.libPick || [])]; if (!ids.length || !confirm(`Delete ${ids.length === 1 ? 'this entry' : ids.length + ' entries'}?
+
+They go to the bin for 30 days, so you can restore them.`)) return true; for (const id of ids) await run(() => keep.libDelete(id)); if (state.libPick) state.libPick.clear(); toast('Deleted. You can restore them for 30 days.', 4000); await refresh(); if (state.view === 'libitem' && !libEntry(state.libId)) go('docs'); return true; }
       case 'libRestore': { const ok = await run(() => keep.libRestore(act.dataset.lib), '✓ Restored'); if (ok) { await refresh(); const k = (state.snap.data.library.find(x => x.id === act.dataset.lib) || {}).kind; libBinForm(k || LIB[state.view] && LIB[state.view].kind || 'document'); } return true; }
       case 'libPurge': { const ok = await run(() => keep.libPurge(act.dataset.lib)); if (ok) { toast('Deleted for good'); await refresh(); libBinForm(LIB[state.view] ? LIB[state.view].kind : 'document'); } return true; }
     }
     return false;
   }
+
+  // ---------- moving and linking (Documents, Data, items, places) ----------
+  const libFolders = () => [...new Set((state.snap.data.library || []).filter(e => e.kind === 'data' && e.folder).map(e => e.folder))].sort((a, b) => a.localeCompare(b, 'en-GB'));
+  /** "Move to" choices for library entries. */
+  function libMoveItems(ids) {
+    const kinds = new Set(ids.map(id => (libEntry(id) || {}).kind));
+    const unlocked = state.snap.security.vault.unlocked, inV = ids.every(id => (libEntry(id) || {}).inVault);
+    const data = JSON.stringify(ids);
+    return [{ head: 'Move to' },
+      !(kinds.size === 1 && kinds.has('document')) && { label: 'Documents', action: 'libMoveTo', icon: 'letter', data: { ids: data, kind: 'document' } },
+      !(kinds.size === 1 && kinds.has('data')) && { label: 'Data', action: 'libMoveTo', icon: 'folder', data: { ids: data, kind: 'data', folder: '' } },
+      ...libFolders().map(f => ({ label: 'Data › ' + f, action: 'libMoveTo', icon: 'folder', data: { ids: data, kind: 'data', folder: f } })),
+      { label: 'New Data folder…', action: 'libMoveNewFolder', icon: 'plus', data: { ids: data } },
+      '-', { label: 'Link to an item…', action: 'libLinkPick', icon: 'box', data: { ids: data } },
+      unlocked && { label: inV ? 'Move out of the vault' : 'Move into the vault', action: 'libVaultMany', icon: inV ? 'unlock' : 'lock', data: { ids: data, to: inV ? '' : '1' } }];
+  }
+  function libSelBar(kind) {
+    const n = state.libPick ? state.libPick.size : 0;
+    if (!n) return '';
+    const ids = [...state.libPick];
+    return `<div class="selbar"><b>${n} selected</b>${dd('Move to', libMoveItems(ids), { cls: 'btn primary small', iconName: 'folder', align: 'left', scroll: true })}
+      <button class="btn small" data-action="libLinkPick" data-ids="${esc(JSON.stringify(ids))}">${icon('box')}Link to an item…</button>
+      <button class="btn small danger" data-action="libDelMany">${icon('trash')}Delete…</button><button class="btn small" data-action="libSelClear">Clear selection</button></div>`;
+  }
+  /** A searchable list to choose from: rows [{ id, title, sub, thumb }]. */
+  function pickerModal(title, rows, onPick, { hint = '', empty = 'Nothing to choose from.' } = {}) {
+    openModal(`<div class="dialog narrow picker"><div class="dh"><h2>${esc(title)}</h2></div><div class="db"><div class="s3">
+      ${hint ? `<p class="muted small" style="margin:0 0 8px">${hint}</p>` : ''}
+      <div class="sidesearch libsearch" style="margin:0 0 8px;max-width:none">${icon('search')}<input id="pkQ" type="search" placeholder="Search" autocomplete="off"></div>
+      <div class="rows pkrows" id="pkRows"></div></div></div>
+      <div class="df"><button class="btn" data-action="close">Cancel</button></div></div>`);
+    const draw = () => {
+      const q = ($('#pkQ').value || '').toLowerCase().trim();
+      const list = rows.filter(r => !q || (r.title + ' ' + (r.sub || '')).toLowerCase().includes(q)).slice(0, 80);
+      $('#pkRows').innerHTML = list.length ? list.map(r => `<div class="rowi pkrow" data-pick="${esc(r.id)}">${r.thumb || ''}<span style="flex:1;min-width:0"><b class="ell" style="display:block">${esc(r.title)}</b>${r.sub ? `<span class="meta">${esc(r.sub)}</span>` : ''}</span>${icon('chevron')}</div>`).join('') : `<p class="muted">${q ? 'Nothing matches.' : esc(empty)}</p>`;
+      $$('#pkRows [data-pick]').forEach(el => { el.onclick = async () => { closeModal(); await onPick(el.dataset.pick); }; });
+    };
+    $('#pkQ').oninput = draw; draw(); setTimeout(() => $('#pkQ').focus(), 30);
+  }
+  function itemPicker(title, onPick, hint) {
+    const rows = state.snap.data.assets.filter(a => !INACTIVE.includes(a.status)).sort((a, b) => a.name.localeCompare(b.name, 'en-GB')).map(a => ({ id: a.id, title: a.name, sub: [a.category, a.location].filter(Boolean).join(' · '), thumb: thumb(a) }));
+    pickerModal(title, rows, onPick, { hint, empty: 'You have no items yet.' });
+  }
+  function placePicker(title, onPick, hint) {
+    const rows = locPaths().map(p => ({ id: p, title: p.split(' / ').pop(), sub: p.includes(' / ') ? p : '' }));
+    pickerModal(title, rows, onPick, { hint, empty: 'No places yet.' });
+  }
+  async function moveItemsTo(ids, loc) {
+    const n = await run(() => keep.bulkUpdate(ids, { location: loc }));
+    if (n === undefined) return;
+    toast(`✓ ${ids.length === 1 ? (asset(ids[0]) || {}).name || '1 item' : ids.length + ' items'} moved to ${loc}`, 3500);
+    state.sel.clear(); await refresh();
+  }
+  async function libMoveIds(ids, to, label) {
+    const n = await run(() => keep.libMove(ids, to));
+    if (n === undefined) return;
+    toast(`✓ ${ids.length === 1 ? '1 entry' : ids.length + ' entries'} moved to ${label}`, 3500);
+    if (state.libPick) state.libPick.clear();
+    await refresh();
+  }
+  function newFolderForm(ids) {
+    openModal(`<form class="dialog narrow" id="nfForm"><div class="dh"><h2>New Data folder</h2></div><div class="db">
+      <label class="f s3">Folder name<input name="folder" maxlength="120" required placeholder="e.g. Tax, Car, Holiday"></label></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Move here</button></div></form>`);
+    $('#nfForm').onsubmit = async (ev) => { ev.preventDefault(); const f = ev.target.folder.value.trim(); if (!f) return; closeModal(); await libMoveIds(ids, { kind: 'data', folder: f }, 'Data › ' + f); };
+  }
+  function linkPick(ids) {
+    itemPicker(ids.length === 1 ? 'Link to an item' : `Link ${ids.length} entries to an item`, async (aid) => {
+      const n = await run(() => keep.libLink(ids, aid, true));
+      if (n !== undefined) { toast(`✓ Linked to ${(asset(aid) || {}).name || 'the item'}. It shows on the item's page.`, 4000); if (state.libPick) state.libPick.clear(); await refresh(); }
+    }, 'The document stays where it is and also shows on the item’s page, under Documents and files.');
+  }
+
+  // ---------- right-click menus ----------
+  function contextMenu(x, y, items) {
+    closeMenus();
+    const m = document.createElement('div');
+    m.className = 'menu ctx';
+    m.innerHTML = menuItems(items);
+    document.body.appendChild(m);
+    const r = m.getBoundingClientRect();
+    m.style.left = Math.min(x, window.innerWidth - r.width - 8) + 'px';
+    m.style.top = (y + r.height > window.innerHeight - 8 ? Math.max(8, y - r.height) : y) + 'px';
+    const first = m.querySelector('button'); if (first) first.focus({ preventScroll: true });
+  }
+  document.addEventListener('contextmenu', (e) => {
+    if (e.target.closest('input, textarea, .vframe')) return; // keep copy and paste
+    const itemEl = e.target.closest('[data-open]');
+    const libRow = e.target.closest('tr[data-lib]');
+    const fileRow = e.target.closest('[data-libsel]');
+    const placeRow = e.target.closest('.prow[data-place]');
+    let items = null;
+    if (fileRow && state.libId) {
+      const f = fileRow.dataset.libsel;
+      items = [{ label: 'View', action: 'libFileView', icon: 'file', data: { file: f } }, { label: 'Open in another app', action: 'libFileOpen', icon: 'upload', data: { file: f } }, { label: 'Save a copy…', action: 'libFileCopy', icon: 'download', data: { file: f } }, { label: 'Show the words found', action: 'libFileText', icon: 'search', data: { file: f } }, '-', { label: 'Remove this file', action: 'libFileRemove', icon: 'trash', danger: true, data: { file: f } }];
+    } else if (libRow) {
+      const id = libRow.dataset.lib, ids = state.libPick && state.libPick.has(id) && state.libPick.size > 1 ? [...state.libPick] : [id];
+      items = [ids.length === 1 && { label: 'Open', action: 'libOpen', icon: 'file', data: { lib: id } }, ...libMoveItems(ids), '-', { label: ids.length > 1 ? `Delete ${ids.length}…` : 'Delete…', action: 'libDelMany', icon: 'trash', danger: true, data: { ids: JSON.stringify(ids) } }];
+    } else if (itemEl && asset(itemEl.dataset.open)) {
+      const a = asset(itemEl.dataset.open), ids = state.sel.has(a.id) && state.sel.size > 1 ? [...state.sel] : [a.id];
+      items = ids.length > 1
+        ? [{ head: `${ids.length} items` }, { label: 'Move to a place…', action: 'ctxMove', icon: 'pin', data: { ids: JSON.stringify(ids) } }, { label: 'Change…', action: 'bulkSel', icon: 'edit' }, { label: 'QR labels…', action: 'labelsSel', icon: 'qr' }, '-', { label: 'Delete…', action: 'deleteSel', icon: 'trash', danger: true }]
+        : [{ label: 'Open', action: 'ctxOpen', icon: 'box', data: { id: a.id } }, { label: 'Edit…', action: 'ctxEdit', icon: 'edit', data: { id: a.id } }, { label: 'Move to a place…', action: 'ctxMove', icon: 'pin', data: { ids: JSON.stringify([a.id]) } }, { label: 'Link a document…', action: 'ctxLinkDoc', icon: 'letter', data: { id: a.id } }, '-',
+          { label: 'Duplicate', action: 'ctxDup', icon: 'duplicate', data: { id: a.id } }, { label: 'Print QR label…', action: 'ctxLabel', icon: 'qr', data: { id: a.id } }, '-', { label: 'Delete', action: 'ctxDel', icon: 'trash', danger: true, data: { id: a.id } }];
+    } else if (placeRow) {
+      const p = placeRow.dataset.place;
+      items = [{ head: p.split(' / ').pop() }, { label: 'Show in Items', action: 'filterLoc', icon: 'box', data: { loc: p } }, { label: 'Print label', action: 'placeLabelOne', icon: 'qr', data: { place: p } }];
+    }
+    if (!items) return;
+    e.preventDefault();
+    contextMenu(e.clientX, e.clientY, items);
+  });
+
+  // ---------- dragging items and documents onto a panel of places and folders ----------
+  let dragInfo = null;
+  function dropPanel(title, targets) {
+    const p = document.createElement('div');
+    p.className = 'droppanel'; p.id = 'dropPanel';
+    p.innerHTML = `<div class="dh"><b>${esc(title)}</b><span class="meta">Drop on a place below</span></div><div class="db">${targets.map(t => t.head ? `<div class="mh menu-h">${esc(t.head)}</div>` : `<div class="droptarget" data-drop="${esc(JSON.stringify(t.to))}" style="padding-left:${10 + (t.depth || 0) * 16}px">${icon(t.icon || 'pin')}<span class="ell">${esc(t.label)}</span>${t.count !== undefined ? `<span class="c">${t.count}</span>` : ''}</div>`).join('')}</div>`;
+    document.body.appendChild(p);
+    $$('.droptarget', p).forEach(el => {
+      el.ondragover = (ev) => { ev.preventDefault(); ev.dataTransfer.dropEffect = 'move'; el.classList.add('over'); };
+      el.ondragleave = () => el.classList.remove('over');
+      el.ondrop = async (ev) => { ev.preventDefault(); ev.stopPropagation(); el.classList.remove('over'); const to = JSON.parse(el.dataset.drop), info = dragInfo; endDrag(); await dropOn(info, to); };
+    });
+  }
+  function endDrag() { const p = $('#dropPanel'); if (p) p.remove(); $$('.dragging').forEach(x => x.classList.remove('dragging')); dragInfo = null; }
+  async function dropOn(info, to) {
+    if (!info) return;
+    if (info.type === 'items') {
+      if (to.newPlace) newPlaceForm((loc) => moveItemsTo(info.ids, loc));
+      else await moveItemsTo(info.ids, to.loc);
+    } else if (info.type === 'lib') {
+      if (to.newFolder) newFolderForm(info.ids);
+      else if (to.link) linkPick(info.ids);
+      else if (to.vault !== undefined) { await run(() => Promise.all(info.ids.map(id => keep.libVault(id, to.vault)))); await refresh(); }
+      else await libMoveIds(info.ids, to, to.kind === 'document' ? 'Documents' : to.folder ? 'Data › ' + to.folder : 'Data');
+    }
+  }
+  document.addEventListener('dragstart', (e) => {
+    const libRow = e.target.closest && e.target.closest('tr[data-lib][draggable]');
+    const itemEl = e.target.closest && e.target.closest('[data-open][draggable]');
+    if (!libRow && !itemEl) return;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('application/x-opensafe', '1');
+    if (libRow) {
+      const id = libRow.dataset.lib, ids = state.libPick && state.libPick.has(id) ? [...state.libPick] : [id];
+      dragInfo = { type: 'lib', ids };
+      const unlocked = state.snap.security.vault.unlocked;
+      const t = [{ head: 'Move to' }, { label: 'Documents', icon: 'letter', to: { kind: 'document' } }, { label: 'Data', icon: 'folder', to: { kind: 'data', folder: '' } },
+        ...libFolders().map(f => ({ label: f, icon: 'folder', depth: 1, to: { kind: 'data', folder: f } })), { label: 'New Data folder…', icon: 'plus', depth: 1, to: { newFolder: true } },
+        { head: 'Also' }, { label: 'Link to an item…', icon: 'box', to: { link: true } }, unlocked && { label: 'Vault', icon: 'lock', to: { vault: true } }].filter(Boolean);
+      dropPanel(ids.length === 1 ? 'Move 1 entry' : `Move ${ids.length} entries`, t);
+      $$('tr[data-lib]').forEach(r => { if (ids.includes(r.dataset.lib)) r.classList.add('dragging'); });
+    } else {
+      const id = itemEl.dataset.open, ids = state.sel.has(id) ? [...state.sel] : [id];
+      dragInfo = { type: 'items', ids };
+      const by = state.snap.summary.byLocation || {};
+      const t = locPaths().map(p => ({ label: p.split(' / ').pop(), depth: p.split(' / ').length - 1, icon: p.includes(' / ') ? 'box' : 'pin', count: (by[p] || {}).count || 0, to: { loc: p } }));
+      t.push({ label: 'New place…', icon: 'plus', to: { newPlace: true } });
+      dropPanel(ids.length === 1 ? `Move ${(asset(id) || {}).name || 'item'}` : `Move ${ids.length} items`, t);
+      $$('[data-open]').forEach(r => { if (ids.includes(r.dataset.open)) r.classList.add('dragging'); });
+    }
+    const g = document.createElement('div'); g.className = 'dragghost'; g.textContent = dragInfo.ids.length === 1 ? (dragInfo.type === 'items' ? (asset(dragInfo.ids[0]) || {}).name : (libEntry(dragInfo.ids[0]) || {}).title) || '1' : `${dragInfo.ids.length} selected`;
+    document.body.appendChild(g); e.dataTransfer.setDragImage(g, 10, 10); setTimeout(() => g.remove(), 0);
+  });
+  document.addEventListener('dragend', () => setTimeout(endDrag, 50));
 
   // ---------- reading a file inside OpenSafe ----------
   const vstate = { id: '', fileId: '', model: null, zoom: 1, sheet: 0, obs: null, pageImgs: {} };
@@ -852,12 +1032,54 @@
     return false;
   }
 
+  // ---------- drop-down menus ----------
+  function closeMenus() { $$('.menu').forEach(x => x.classList.add('hidden')); $$('.menuwrap.open').forEach(w => w.classList.remove('open')); $$('.menu.ctx').forEach(m => m.remove()); }
+  function toggleMenu(btn) {
+    const wrap = btn.closest('.menuwrap'), m = wrap && wrap.querySelector(':scope > .menu');
+    if (!m) return;
+    const opening = m.classList.contains('hidden');
+    closeMenus();
+    if (!opening) return;
+    m.classList.remove('hidden', 'up'); wrap.classList.add('open');
+    // open upwards if there's no room below
+    const r = m.getBoundingClientRect();
+    if (r.bottom > window.innerHeight - 8 && btn.getBoundingClientRect().top > r.height + 16) m.classList.add('up');
+    const first = m.querySelector('button'); if (first) first.focus({ preventScroll: true });
+  }
+  const dataAttrs = (d) => Object.entries(d || {}).map(([k, v]) => ` data-${k}="${esc(v)}"`).join('');
+  function menuItems(items) {
+    return items.filter(Boolean).map(x => x === '-' ? '<hr>' : x.head ? `<div class="mh">${esc(x.head)}</div>`
+      : `<button type="button" data-action="${esc(x.action)}"${dataAttrs(x.data)}${x.danger ? ' class="danger"' : ''}${x.disabled ? ' disabled' : ''}>${x.icon ? icon(x.icon) : ''}<span>${esc(x.label)}</span>${x.kbd ? `<span class="kbd">${esc(x.kbd)}</span>` : ''}</button>`).join('');
+  }
+  /** A filter chip: shows the current choice; its menu sets state.f[key]. */
+  function chip(label, key, cur, options, def = '', noClear = false, action = 'setF') {
+    const curOpt = options.find(o => o[0] === (cur || '')) || options[0];
+    const on = (cur || '') !== def;
+    return `<span class="menuwrap dd"><button type="button" class="chip ${on ? 'on' : ''}" data-action="moreMenu"><span class="k">${esc(label)}:</span> ${esc(curOpt[1].replace(/^[\u00a0└ ]+/, ''))}${on && !noClear ? `<span class="x" data-action="${action}" data-f="${esc(key)}" data-v="${esc(def)}" title="Clear">${icon('plus', 'xrot')}</span>` : icon('down', 'caret')}</button>
+      <div class="menu hidden left scroll">${options.map(([v, l]) => `<button type="button" data-action="${action}" data-f="${esc(key)}" data-v="${esc(v)}" class="${v === (cur || '') ? 'cur' : ''}">${v === (cur || '') ? icon('check') : '<span class="ic"></span>'}<span>${esc(l)}</span></button>`).join('')}</div></span>`;
+  }
+  /** A button with a drop-down menu. items: [{ label, action, icon, data, danger, kbd } | '-' | { head }] */
+  function dd(label, items, { cls = 'btn', align = 'right', iconName = '', title = '', scroll = false } = {}) {
+    return `<span class="menuwrap dd"><button type="button" class="${cls} ddbtn" data-action="moreMenu"${title ? ` title="${esc(title)}"` : ''}>${iconName ? icon(iconName) : ''}${label ? `<span>${esc(label)}</span>` : ''}${icon('down', 'caret')}</button><div class="menu hidden${align === 'left' ? ' left' : ''}${scroll ? ' scroll' : ''}">${menuItems(items)}</div></span>`;
+  }
+  // keyboard: arrows move through an open menu, Esc closes it
+  document.addEventListener('keydown', (e) => {
+    const m = $$('.menu').find(x => !x.classList.contains('hidden'));
+    if (!m) return;
+    const btns = $$('button:not(:disabled)', m), i = btns.indexOf(document.activeElement);
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenus(); }
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const n = btns[(i + (e.key === 'ArrowDown' ? 1 : btns.length - 1)) % btns.length]; if (n) n.focus(); }
+  }, true);
+
   // ---------- render ----------
   function render() {
     if (!state.snap) return;
     const navView = state.view === 'item' || state.view === 'bin' ? 'items' : state.view === 'libitem' ? libKindPage((libEntry(state.libId) || {}).kind) : state.view;
     $$('.side [data-nav]').forEach(b => b.classList.toggle('on', b.dataset.nav === navView));
     const v = $('#view');
+    const pageKey = [state.view, state.itemId, state.libId].join('|');
+    if (pageKey !== state.lastPageKey) { state.lastPageKey = pageKey; v.classList.remove('enter'); void v.offsetWidth; v.classList.add('enter'); }
+    else v.classList.remove('enter');
     const views = { dashboard: viewDashboard, items: viewItems, item: viewItem, reminders: viewReminders, phone: viewPhone, reports: viewReports, settings: viewSettings, vault: viewVault, policies: viewPolicies, bin: viewBin, trips: viewTrips, places: viewPlaces, data: viewData, docs: () => viewLibrary('docs'), files: () => viewLibrary('files'), libitem: viewLibItem };
     v.innerHTML = (views[state.view] || viewDashboard)();
     if (state.view === 'phone') { loadCapture(); loadPhone(); const d = $('#wifiDetails'); if (d) d.ontoggle = () => { state.wifiOpen = d.open; }; }
@@ -965,31 +1187,38 @@
     const list = filtered();
     const total = list.reduce((t, a) => t + (a.status === 'Borrowed' ? 0 : value(a)), 0); // borrowed things aren't yours
     const gapNames = { serial: 'no serial number', receipt: 'no receipt', insurer: 'no insurer', photo: 'no photo', noloc: 'no location set' };
+    const chipsHtml = [
+      chip('Category', 'category', f.category, [['', 'All categories'], ...d.categories.map(c => [c, c])]),
+      (state.snap.data.people || []).length ? chip('Owner', 'owner', f.owner || '', [['', 'Everyone'], ...state.snap.data.people.map(p => [p, p])]) : '',
+      chip('Place', 'location', f.location, [['', 'All places'], ...locPaths().map(c => [c, locLabel(c)])]),
+      chip('Status', 'status', f.status, [['active', 'Active items'], ['all', 'All statuses'], ...state.snap.lists.statuses.map(x => [x, x])], 'active'),
+      chip('Sort', 'sort', f.sort, [['added', 'Newest first'], ['name', 'Name A–Z'], ['value', 'Highest value'], ['bought', 'Recently bought'], ['category', 'Category']], 'added', true)
+    ].join('');
     const toolbar = `<div class="toolbar">
-      <input type="search" id="q" placeholder="Search name, serial, barcode, reg, who has it, notes…" value="${esc(f.q)}">
-      <select data-f="category">${opt('', 'All categories', f.category)}${d.categories.map(c => opt(c, c, f.category)).join('')}</select>
-      ${(state.snap.data.people || []).length ? `<select data-f="owner">${opt('', 'Everyone', f.owner || '')}${state.snap.data.people.map(p => opt(p, p, f.owner || '')).join('')}</select>` : ''}
-      <select data-f="location">${opt('', 'All locations', f.location)}${locPaths().map(c => opt(c, locLabel(c), f.location)).join('')}</select>
-      <select data-f="status">${opt('active', 'Active items', f.status)}${opt('all', 'All statuses', f.status)}${state.snap.lists.statuses.map(s => opt(s, s, f.status)).join('')}</select>
-      <select data-f="sort">${opt('added', 'Newest first', f.sort)}${opt('name', 'Name A–Z', f.sort)}${opt('value', 'Highest value', f.sort)}${opt('bought', 'Recently bought', f.sort)}${opt('category', 'Category', f.sort)}</select>
-      <span class="spacer"></span>
-      <span class="seg"><button data-layout="table" class="${f.layout === 'table' ? 'on' : ''}">List</button><button data-layout="grid" class="${f.layout === 'grid' ? 'on' : ''}">Photos</button></span>
+      <div class="sidesearch libsearch itemsearch">${icon('search')}<input type="search" id="q" placeholder="Search name, serial, barcode, reg, who has it, notes…" value="${esc(f.q)}"></div>
+      <div class="chips">${chipsHtml}</div>
     </div>
     ${f.gap ? `<div style="margin:-4px 0 12px"><span class="pill warn">${f.gap === 'grab' ? 'Showing the grab list' : `Showing items with ${gapNames[f.gap]}`}</span> <button class="btn small" data-action="clearGap">Clear</button></div>` : ''}`;
-    const head = `<div class="head"><h1>Items</h1><span class="sub">${list.length} shown · ${money0(total)}</span><span class="spacer"></span><button class="btn" data-action="findDupes" title="Find items entered twice">${icon('duplicate')}Duplicates…</button>${(state.snap.data.bin || []).length ? `<button class="btn" data-nav="bin">${icon('trash')}Deleted items (${state.snap.data.bin.length})</button>` : ''}<button class="btn primary" data-action="new">${icon('plus')}Add item</button></div>`;
+    const binN = (state.snap.data.bin || []).length;
+    const head = `<div class="head"><h1>Items</h1><span class="sub">${list.length} shown · ${money0(total)}</span><span class="spacer"></span>
+      ${dd('More', [{ head: 'Tidy up' }, { label: 'Find duplicates…', action: 'findDupes', icon: 'duplicate' }, { label: binN ? `Deleted items (${binN})` : 'Deleted items', action: 'goBin', icon: 'trash' }, '-', { head: 'Import and export' },
+        { label: 'Import from a spreadsheet…', action: 'csvPick', icon: 'sheet' }, { label: 'Import from phone…', action: 'importPick', icon: 'phone' }, { label: 'Export to a spreadsheet (CSV)…', action: 'csv', icon: 'download' }, '-',
+        { head: 'Print' }, { label: 'Inventory report…', action: 'goReports', icon: 'printer' }, { label: 'QR labels for items shown…', action: 'labelsShown', icon: 'qr' }], { iconName: 'more' })}
+      <span class="seg"><button data-layout="table" class="${f.layout === 'table' ? 'on' : ''}" title="List">${icon('sheet')}List</button><button data-layout="grid" class="${f.layout === 'grid' ? 'on' : ''}" title="Photos">${icon('image')}Photos</button></span>
+      <button class="btn primary" data-action="new">${icon('plus')}Add item</button></div>`;
     if (!list.length) return head + toolbar + `<div class="card empty">${d.assets.length ? 'No items match these filters.' : 'No items yet. Add one here or from your phone.'}</div>`;
     if (f.layout === 'grid') {
-      return head + toolbar + `<div class="cards">${list.map(a => `<div class="icard" data-open="${a.id}">
+      return head + toolbar + `<div class="cards">${list.map(a => `<div class="icard" data-open="${a.id}" draggable="true">
         <div class="img">${cover(a) ? `<img src="${img(a, cover(a))}" alt="" loading="lazy">` : '▣'}</div>
         <div class="body"><div class="name">${esc(a.name)}</div><div class="meta">${esc(a.category || '')}</div><div class="val">${value(a) ? money(value(a)) : '<span class="faint">No value</span>'}</div></div></div>`).join('')}</div>`;
     }
     const ids = list.map(a => a.id);
     for (const id of [...state.sel]) if (!state.snap.data.assets.some(a => a.id === id)) state.sel.delete(id);
     const allOn = ids.length && ids.every(id => state.sel.has(id));
-    const selBar = state.sel.size ? `<div class="selbar"><b>${state.sel.size} selected</b><button class="btn primary small" data-action="bulkSel">Change…</button><button class="btn small" data-action="claimSel">Claim pack…</button><button class="btn small" data-action="labelsSel">QR labels…</button><button class="btn small danger" data-action="deleteSel">Delete…</button><button class="btn small" data-action="selClear">Clear selection</button></div>` : '';
+    const selBar = state.sel.size ? `<div class="selbar"><b>${state.sel.size} selected</b>${dd('Move to', [{ head: 'Move to a place' }, ...locPaths().map(p => ({ label: locLabel(p), action: 'moveSel', icon: p.includes(' / ') ? '' : 'pin', data: { loc: p } })), '-', { label: 'New place…', action: 'moveSelNew', icon: 'plus' }], { cls: 'btn primary small', iconName: 'pin', scroll: true, align: 'left' })}<button class="btn small" data-action="bulkSel">Change…</button><button class="btn small" data-action="claimSel">Claim pack…</button><button class="btn small" data-action="labelsSel">QR labels…</button><button class="btn small danger" data-action="deleteSel">Delete…</button><button class="btn small" data-action="selClear">Clear selection</button></div>` : '';
     const placeLink = f.location ? `<div class="meta" style="margin:-6px 0 12px">Showing items in <b>${esc(f.location)}</b> and anything inside it · <a href="#" data-action="goPlace" data-place="${esc(f.location)}">Photos, videos and label for this place</a></div>` : '';
     return head + toolbar + placeLink + selBar + `<table class="list"><thead><tr><th style="width:34px"><input type="checkbox" class="selall" title="Select all shown" ${allOn ? 'checked' : ''}></th><th style="width:60px"></th><th>Item</th><th>Category</th><th>Location</th><th>Serial no.</th><th>Bought</th><th class="r">Value now</th><th></th></tr></thead><tbody>
-      ${list.map(a => `<tr data-open="${a.id}"><td><input type="checkbox" class="selbox" data-id="${a.id}" ${state.sel.has(a.id) ? 'checked' : ''} aria-label="Select ${esc(a.name)}"></td><td>${thumb(a)}</td>
+      ${list.map(a => `<tr data-open="${a.id}" draggable="true" class="${state.sel.has(a.id) ? 'sel' : ''}" title="Drag onto a place to move it; right-click for more"><td><input type="checkbox" class="selbox" data-id="${a.id}" ${state.sel.has(a.id) ? 'checked' : ''} aria-label="Select ${esc(a.name)}"></td><td>${thumb(a)}</td>
         <td><div class="name">${esc(a.name)}${partsOf(a.id).length ? ` <span class="pill">Set of ${partsOf(a.id).length + 1}</span>` : ''}</div><div class="meta">${esc([a.brand, a.model].filter(Boolean).join(' '))}${a.partOf && asset(a.partOf) ? `${a.brand || a.model ? ' · ' : ''}Part of ${esc(asset(a.partOf).name)}` : ''}</div></td>
         <td>${esc(a.category)}</td><td>${esc(a.location)}</td><td class="mono">${esc(a.serial) || '<span class="faint">—</span>'}</td>
         <td class="nowrap">${ukDate(a.purchaseDate)}</td><td class="r nowrap">${value(a) ? money(value(a)) : '—'}</td>
@@ -1131,6 +1360,7 @@
           <div class="card"><div class="dsec-h">Where it is</div><div class="big">${a.location ? `<a href="#" data-action="goPlace" data-place="${esc(a.location)}">${esc(a.location)}</a>` : '<span class="faint">No location set</span>'}</div>
             <div class="dsec-h" style="margin-top:14px">Status</div><div>${esc(a.status)}${a.status === 'Lent out' && a.lentTo ? ` to ${esc(a.lentTo)}` : ''}</div>
             <div class="faint" style="margin-top:14px;font-size:12px">Added ${ukDate(a.createdAt.slice(0, 10))}${a.source === 'phone' ? ' from the phone' : ''} · changed ${ukDate(a.updatedAt.slice(0, 10))}</div></div>
+          ${linkedDocsCard(a)}
           ${[setCard(a), valueCard(a)].filter(x => x.includes('sidecard')).join('')}
         </div></div>`;
     } else if (t === 'photos') {
@@ -1476,10 +1706,34 @@
           <button class="btn" data-action="filterLoc" data-loc="${esc(cur)}">${icon('box')}Show in Items</button>
           <button class="btn" data-action="placeLabelOne" data-place="${esc(cur)}">${icon('qr')}Print label</button></div>
           ${here.length ? `<table class="list" style="margin-top:14px"><thead><tr><th>Item</th><th>Where</th><th class="r">Value</th></tr></thead><tbody>
-            ${here.slice(0, 200).map(a => `<tr data-open="${a.id}"><td><b>${esc(a.name)}</b>${a.status !== 'Owned' ? ` <span class="pill">${esc(a.status)}</span>` : ''}</td><td class="meta">${esc(a.location === cur ? '' : a.location.slice(cur.length + 3))}</td><td class="r nowrap">${value(a) ? money(value(a)) : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="muted" style="margin:12px 0 0">Nothing is recorded here.</p>'}</div>
+            ${here.slice(0, 200).map(a => `<tr data-open="${a.id}" draggable="true" title="Drag onto another place to move it"><td><b>${esc(a.name)}</b>${a.status !== 'Owned' ? ` <span class="pill">${esc(a.status)}</span>` : ''}</td><td class="meta">${esc(a.location === cur ? '' : a.location.slice(cur.length + 3))}</td><td class="r nowrap">${value(a) ? money(value(a)) : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="muted" style="margin:12px 0 0">Nothing is recorded here.</p>'}</div>
         ${placeCard(cur)}
       </div>
     </div>`;
+  }
+  function linkedDocsCard(a) {
+    const docs = (state.snap.data.library || []).filter(e => e.assetIds.includes(a.id));
+    return `<div class="card"><div class="dsec-h" style="display:flex;align-items:center">Linked documents and files<span class="spacer"></span><button class="btn small ghost" data-action="ctxLinkDoc" data-id="${esc(a.id)}" title="Link a document or file">${icon('plus')}</button></div>
+      ${docs.length ? `<div class="rows">${docs.map(e => `<div class="rowi" data-action="libOpen" data-lib="${esc(e.id)}">${icon(e.kind === 'document' ? 'letter' : 'folder')}<span style="flex:1;min-width:0"><b class="ell" style="display:block">${esc(e.title)}</b><span class="meta">${esc(e.kind === 'document' ? e.docType : 'Data' + (e.folder ? ' › ' + e.folder : ''))}</span></span><button class="btn small ghost" data-action="libUnlink" data-lib="${esc(e.id)}" data-asset="${esc(a.id)}" title="Unlink (the document isn't deleted)">${icon('plus', 'xrot')}</button></div>`).join('')}</div>`
+        : `<p class="muted small" style="margin:6px 0 0">Link letters, manuals or emails from Documents and Data, so they show here.</p>`}</div>`;
+  }
+  function linkDocToItem(assetId) {
+    const rows = (state.snap.data.library || []).filter(e => !e.assetIds.includes(assetId)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(e => ({ id: e.id, title: e.title, sub: [e.kind === 'document' ? e.docType : 'Data' + (e.folder ? ' › ' + e.folder : ''), e.from].filter(Boolean).join(' · '), thumb: `<span class="pkic">${icon(e.kind === 'document' ? 'letter' : 'folder')}</span>` }));
+    pickerModal('Link a document or file', rows, async (id) => { const n = await run(() => keep.libLink([id], assetId, true)); if (n !== undefined) { toast('✓ Linked', 2500); await refresh(); } }, { hint: 'Choose from Documents and Data. It stays where it is and also shows on this item’s page.', empty: 'Nothing in Documents or Data yet.' });
+  }
+  function newPlaceForm(onDone) {
+    openModal(`<form class="dialog narrow" id="npForm"><div class="dh"><h2>New place</h2></div><div class="db">
+      <label class="f s3">Place<input name="place" list="npLocs" maxlength="200" required placeholder="e.g. Home / Garage / Shelf 2"><datalist id="npLocs">${locPaths().map(p => `<option value="${esc(p)} / ">`).join('')}</datalist></label>
+      <p class="s3 muted small" style="margin:0">Use <b>/</b> for places inside places. It's added to your list of locations.</p></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Move here</button></div></form>`);
+    $('#npForm').onsubmit = async (ev) => {
+      ev.preventDefault();
+      const loc = ev.target.place.value.split('/').map(x => x.trim()).filter(Boolean).join(' / ');
+      if (!loc) return;
+      const locs = state.snap.data.locations;
+      if (!locs.includes(loc)) await run(() => keep.setLists(state.snap.data.categories, [...locs, loc]));
+      closeModal(); await onDone(loc);
+    };
   }
   function placeLabelsForm(pre) {
     openModal(`<form class="dialog narrow" id="plForm"><div class="dh"><h2>Labels for places</h2></div>
@@ -1712,6 +1966,7 @@
     e.preventDefault();
     dragDepth = 0; $('#view').classList.remove('dropping');
     if (e.target.closest && e.target.closest('#drop')) return; // item photo/document drop zone handles its own files
+    if (e.dataTransfer && [...e.dataTransfer.types].includes('application/x-opensafe')) return; // moving things inside OpenSafe
     const lt = !vstate.id && libDropTarget();
     if (lt) { // Documents, Data or a document's page: drop anywhere on the page
       const list = e.dataTransfer ? e.dataTransfer.files : [];
@@ -1740,7 +1995,7 @@
     libViewOpen(state.libId, row.dataset.libsel);
   });
   document.addEventListener('click', async (e) => {
-    if (e.target.closest('.menu') || !e.target.closest('.menuwrap')) $$('.menu').forEach(m => m.classList.add('hidden'));
+    if (e.target.closest('.menu') || !e.target.closest('.menuwrap')) closeMenus();
     const selRow = e.target.closest('[data-libsel]');
     if (selRow && !e.target.closest('[data-action], .menuwrap') && state.libId) {
       state.libSel = state.libSel || {};
@@ -1762,6 +2017,12 @@
     if (lay) { state.f.layout = lay.dataset.layout; render(); return; }
 
     const act = e.target.closest('[data-action]');
+    if (act && (act.dataset.action === 'libSelBox' || act.dataset.action === 'libSelAll')) { // checkboxes: read the tick now, before anything else
+      state.libPick = state.libPick || new Set();
+      if (act.dataset.action === 'libSelBox') { if (act.checked) state.libPick.add(act.dataset.lib); else state.libPick.delete(act.dataset.lib); }
+      else { const list = libFiltered(LIB[state.view].kind); if (act.checked) list.forEach(x => state.libPick.add(x.id)); else state.libPick.clear(); }
+      refreshLibList(); return;
+    }
     if (act && act.dataset.action.startsWith('lib')) { e.preventDefault(); if (!(await viewerAction(act))) await libAction(act); return; }
     if (act) {
       const a = state.itemId && asset(state.itemId);
@@ -1890,12 +2151,28 @@
         case 'claimOne': claimForm([a.id]); break;
         case 'selClear': state.sel.clear(); render(); break;
         case 'ocr': readReceipt(a, act.dataset.file); break;
-        case 'moreMenu': { const m = act.parentElement.querySelector('.menu'); const open = m.classList.contains('hidden'); $$('.menu').forEach(x => x.classList.add('hidden')); m.classList.toggle('hidden', !open); break; }
+        case 'moreMenu': toggleMenu(act); break;
         case 'sell': sellForm(a); break;
         case 'lsCopyTitle': await run(() => keep.copyPlain($('#lsTitle').value), 'Title copied'); break;
         case 'lsCopyText': await run(() => keep.copyPlain($('#lsText').value), 'Description copied'); break;
         case 'lsPhotos': { const n = await run(() => keep.listingPhotos(a.id)); if (n) toast(`✓ ${n} photo${n === 1 ? '' : 's'} saved`); break; }
         case 'tripNew': tripForm(null); break;
+        case 'setLF': { e.stopPropagation(); closeMenus(); state.lf[act.dataset.f] = act.dataset.v; render(); break; }
+        case 'setF': { e.stopPropagation(); closeMenus(); state.f[act.dataset.f] = act.dataset.v; render(); break; }
+        case 'goBin': go('bin'); break;
+        case 'ctxOpen': go('item', { itemId: act.dataset.id, tab: 'overview' }); break;
+        case 'ctxEdit': itemForm(asset(act.dataset.id)); break;
+        case 'ctxMove': { const ids = JSON.parse(act.dataset.ids); placePicker(ids.length === 1 ? `Move ${(asset(ids[0]) || {}).name}` : `Move ${ids.length} items`, (loc) => moveItemsTo(ids, loc)); break; }
+        case 'ctxDup': { const c = await run(() => keep.duplicateAsset(act.dataset.id), 'Copy made – photos and documents are not copied'); if (c) { await refresh(); go('item', { itemId: c.id, tab: 'overview' }); } break; }
+        case 'ctxLabel': { const p = await run(() => keep.labels([act.dataset.id], { copies: 1, skip: 0 })); if (p) toast('✓ Label saved. Print at 100% (no "fit to page").', 5000); break; }
+        case 'ctxDel': { const x = asset(act.dataset.id); if (x && confirm(`Delete "${x.name}"?\n\nIt goes to Deleted items for 30 days.`)) { const ok = await run(() => keep.deleteAsset(x.id)); if (ok) { toast('Moved to Deleted items. You can restore it for 30 days.', 4500); await refresh(); if (state.itemId === x.id) go('items'); } } break; }
+        case 'ctxLinkDoc': linkDocToItem(act.dataset.id); break;
+        case 'goReports': go('reports'); break;
+        case 'labelsShown': { const ids = filtered().map(x => x.id); if (!ids.length) { toast('No items shown'); break; } state.sel = new Set(ids); render(); setTimeout(() => { const b = $('[data-action=labelsSel]'); if (b) b.click(); }, 50); break; }
+        case 'moveSel': { const ids = [...state.sel], loc = act.dataset.loc; const n = await run(() => keep.bulkUpdate(ids, { location: loc })); if (n !== undefined) { toast(`✓ ${ids.length} item${ids.length === 1 ? '' : 's'} moved to ${loc}`, 3500); state.sel.clear(); await refresh(); } break; }
+        case 'moveSelNew': newPlaceForm((loc) => { const ids = [...state.sel]; return run(() => keep.bulkUpdate(ids, { location: loc })).then(async (n) => { if (n !== undefined) { toast(`✓ ${ids.length} item${ids.length === 1 ? '' : 's'} moved to ${loc}`, 3500); state.sel.clear(); await refresh(); } }); }); break;
+        case 'tripNewGo': go('trips'); tripForm(null); break;
+        case 'polNewGo': go('policies'); policyForm(null); break;
         case 'tripEdit': tripForm(state.snap.data.trips.find(t => t.id === state.tripId)); break;
         case 'tripPick': tripPicker(state.snap.data.trips.find(t => t.id === state.tripId)); break;
         case 'tripReset': if (confirm('Untick everything on this list?')) { await run(() => keep.resetTrip(state.tripId)); await refresh(); } break;

@@ -37,7 +37,7 @@ app.on('browser-window-created', (_e, win) => {
   win.webContents.once('did-finish-load', async () => {
     const js = (code) => win.webContents.executeJavaScript(code);
     const shot = async (name) => { await wait(600); fs.writeFileSync(path.join(OUT, name + '.png'), (await win.webContents.capturePage()).toPNG()); };
-    const open = async (name) => { await js(`document.querySelector('[data-nav=items]').click()`); await wait(400); await js(`{ const l = document.querySelector('[data-f=location]'); if (l.value) { l.value = ''; l.dispatchEvent(new Event('change', { bubbles: true })); } }`); await wait(400); await js(`[...document.querySelectorAll('[data-open]')].find(e => e.querySelector('.name') && e.querySelector('.name').innerText.startsWith(${JSON.stringify(name)})).click()`); await wait(500); };
+    const open = async (name) => { await js(`document.querySelector('[data-nav=items]').click()`); await wait(400); await js(`{ const b = document.querySelector('.menu [data-action=setF][data-f=location][data-v=""]'); if (b && document.querySelector('.chip.on [data-f=location]')) b.click(); }`); await wait(400); await js(`[...document.querySelectorAll('[data-open]')].find(e => e.querySelector('.name') && e.querySelector('.name').innerText.startsWith(${JSON.stringify(name)})).click()`); await wait(500); };
     const R = {};
     try {
       win.setSize(1320, 900); await wait(1500);
@@ -48,7 +48,7 @@ app.on('browser-window-created', (_e, win) => {
       await js(`document.querySelector('[data-action=placeSel][data-place="Home / Garage"]').click()`); await wait(400);
       await js(`document.querySelector('[data-action=filterLoc]').click()`); await wait(500);
       R.garageFilter = await js(`[...document.querySelectorAll('[data-open] .name')].map(e => e.innerText).sort()`);
-      R.locOptions = await js(`[...document.querySelectorAll('[data-f=location] option')].map(o => o.textContent)`);
+      R.locOptions = await js(`[...document.querySelectorAll('.menu [data-action=setF][data-f=location]')].map(o => o.textContent.trim())`);
       // 2. depreciation: Tools 20% a year -> mitre saw estimated ~£640
       await js(`document.querySelector('[data-nav=settings]').click()`); await wait(400);
       await js(`document.querySelector('[data-dep="Tools"]').value = '150'; document.querySelector('[data-action=saveDep]').click()`); await wait(500);

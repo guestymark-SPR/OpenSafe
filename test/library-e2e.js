@@ -50,7 +50,7 @@ app.on('browser-window-created', (_e, win) => {
       R.docsEmpty = await js(`document.querySelector('.card.empty').innerText.slice(0, 120)`);
       await shot('l1-docs-empty');
       pick = [path.join(SAMPLES, 'scanned.pdf')];
-      await js(`document.querySelector('[data-action=libAdd]').click()`); await wait(1500);
+      await js(`document.querySelector('.head [data-action=libAdd]').click()`); await wait(1500);
       R.newFormTitle = await js(`document.querySelector('#libForm h2').innerText + ' | ' + document.querySelector('#libForm [name=title]').value`);
       await shot('l2-new-doc-form');
       await js(`{ const f = document.getElementById('libForm'); f.title.value = 'AFCS award letter'; f.docType.value = 'Benefits & pension'; f.from.value = 'Veterans UK'; f.docDate.value = '2026-06-02'; f.ref.value = 'AFCS/2026/88123'; f.actBy.value = '${inDays(5)}'; f.tags.value = 'afcs, pension'; f.requestSubmit(); }`); await wait(800);
@@ -58,7 +58,7 @@ app.on('browser-window-created', (_e, win) => {
       // a second document with a text layer, added by "drop" path (main's addPaths)
       pick = [path.join(SAMPLES, 'text.pdf')];
       await js(`document.querySelector('[data-nav=docs]').click()`); await wait(300);
-      await js(`document.querySelector('[data-action=libAdd]').click()`); await wait(1200);
+      await js(`document.querySelector('.head [data-action=libAdd]').click()`); await wait(1200);
       await js(`{ const f = document.getElementById('libForm'); f.title.value = 'Council tax bill 2027'; f.docType.value = 'Bill'; f.from.value = 'Sandwell Council'; f.requestSubmit(); }`); await wait(600);
       R.readAll2 = await waitRead();
       await js(`document.querySelector('[data-nav=docs]').click()`); await wait(1500);
@@ -104,7 +104,7 @@ app.on('browser-window-created', (_e, win) => {
       await js(`document.querySelector('[data-nav=files]').click()`); await wait(400);
       R.dataHighlighted = await js(`document.querySelector('.side [data-nav=files]').classList.contains('on')`);
       pick = [path.join(SAMPLES, 'mail.eml'), path.join(SAMPLES, 'tenancy.docx'), path.join(SAMPLES, 'costs.xlsx'), exe];
-      await js(`document.querySelector('[data-action=libAdd]').click()`); await wait(1500);
+      await js(`document.querySelector('.head [data-action=libAdd]').click()`); await wait(1500);
       R.dataToast = await js(`document.getElementById('toast').innerText`);
       R.readAll4 = await waitRead();
       await js(`document.querySelector('[data-nav=files]').click()`); await wait(1000);
@@ -115,10 +115,11 @@ app.on('browser-window-created', (_e, win) => {
       await js(`{ const q = document.getElementById('libQ'); q.value = 'Low Rider'; q.dispatchEvent(new Event('input')); }`); await wait(800);
       R.dataSearchEmail = await js(`[...document.querySelectorAll('#libList tbody tr b')].map(b => b.innerText)`);
       await js(`{ const q = document.getElementById('libQ'); q.value = ''; q.dispatchEvent(new Event('input')); }`); await wait(600);
-      await js(`document.getElementById('libFolder').value = 'Emails'; document.getElementById('libFolder').dispatchEvent(new Event('change'))`); await wait(300);
+      await js(`document.querySelector('.libbar .chip').click()`); await wait(200);
+      await js(`[...document.querySelectorAll('.libbar .menu:not(.hidden) button')].find(b => b.innerText.trim() === 'Emails').click()`); await wait(400);
       R.folderFilter = await js(`[...document.querySelectorAll('#libList tbody tr b')].map(b => b.innerText)`);
       // save a copy of the Word file
-      await js(`document.getElementById('libFolder').value = ''; document.getElementById('libFolder').dispatchEvent(new Event('change'))`); await wait(300);
+      await js(`document.querySelector('.libbar .chip.on .x').click()`); await wait(400);
       await js(`[...document.querySelectorAll('#libList tbody tr')].find(r => r.innerText.includes('tenancy')).click()`); await wait(800);
       await js(`document.querySelector('[data-action=libFileCopy]').click()`); await wait(600);
       R.savedCopyMatches = fs.existsSync(savedTo) && fs.readFileSync(savedTo).equals(fs.readFileSync(path.join(SAMPLES, 'tenancy.docx')));

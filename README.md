@@ -16,7 +16,18 @@ The menu on the left is grouped by job:
 - **Tools:** **Reports & printing**, **Phone app** and **Import & backup**.
 - **Settings**, **Lock OpenSafe** (when password protection is on) and **+ Add item** sit at the bottom.
 
-The search box at the top of the menu searches all your items from any page. On an item's page, **Edit** and **Log service** are always shown; less-used actions (duplicate, QR label, claim pack, sell, vault, delete) are under **More**.
+**+ New** at the bottom of the menu adds an item, a document, Data files, a packing list or an insurance policy from any page.
+
+The search box at the top of the menu searches all your items from any page. Filters on Items, Documents and Data are drop-down chips (**Category ▾**, **Place ▾**, **Status ▾**, **Sort ▾**); **×** on a chip clears it. Less-used page actions (duplicates, deleted items, import and export, printing) are under **More ▾**.
+
+**Right-click** an item, a document or Data entry, a file or a place for the things you can do with it (open, edit, move, link, duplicate, print a label, delete).
+
+**Moving things:**
+- **Items to a place:** tick several items and use **Move to ▾**, right-click → **Move to a place…**, or drag items (one, or all the ticked ones): a panel of your places appears, and you drop them on one. Item rows on the Places page can be dragged too. **New place…** makes a new one.
+- **Between Documents and Data, and into Data folders:** tick entries and use **Move to ▾**, right-click, or drag them onto the panel that appears. A document moved to Data and back keeps its type.
+- **Linking documents to items:** right-click a document → **Link to an item…**, or on an item's page use **+** in **Linked documents and files**. A linked letter, manual or email stays where it is and also shows on the item's page. **×** unlinks it (nothing is deleted).
+
+On an item's page, **Edit** and **Log service** are always shown; less-used actions (duplicate, QR label, claim pack, sell, vault, delete) are under **More**.
 
 ## Features
 
