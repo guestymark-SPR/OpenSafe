@@ -547,8 +547,8 @@
       ? `<p class="lead">Keep an electronic copy of important letters and papers: bills, bank and pension letters, medical and legal letters, certificates. OpenSafe reads the words in them so you can search, and you can set a "reply by" date to get a reminder.</p>`
       : `<p class="lead">Keep files you want safe and in one place: saved emails (.eml or .msg), PDFs, Word and Excel files, photos and anything else. OpenSafe reads the words in most of them so you can search.</p>`;
     if (!all.length) return head + intro + `<div class="card empty droplib" id="libDrop" style="max-width:760px">
-        <p style="margin-top:0"><b>Nothing here yet.</b> Drag files onto this box, or use <b>${L.add}</b>.</p>
-        ${kind === 'document' ? `<p class="muted" style="margin-bottom:0">${icon('phone')}To scan a paper letter, use OpenSafe Capture on your phone: tap <b>📄 Scan a document</b>, photograph each page, then <b>Export to PC</b> and import the file here (<b>Phone app → Import from phone…</b>). Each scan becomes one PDF, and its words are read on this PC.</p>` : `<p class="muted" style="margin-bottom:0">To keep an email, save it from your email program as a file (in Outlook: <b>File → Save As</b>, or drag the email to a folder) and add that file here. The text of .eml emails can be searched; .msg files are stored but not searched.</p>`}
+        <p style="margin-top:0"><b>Nothing here yet.</b> Drag files anywhere on this page, or use <b>${L.add}</b>.</p>
+        ${kind === 'document' ? `<p class="muted" style="margin-bottom:0">${icon('phone')}To scan a paper letter, use OpenSafe Capture on your phone: tap <b>📄 Scan a document</b>, photograph each page, then <b>Export to PC</b> and import the file here (<b>Phone app → Import from phone…</b>). Each scan becomes one PDF, and its words are read on this PC.</p>` : `<p class="muted" style="margin-bottom:0">To keep an email, drag it from your email program onto this page, or save it as a file first (in Outlook: <b>File → Save As</b>, or drag the email to a folder) and add that file here. The text of .eml emails can be searched; .msg files are stored but not searched.</p>`}
         ${vaultLocked ? `<p class="note" style="margin-bottom:0">Some ${L.many} may be in the vault. <a href="#" data-nav="vault">Unlock the vault</a> to see them.</p>` : ''}</div>`;
     const types = state.snap.lists.libraryTypes || [];
     const folders = [...new Set(all.map(e => e.folder).filter(Boolean))].sort();
@@ -597,16 +597,11 @@
     wireLibDrop($('#libDrop') || $('#libList'), kind, '');
     loadLibThumbs();
   }
-  function wireLibDrop(z, kind, entryId) {
-    if (!z) return;
+  function wireLibDrop(z) {
+    if (!z) return; // the files themselves are added by the page-wide drop handler (see events)
     z.ondragover = (e) => { e.preventDefault(); z.classList.add('over'); };
     z.ondragleave = () => z.classList.remove('over');
-    z.ondrop = async (e) => {
-      e.preventDefault(); z.classList.remove('over');
-      if (!e.dataTransfer.files.length) return;
-      const r = await run(() => keep.libAddFiles(kind, e.dataTransfer.files, entryId));
-      await libAfterAdd(r, kind, entryId);
-    };
+    z.addEventListener('drop', () => z.classList.remove('over'));
   }
   async function libAfterAdd(r, kind, entryId) {
     if (!r) return;
@@ -643,7 +638,7 @@
             <button data-action="libFileCopy" data-file="${esc(x.id)}">${icon('download')}Save a copy…</button>
             <button data-action="libFileText" data-file="${esc(x.id)}">${icon('search')}Show the words found</button>
             <button data-action="libFileRemove" data-file="${esc(x.id)}" class="danger">${icon('trash')}Remove this file</button></div></span></div>`; }).join('')}</div>` : '<p class="muted">No files.</p>'}
-        <div class="drop" id="libDrop2">Drag more files here, or <a href="#" data-action="libAddMore">choose files…</a>${e.kind === 'document' ? ' (for example the other pages of the letter)' : ''}</div></div>
+        <div class="drop" id="libDrop2">Drag more files anywhere on this page, or <a href="#" data-action="libAddMore">choose files…</a>${e.kind === 'document' ? ' (for example the other pages of the letter)' : ''}</div></div>
     </div><div class="dash-side">
       <div class="card"><h2>Details</h2>
         ${row(e.kind === 'document' ? 'Type' : 'Folder', esc(e.kind === 'document' ? e.docType : e.folder))}${row('From', esc(e.from))}${row(e.kind === 'document' ? 'Date on it' : 'Date', e.docDate ? ukDate(e.docDate) : '')}${row('Reference', esc(e.ref))}
@@ -1699,10 +1694,35 @@
   }
 
   // ---------- events ----------
+  const libDropTarget = () => {
+    if (state.view === 'docs' || state.view === 'files') return { kind: LIB[state.view].kind, entryId: '' };
+    if (state.view === 'libitem') { const en = libEntry(state.libId); return en ? { kind: en.kind, entryId: en.id } : null; }
+    return null;
+  };
+  let dragDepth = 0;
+  document.addEventListener('dragenter', (e) => { if (libDropTarget() && !vstate.id && e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { dragDepth++; $('#view').classList.add('dropping'); } });
+  document.addEventListener('dragleave', () => { if (dragDepth > 0 && --dragDepth === 0) $('#view').classList.remove('dropping'); });
   document.addEventListener('dragover', (e) => e.preventDefault());
   document.addEventListener('drop', async (e) => {
     e.preventDefault();
+    dragDepth = 0; $('#view').classList.remove('dropping');
     if (e.target.closest && e.target.closest('#drop')) return; // item photo/document drop zone handles its own files
+    const lt = !vstate.id && libDropTarget();
+    if (lt) { // Documents, Data or a document's page: drop anywhere on the page
+      const list = e.dataTransfer ? e.dataTransfer.files : [];
+      if (!list.length) { toast('Nothing was added: that didn\'t contain any files. Drag files from File Explorer, or save the email as a file first.', 6500); return; }
+      const files = [...list], where = keep.filePaths(files), paths = [], blobs = [], skipped = [];
+      for (let i = 0; i < files.length; i++) {
+        if (where[i]) paths.push(where[i]);
+        else if (files[i].size > 500 * 1024 * 1024) skipped.push(`${files[i].name}: over 500 MB`);
+        else if (files[i].size) blobs.push({ name: files[i].name || 'file', data: new Uint8Array(await files[i].arrayBuffer()) });
+      }
+      const r = await run(() => keep.libAddDropped(lt.kind, paths, blobs, lt.entryId));
+      if (r) r.errors.push(...skipped);
+      if (r && !r.added && !r.errors.length) { toast('Nothing was added. Drag files from File Explorer, or use Add files…', 6000); return; }
+      await libAfterAdd(r, lt.kind, lt.entryId);
+      return;
+    }
     const files = [...(e.dataTransfer ? e.dataTransfer.files : [])].filter(f => /\.(opensafe|txt|json)$/i.test(f.name));
     if (!files.length) return;
     try { await keep.importFiles(files); } catch (err) { toast('⚠ ' + err.message, 5000); }

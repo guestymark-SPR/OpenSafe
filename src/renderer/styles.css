@@ -363,3 +363,4 @@ body.viewing{overflow:hidden}
 .vsheet thead th{position:sticky;top:0;background:var(--surface2);z-index:1}
 .vsheet tbody th{position:sticky;left:0;background:var(--surface2);color:var(--muted);font-weight:500}
 .libbigwrap{cursor:pointer}
+#view.dropping{outline:3px dashed var(--accent);outline-offset:-10px;background:color-mix(in srgb,var(--accent) 6%,transparent)}

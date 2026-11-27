@@ -75,7 +75,7 @@ Two places for files that aren't about one item.
 - **Documents** is for important letters and papers: bills, bank and pension letters, medical and legal letters, certificates. Each document has a title, type, who it's from, the date on it, a reference, notes and tags, and any number of files (for example each page).
 - **Data** is for anything else you want kept safe: saved emails (.eml or .msg), PDFs, Word and Excel files, photos and so on. Each file becomes its own entry, which you can put in a folder. An .eml email gets its subject, sender and date filled in, and its message is shown on its page.
 
-Adding: **Add document…** or **Add files…**, or drag files onto the page. In Documents, all the files you choose become one document, and OpenSafe asks for its details. Programs and scripts (.exe, .bat, .js and so on) can't be stored, because opening one could run it. Each file can be up to 500 MB.
+Adding: **Add document…** or **Add files…**, or drag files anywhere onto the Documents or Data page (or onto a document to add more pages). In Documents, all the files you choose become one document, and OpenSafe asks for its details. Programs and scripts (.exe, .bat, .js and so on) can't be stored, because opening one could run it. Each file can be up to 500 MB.
 
 **Scanning paper letters:** use **📄 Scan a document** in OpenSafe Capture on your phone (see below). Each scan arrives as one PDF in Documents.
 

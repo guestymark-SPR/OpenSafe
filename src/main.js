@@ -500,6 +500,23 @@ function registerIpc() {
     if (!Array.isArray(paths)) throw new Error('No files');
     return addLibraryPaths(kind === 'data' ? 'data' : 'document', paths.slice(0, 200).map(String), entryId ? String(entryId) : '');
   });
+  h('lib:addDropped', async (kind, paths, blobs, entryId) => {
+    const k = kind === 'data' ? 'data' : 'document', id = entryId ? String(entryId) : '';
+    const files = [], errors = [];
+    for (const p of (Array.isArray(paths) ? paths : []).slice(0, 200).map(String)) {
+      try { const st = fs.statSync(p); if (!st.isFile()) { errors.push(`${path.basename(p)}: folders can't be added, only files`); continue; } if (st.size > LIB_MAX) throw new Error('over 500 MB'); files.push({ name: path.basename(p), buf: fs.readFileSync(p) }); }
+      catch (e) { errors.push(`${path.basename(p)}: ${e.message}`); }
+    }
+    for (const b of (Array.isArray(blobs) ? blobs : []).slice(0, 200)) {
+      const name = path.basename(String((b && b.name) || 'file')).slice(0, 200) || 'file';
+      const buf = b && b.data ? Buffer.from(b.data) : Buffer.alloc(0);
+      if (!buf.length) { errors.push(`${name}: empty`); continue; }
+      files.push({ name, buf });
+    }
+    const res = await addLibraryBuffers(k, files, id);
+    res.errors.unshift(...errors);
+    return res;
+  });
   h('lib:save', (e) => libNote(store.saveLibraryEntry(e || {})));
   h('lib:get', (id) => store.getLibraryEntry(String(id)));
   h('lib:text', (id, fileId) => store.libraryText(String(id), String(fileId)));

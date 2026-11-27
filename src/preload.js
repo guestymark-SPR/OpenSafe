@@ -115,7 +115,10 @@ contextBridge.exposeInMainWorld('keep', {
   onChanged: (fn) => ipcRenderer.on('data:changed', () => fn()),
   onLibrary: (fn) => ipcRenderer.on('lib:changed', () => fn()),
   libPick: (kind, entryId) => call('lib:pick', kind, entryId),
-  libAddFiles: (kind, files, entryId) => call('lib:addPaths', kind, Array.from(files).map(f => webUtils.getPathForFile(f)).filter(Boolean), entryId),
+  // Where each dropped file is on disk ('' for files some apps, such as Outlook, drop without a path).
+  filePaths: (files) => Array.from(files || []).map(f => { try { return webUtils.getPathForFile(f) || ''; } catch (_) { return ''; } }),
+  // paths: files on disk; blobs: [{ name, data: Uint8Array }] for files that have no path
+  libAddDropped: (kind, paths, blobs, entryId) => call('lib:addDropped', kind, paths, blobs, entryId),
   libSave: (e) => call('lib:save', e),
   libGet: (id) => call('lib:get', id),
   libText: (id, fileId) => call('lib:text', id, fileId),
