@@ -272,3 +272,60 @@ test('documents marked for the phone: kept on edit, vault only when asked, page 
   assert.strictEqual(s.phoneLibraryEntries(false).length, 0);
   assert.strictEqual(s.phoneLibraryEntries(true).length, 1);
 });
+
+test('cases, sent letters and replies', () => {
+  const s = tmpStore();
+  const sent = s.saveLibraryEntry({ kind: 'document', title: 'My appeal', from: 'Child Maintenance Service', sent: true, docDate: '2026-03-01', expectBy: '2026-03-29', caseName: 'CMS recalculation' });
+  s.saveLibraryEntry({ kind: 'document', title: 'Decision', from: 'Child Maintenance Service', docDate: '2026-02-01', caseName: 'cms recalculation', ref: '12345' });
+  const other = s.saveLibraryEntry({ kind: 'document', title: 'Award', from: 'Veterans UK', docDate: '2026-08-14', caseName: 'AFCS claim' });
+  assert.strictEqual(s.getLibraryEntry(sent.id).sent, true);
+  // expectBy only for sent letters
+  assert.strictEqual(s.saveLibraryEntry({ kind: 'document', title: 'x', expectBy: '2026-01-01' }).expectBy, '');
+  let rs = s.replyStatus();
+  assert.deepStrictEqual(rs[sent.id], { replied: false, waiting: true, overdue: true });
+  const rem = s.reminders(new Date('2026-04-01'), 30).find(r => r.libraryId === sent.id);
+  assert.strictEqual(rem.kind, 'No reply yet'); assert.strictEqual(rem.daysLeft, -3);
+  assert.match(rem.assetName, /\(to Child Maintenance Service\)/);
+  // cases group case-insensitively, newest activity first
+  let cases = s.libraryCases();
+  assert.deepStrictEqual(cases.map(c => [c.name, c.count, c.overdue]), [['AFCS claim', 1, 0], ['CMS recalculation', 2, 1]]);
+  assert.deepStrictEqual(cases[1].refs, ['12345']);
+  assert.strictEqual(cases[1].first, '2026-02-01');
+  // their reply, added to the same case, counts as the reply
+  const reply = s.saveLibraryEntry({ kind: 'document', title: 'Reply to appeal', from: 'Child Maintenance Service', docDate: '2026-04-10', caseName: 'CMS recalculation' });
+  rs = s.replyStatus();
+  assert.strictEqual(rs[sent.id].replied, true); assert.strictEqual(rs[sent.id].replyId, reply.id);
+  assert.ok(!s.reminders(new Date('2026-04-11'), 30).some(r => r.libraryId === sent.id));
+  // manual "reply received" works without a case
+  const lone = s.saveLibraryEntry({ kind: 'data', title: 'Email to MP', sent: true, docDate: '2026-05-01', expectBy: '2026-05-15' });
+  assert.strictEqual(s.replyStatus()[lone.id].replied, false);
+  s.saveLibraryEntry({ id: lone.id, replyDone: true });
+  assert.strictEqual(s.replyStatus()[lone.id].replied, true);
+  // put in a case, rename it
+  s.moveLibrary([other.id, lone.id], { caseName: 'AFCS claim' });
+  assert.strictEqual(s.renameCase('afcs CLAIM', 'AFCS award'), 2);
+  assert.deepStrictEqual(s.libraryCases().map(c => c.name).sort(), ['AFCS award', 'CMS recalculation']);
+  s.moveLibrary([lone.id], { caseName: '' });
+  assert.strictEqual(s.getLibraryEntry(lone.id).caseName, '');
+  // search finds the case name
+  assert.ok(s.librarySearch('document', 'recalculation').some(x => x.id === sent.id));
+});
+
+test('the same file added twice is found, including files kept before the check existed', async () => {
+  const s = tmpStore();
+  const a = s.saveLibraryEntry({ kind: 'document', title: 'Letter A' });
+  s.addLibraryFile(a.id, 'a.pdf', Buffer.from('%PDF same bytes'));
+  const old = s.saveLibraryEntry({ kind: 'data', title: 'Old email' });
+  s.addLibraryFile(old.id, 'm.eml', Buffer.from('Subject: hi'));
+  delete s.getLibraryEntry && s._libFind(old.id).e.files[0].sha; // as stored by 2.12 and earlier
+  const found = s.findLibraryFiles([Buffer.from('%PDF same bytes'), Buffer.from('new'), Buffer.from('Subject: hi')]);
+  assert.deepStrictEqual(found.map(f => f && f.title), ['Letter A', null, 'Old email']);
+  assert.ok(s._libFind(old.id).e.files[0].sha, 'worked out and kept');
+  // vault files count only while the vault is open
+  await s.enableEncryption(PW); await s.setupVault('2468');
+  const v = s.saveLibraryEntry({ kind: 'document', title: 'Secret' });
+  s.addLibraryFile(v.id, 's.pdf', Buffer.from('vault bytes')); s.moveLibraryToVault(v.id, true);
+  assert.strictEqual(s.findLibraryFiles([Buffer.from('vault bytes')])[0].title, 'Secret');
+  s.lockVault();
+  assert.strictEqual(s.findLibraryFiles([Buffer.from('vault bytes')])[0], null);
+});

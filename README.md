@@ -111,6 +111,14 @@ Emails, Word files and saved web pages are shown with scripts switched off. Use 
 
 **Details filled in for you:** after reading a letter, OpenSafe looks for who it's from, the date on it and a reference number, and offers them in a bar at the top of the document (**Use these** or **No thanks**). It only offers details for empty boxes, never changes anything without you, and can be wrong, so check them.
 
+**Cases:** put letters about one matter (say "CMS recalculation") in a case: tick them and choose **Move to ▾ → Put in a case…**, or type a case name in **Edit details**. In Documents, **Cases** shows each case with its senders, references and dates; opening one shows every letter, sent and received, as a timeline from oldest to newest, with **Bundle PDF of the case…** and **More → Add documents to this case…**.
+
+**Letters you sent:** tick **I sent this** in **Edit details** (the From box becomes To) and set **Expect a reply by** (or click 14, 28 or 56 days after the date on it). Until a reply arrives, the letter shows *Reply due* or *No reply since …*, and Reminders lists *No reply yet* once the date passes. A letter received later in the same case counts as the reply, or tick **Reply received**.
+
+**Filters:** besides Type (or Folder) and Sort, Documents and Data can be filtered by **From / to**, **Tag**, **Case** and **Sent** (sent by me, or waiting for a reply). Each filter appears once there's something to choose.
+
+**Same file twice:** adding a file that's already kept (exactly the same file, in Documents or Data, or in the vault while it's unlocked) asks first: **Skip those** or **Add anyway**.
+
 **Bundle PDF:** tick letters (or Data entries) and choose **Bundle PDF…** (also on right-click and a document's **More** menu) to get one PDF for an MP, a solicitor, a tribunal or an appeal. They go in by the date on each one (oldest or newest first; undated ones last), with a contents page at the front (date, who from, title, reference and the pages each one is on) and *Page 3 of 40* on every page. PDFs and photos go in as they are; emails (.eml and .msg), Word and Excel files are turned into pages. Pictures from the internet in emails are never loaded. Anything that can't go in a PDF (such as videos) is listed on the contents page as not included.
 
 **Documents on your phone:** right-click a document or Data entry (or tick several and use **Move to ▾**, or a document's **More** menu) → **Keep a copy on my phone**. The next time you use **Phone app → Save inventory for phone**, they go in the same encrypted file, as page pictures, so they can be read offline in Capture under **My inventory → 📄 Documents**, searched by the words in them, and opened from a linked item. Up to 40 pages per document and 300 in all, as they were when the file was saved. Vault entries only go when the vault is unlocked and **Include vault items** is ticked.

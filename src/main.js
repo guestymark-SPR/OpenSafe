@@ -411,7 +411,7 @@ async function readLibraryText() {
 const readSoon = () => setTimeout(() => readLibraryText().catch(() => {}), 300);
 
 /** Add files from disk. Documents: all the files become one document. Data: one entry per file. */
-async function addLibraryPaths(kind, paths, entryId, fields) {
+async function addLibraryPaths(kind, paths, entryId, fields, opts) {
   const files = [], errors = [];
   for (const p of paths) {
     try {
@@ -421,12 +421,25 @@ async function addLibraryPaths(kind, paths, entryId, fields) {
       files.push({ name: path.basename(p), buf: fs.readFileSync(p) });
     } catch (e) { errors.push(`${path.basename(p)}: ${e.message}`); }
   }
-  const res = await addLibraryBuffers(kind, files, entryId, fields);
+  const res = await addLibraryBuffers(kind, files, entryId, fields, opts);
   res.errors.unshift(...errors);
   return res;
 }
-async function addLibraryBuffers(kind, files, entryId, fields) {
-  const res = { added: 0, ids: [], errors: [] };
+async function addLibraryBuffers(kind, files, entryId, fields, { askDuplicates = false } = {}) {
+  const res = { added: 0, ids: [], errors: [], skipped: [] };
+  if (askDuplicates && files.length) {
+    // the same file already kept? (exact same bytes)
+    const found = store.findLibraryFiles(files.map(f => f.buf));
+    const dups = files.map((f, i) => found[i] ? { f, at: found[i] } : null).filter(Boolean);
+    if (dups.length && win && !win.isDestroyed()) {
+      const where = (d) => `${d.f.name} — already in ${d.at.kind === 'data' ? 'Data' : 'Documents'}: "${d.at.title}"`;
+      const c = await dialog.showMessageBox(win, { type: 'question', title: 'Already in OpenSafe', noLink: true, defaultId: 0, cancelId: 0,
+        buttons: [dups.length === files.length ? 'Don\'t add' : 'Skip those', 'Add anyway'],
+        message: dups.length === 1 ? 'This file is already in OpenSafe.' : `${dups.length} of these files are already in OpenSafe.`,
+        detail: dups.slice(0, 12).map(where).join('\n') + (dups.length > 12 ? `\n…and ${dups.length - 12} more` : '') });
+      if (c.response === 0) { const skip = new Set(dups.map(d => d.f)); res.skipped = dups.map(d => ({ name: d.f.name, id: d.at.id, title: d.at.title })); files = files.filter(f => !skip.has(f)); }
+    }
+  }
   const detailsFor = (f) => {
     const base = { title: f.name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ').slice(0, 200) };
     if (/\.eml$/i.test(f.name)) { try { const i = doctext.emailInfo(f.buf); return { title: i.subject || base.title, from: i.from, docDate: i.date, folder: 'Emails' }; } catch (_) { /* use the name */ } }
@@ -512,6 +525,8 @@ function snapshot() {
   delete data.docText;
   data.library = store.libraryView();
   data.libBin = store.libraryBinView();
+  data.libCases = store.libraryCases();
+  data.libReplies = store.replyStatus();
   return {
     data,
     sync: sync ? sync.status() : null,
@@ -614,11 +629,11 @@ function registerIpc() {
   h('lib:pick', async (kind, entryId) => {
     const r = await dialog.showOpenDialog(win, { title: entryId ? 'Add files' : kind === 'document' ? 'Add a document (choose all its pages or files)' : 'Add files to Data', properties: ['openFile', 'multiSelections'], filters: libFilters });
     if (r.canceled) return { added: 0, ids: [], errors: [] };
-    return addLibraryPaths(kind === 'data' ? 'data' : 'document', r.filePaths.slice(0, 200), entryId ? String(entryId) : '');
+    return addLibraryPaths(kind === 'data' ? 'data' : 'document', r.filePaths.slice(0, 200), entryId ? String(entryId) : '', undefined, { askDuplicates: true });
   });
   h('lib:addPaths', (kind, paths, entryId) => {
     if (!Array.isArray(paths)) throw new Error('No files');
-    return addLibraryPaths(kind === 'data' ? 'data' : 'document', paths.slice(0, 200).map(String), entryId ? String(entryId) : '');
+    return addLibraryPaths(kind === 'data' ? 'data' : 'document', paths.slice(0, 200).map(String), entryId ? String(entryId) : '', undefined, { askDuplicates: true });
   });
   h('lib:addDropped', async (kind, paths, blobs, entryId) => {
     const k = kind === 'data' ? 'data' : 'document', id = entryId ? String(entryId) : '';
@@ -633,7 +648,7 @@ function registerIpc() {
       if (!buf.length) { errors.push(`${name}: empty`); continue; }
       files.push({ name, buf });
     }
-    const res = await addLibraryBuffers(k, files, id);
+    const res = await addLibraryBuffers(k, files, id, undefined, { askDuplicates: true });
     res.errors.unshift(...errors);
     return res;
   });
@@ -750,6 +765,7 @@ function registerIpc() {
     if (!syncTimer) syncTimer = setInterval(() => syncTick().catch(() => {}), 90 * 1000);
     return syncTick({ quiet: false });
   });
+  h('lib:renameCase', (from, to) => libNote(store.renameCase(String(from || ''), String(to || ''))));
   h('lib:onPhone', (ids, on) => libNote(store.setLibraryOnPhone((Array.isArray(ids) ? ids : [ids]).map(String), !!on)));
   h('lib:bundle', async (ids, opts) => {
     ids = (Array.isArray(ids) ? ids : []).map(String);

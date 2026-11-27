@@ -180,3 +180,23 @@ mark{background:color-mix(in srgb,#f5c542 45%,transparent);color:inherit;border-
 .checkrow .switch{display:flex;gap:10px;align-items:flex-start;font-weight:400}.checkrow .switch input{margin-top:3px}
 .checknote{width:100%}
 .newsbar{margin-bottom:16px}
+/* Cases */
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;margin-left:auto}
+.seg button{border:0;background:transparent;padding:6px 12px;display:inline-flex;gap:6px;align-items:center;cursor:pointer;color:inherit;font:inherit}
+.seg button.on{background:var(--accent-soft,rgba(29,77,79,.1));font-weight:600}
+.casegrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.casecard{cursor:pointer;display:grid;gap:4px;transition:transform .15s,box-shadow .15s}
+.casecard:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.08)}
+.casecard .ch{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.pill.case{cursor:pointer}
+.timeline{position:relative;max-width:860px;padding-left:34px}
+.timeline:before{content:"";position:absolute;left:14px;top:4px;bottom:4px;width:2px;background:var(--line)}
+.tyear{font-weight:700;color:var(--muted,#666);margin:14px 0 6px -34px;padding-left:2px}
+.titem{position:relative;margin:0 0 10px;cursor:pointer}
+.titem .tdot{position:absolute;left:-31px;top:12px;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--card,#fff);border:2px solid var(--line)}
+.titem .tdot svg{width:13px;height:13px}
+.titem.sent .tdot{border-color:var(--accent,#1d4d4f)}
+.titem.sent .tcard{border-left:3px solid var(--accent,#1d4d4f)}
+.titem .tcard{padding:10px 14px;display:grid;gap:3px}
+.titem:hover .tcard{box-shadow:0 4px 14px rgba(0,0,0,.07)}
+.tmeta{font-size:12.5px;color:var(--muted,#666)}

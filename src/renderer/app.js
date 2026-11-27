@@ -232,7 +232,7 @@
   }
 
   /** Bundle PDF: the chosen letters in date order with a contents page and page numbers. */
-  function bundleForm(ids) {
+  function bundleForm(ids, title = '') {
     const entries = ids.map(libEntry).filter(Boolean);
     if (!entries.length) return toast('Tick the documents to put in the bundle first.');
     const files = entries.reduce((n, e) => n + e.files.length, 0);
@@ -240,7 +240,7 @@
     const dates = entries.map(e => e.docDate).filter(Boolean).sort();
     openModal(`<form class="dialog narrow" id="bundleForm"><div class="dh"><h2>Bundle PDF</h2></div>
       <div class="db"><p class="s3 muted" style="margin:0">One PDF of <b>${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}</b> (${files} file${files === 1 ? '' : 's'})${dates.length ? `, dated ${ukDate(dates[0])}${dates.length > 1 && dates[0] !== dates[dates.length - 1] ? ` to ${ukDate(dates[dates.length - 1])}` : ''}` : ''}, for sending to an MP, a solicitor, a tribunal or an appeal. PDFs and photos go in as they are; emails, Word and Excel files are turned into pages.</p>
-        <label class="f s3">Title<input name="title" maxlength="120" value="Bundle of documents" required></label>
+        <label class="f s3">Title<input name="title" maxlength="120" value="${esc(title || 'Bundle of documents')}" required></label>
         <label class="f s3">Order<select name="order"><option value="oldest">By the date on each one, oldest first</option><option value="newest">By the date on each one, newest first</option></select></label>
         <label class="switch s3" style="font-weight:500;display:flex;gap:10px"><input type="checkbox" name="contents" checked> Contents page at the front (date, who from, title, reference, page numbers)</label>
         <label class="switch s3" style="font-weight:500;display:flex;gap:10px"><input type="checkbox" name="numbers" checked> Page numbers on every page (“Page 3 of 40”)</label>
@@ -574,6 +574,10 @@
     if (kind === 'document' && f.type) list = list.filter(e => e.docType === f.type);
     if (kind === 'data' && f.folder) list = list.filter(e => (f.folder === '(none)' ? !e.folder : e.folder === f.folder));
     if (f.vault === 'only') list = list.filter(e => e.inVault);
+    if (f.from) list = list.filter(e => (e.from || '').toLowerCase() === f.from.toLowerCase());
+    if (f.tag) list = list.filter(e => (e.tags || []).some(t => t.toLowerCase() === f.tag.toLowerCase()));
+    if (f.caseName) list = list.filter(e => f.caseName === '(none)' ? !e.caseName : (e.caseName || '').toLowerCase() === f.caseName.toLowerCase());
+    if (f.sent === 'sent') list = list.filter(e => e.sent); else if (f.sent === 'waiting') { const rs = state.snap.data.libReplies || {}; list = list.filter(e => e.sent && rs[e.id] && !rs[e.id].replied); }
     const by = f.sort || 'added';
     const key = (e) => by === 'title' ? e.title.toLowerCase() : by === 'date' ? (e.docDate || e.createdAt.slice(0, 10)) : e.createdAt;
     list.sort((a, b) => by === 'title' ? key(a).localeCompare(key(b), 'en-GB') : key(b).localeCompare(key(a)));
@@ -604,11 +608,89 @@
         <div class="chips">${kind === 'document'
           ? chip('Type', 'type', f.type || '', [['', 'All types'], ...types.filter(t => all.some(e => e.docType === t)).map(t => [t, t])], '', false, 'setLF')
           : chip('Folder', 'folder', f.folder || '', [['', 'All folders'], ...folders.map(x => [x, x]), ...(all.some(e => !e.folder) ? [['(none)', 'No folder']] : [])], '', false, 'setLF')}
+        ${libExtraChips(all, f)}
         ${chip('Sort', 'sort', f.sort || 'added', [['added', 'Newest added'], ['date', kind === 'document' ? 'Date on the letter' : 'Date'], ['title', 'Title A–Z']], 'added', true, 'setLF')}</div>
+        ${kind === 'document' && (state.snap.data.libCases || []).length ? `<div class="seg" role="tablist"><button class="${state.libMode !== 'cases' ? 'on' : ''}" data-action="libMode" data-v="list">${icon('file')}All</button><button class="${state.libMode === 'cases' ? 'on' : ''}" data-action="libMode" data-v="cases">${icon('folder')}Cases</button></div>` : ''}
       </div>
       ${reading ? `<p class="faint small" style="margin:-6px 0 10px">${icon('search')}Reading the words in ${reading} file${reading === 1 ? '' : 's'}… They can be searched once this finishes.</p>` : ''}
       ${vaultLocked ? `<p class="faint small" style="margin:-6px 0 10px">${icon('lock')}Anything in the vault is hidden. <a href="#" data-nav="vault">Unlock the vault</a> to see and search it.</p>` : ''}
-      <div id="libList" class="droplib">${libListHtml(kind)}</div>`;
+      <div id="libList" class="droplib">${kind === 'document' && state.libMode === 'cases' && (state.snap.data.libCases || []).length ? casesHtml() : libListHtml(kind)}</div>`;
+  }
+  /** Filter chips that only appear when there's something to choose between. */
+  function libExtraChips(all, f) {
+    const uniq = (arr) => { const m = new Map(); arr.filter(Boolean).forEach(x => { const k = x.toLowerCase(); if (!m.has(k)) m.set(k, x); }); return [...m.values()].sort((a, b) => a.localeCompare(b, 'en-GB')); };
+    const froms = uniq(all.map(e => e.from)), tags = uniq(all.flatMap(e => e.tags || [])), cases = uniq(all.map(e => e.caseName));
+    let out = '';
+    if (froms.length > 1 || f.from) out += chip('From / to', 'from', f.from || '', [['', 'Anyone'], ...froms.map(x => [x, x])], '', false, 'setLF');
+    if (tags.length || f.tag) out += chip('Tag', 'tag', f.tag || '', [['', 'Any tag'], ...tags.map(x => [x, x])], '', false, 'setLF');
+    if (cases.length || f.caseName) out += chip('Case', 'caseName', f.caseName || '', [['', 'Any case'], ...cases.map(x => [x, x]), ['(none)', 'Not in a case']], '', false, 'setLF');
+    if (all.some(e => e.sent) || f.sent) out += chip('Sent', 'sent', f.sent || '', [['', 'Sent and received'], ['sent', 'Sent by me'], ['waiting', 'Waiting for a reply']], '', false, 'setLF');
+    return out;
+  }
+  function replyPill(e) {
+    if (!e.sent) return '';
+    const st = (state.snap.data.libReplies || {})[e.id] || {};
+    if (st.replied) return `<span class="pill good" title="${st.replyTitle ? esc('Reply: ' + st.replyTitle) : ''}">${icon('check')}Replied</span>`;
+    if (e.expectBy) return `<span class="pill ${st.overdue ? 'bad' : 'warn'}">${icon('bell')}${st.overdue ? 'No reply since' : 'Reply due'} ${ukDate(e.expectBy)}</span>`;
+    return '';
+  }
+  function casesHtml() {
+    const cs = state.snap.data.libCases || [];
+    return `<div class="casegrid">${cs.map(c => `<div class="card casecard" data-action="libCaseOpen" data-case="${esc(c.name)}" tabindex="0">
+      <div class="ch"><b>${esc(c.name)}</b><span class="pill">${c.count} letter${c.count === 1 ? '' : 's'}</span></div>
+      <div class="meta">${esc(c.froms.slice(0, 3).join(', '))}${c.froms.length > 3 ? '…' : ''}</div>
+      ${c.refs.length ? `<div class="meta">Ref ${esc(c.refs.slice(0, 2).join(', '))}${c.refs.length > 2 ? '…' : ''}</div>` : ''}
+      <div class="meta">${c.first ? ukDate(c.first) : ''}${c.last && c.last !== c.first ? ' – ' + ukDate(c.last) : ''}</div>
+      ${c.overdue ? `<span class="pill bad">${icon('bell')}${c.overdue} waiting past the date</span>` : c.waiting ? `<span class="pill warn">${icon('bell')}${c.waiting} waiting for a reply</span>` : ''}</div>`).join('')}</div>`;
+  }
+  /** A small "type a name" box (with suggestions). Resolves to the text, or null if cancelled. */
+  function promptText(title, label, value = '', suggestions = []) {
+    return new Promise((resolve) => {
+      openModal(`<form class="dialog narrow" id="ptForm"><div class="dh"><h2>${esc(title)}</h2></div><div class="db">
+        <label class="f s3">${esc(label)}<input name="v" maxlength="120" value="${esc(value)}" list="ptList" autofocus><datalist id="ptList">${suggestions.map(x => `<option value="${esc(x)}">`).join('')}</datalist></label></div>
+        <div class="df"><button type="button" class="btn" id="ptCancel">Cancel</button><button class="btn primary" type="submit">OK</button></div></form>`);
+      const f = $('#ptForm'); f.elements.v.focus(); f.elements.v.select();
+      f.onsubmit = (ev) => { ev.preventDefault(); const v = f.elements.v.value; closeModal(); resolve(v); };
+      $('#ptCancel').onclick = () => { closeModal(); resolve(null); };
+    });
+  }
+  /** Tick documents to add to a case. */
+  function casePicker(name) {
+    const list = libEntries('document').concat(libEntries('data')).filter(e => (e.caseName || '').toLowerCase() !== name.toLowerCase())
+      .sort((a, b) => (b.docDate || b.createdAt).localeCompare(a.docDate || a.createdAt));
+    openModal(`<form class="dialog" id="cpForm"><div class="dh"><h2>Add to "${esc(name)}"</h2></div><div class="db"><div class="s3">
+      <input type="search" id="cpQ" placeholder="Filter by title or sender" style="width:100%;margin-bottom:8px">
+      <div class="rows" style="max-height:52vh;overflow:auto">${list.map(e => `<label class="rowi cprow" data-t="${esc((e.title + ' ' + (e.from || '') + ' ' + (e.ref || '')).toLowerCase())}"><input type="checkbox" value="${esc(e.id)}"> <span style="flex:1"><b>${esc(e.title)}</b> <span class="meta">${esc([e.sent ? 'to ' + (e.from || '') : e.from, e.docDate ? ukDate(e.docDate) : '', e.caseName ? 'in ' + e.caseName : ''].filter(Boolean).join(' · '))}</span></span></label>`).join('') || '<p class="muted">Nothing else to add.</p>'}</div></div></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Add ticked</button></div></form>`);
+    $('#cpQ').oninput = (ev) => { const q = ev.target.value.toLowerCase(); $$('.cprow').forEach(r => r.style.display = r.dataset.t.includes(q) ? '' : 'none'); };
+    $('#cpForm').onsubmit = async (ev) => {
+      ev.preventDefault();
+      const ids = $$('#cpForm input[type=checkbox]:checked').map(x => x.value);
+      if (!ids.length) return closeModal();
+      const ok = await run(() => keep.libMove(ids, { caseName: name }), `✓ Added ${ids.length}`);
+      if (ok !== undefined) { closeModal(); await refresh(); }
+    };
+  }
+  /** One case: every letter, sent and received, oldest first. */
+  function viewCase() {
+    const name = state.caseName || '';
+    const list = libEntries('document').concat(libEntries('data')).filter(e => (e.caseName || '').toLowerCase() === name.toLowerCase())
+      .sort((a, b) => ((a.docDate || a.createdAt.slice(0, 10)) + a.createdAt).localeCompare((b.docDate || b.createdAt.slice(0, 10)) + b.createdAt));
+    const c = (state.snap.data.libCases || []).find(x => x.name.toLowerCase() === name.toLowerCase());
+    const ids = JSON.stringify(list.map(e => e.id));
+    let lastYear = '';
+    return `<div class="head"><a href="#" data-nav="docs" class="back">${icon('back')}Documents</a><h1>${esc(name)}</h1><span class="sub">${list.length} letter${list.length === 1 ? '' : 's'}${c && c.refs.length ? ' · Ref ' + esc(c.refs.join(', ')) : ''}</span><span class="spacer"></span>
+        <button class="btn" data-action="libBundle" data-ids="${esc(ids)}">${icon('printer')}Bundle PDF of the case…</button>
+        ${dd('More', [{ label: 'Rename case…', action: 'libCaseRename', icon: 'edit' }, { label: 'Add documents to this case…', action: 'libCaseAdd', icon: 'plus' }])}</div>
+      ${!list.length ? '<div class="card empty">Nothing in this case now.</div>' : `<div class="timeline">${list.map(e => {
+        const d = e.docDate || e.createdAt.slice(0, 10), y = d.slice(0, 4);
+        const yr = y !== lastYear ? `<div class="tyear">${esc(y)}</div>` : ''; lastYear = y;
+        return `${yr}<div class="titem ${e.sent ? 'sent' : 'recv'}" data-action="libOpen" data-lib="${esc(e.id)}">
+          <div class="tdot">${icon(e.sent ? 'upload' : 'download')}</div>
+          <div class="tcard card"><div class="tmeta">${e.docDate ? ukDate(e.docDate) : `<span class="faint">Added ${ukDate(e.createdAt)}</span>`} · ${e.sent ? `<b>Sent</b>${e.from ? ' to ' + esc(e.from) : ''}` : `<b>Received</b>${e.from ? ' from ' + esc(e.from) : ''}`}</div>
+            <div><b>${esc(e.title)}</b> ${replyPill(e)} ${e.actBy && !e.actDone ? `<span class="pill ${e.actBy < new Date().toISOString().slice(0, 10) ? 'bad' : 'warn'}">${icon('calendar')}Reply by ${ukDate(e.actBy)}</span>` : ''}</div>
+            ${e.ref ? `<div class="meta">Ref ${esc(e.ref)}</div>` : ''}${e.notes ? `<div class="meta snippet">${esc(e.notes)}</div>` : ''}</div></div>`;
+      }).join('')}</div>`}`;
   }
   function libListHtml(kind) {
     const list = libFiltered(kind);
@@ -622,9 +704,10 @@
         const due = e.actBy && !e.actDone ? `<span class="pill ${e.actBy < new Date().toISOString().slice(0, 10) ? 'bad' : 'warn'}">${icon('calendar')}Reply by ${ukDate(e.actBy)}</span>` : '';
         return `<tr data-action="libOpen" data-lib="${esc(e.id)}" draggable="true" class="${state.libPick.has(e.id) ? 'sel' : ''}"><td><input type="checkbox" data-action="libSelBox" data-lib="${esc(e.id)}" ${state.libPick.has(e.id) ? 'checked' : ''} aria-label="Select"></td><td>${libThumb(e)}</td>
           <td><b>${esc(e.title)}</b> ${e.inVault ? `<span class="pill vault">${icon('lock')}Vault</span>` : ''} ${e.onPhone ? `<span class="pill" title="A copy goes in the inventory file for your phone">${icon('phone')}Phone</span>` : ''} ${due}
+            ${replyPill(e)}${e.caseName ? ` <span class="pill case" data-action="libCaseOpen" data-case="${esc(e.caseName)}" title="Open the case">${icon('folder')}${esc(e.caseName)}</span>` : ''}
             ${e.ref ? `<div class="meta">Ref ${esc(e.ref)}</div>` : ''}${hit ? `<div class="meta snippet">…${esc(hit)}…</div>` : ''}</td>
           <td class="meta">${kind === 'document' ? esc(e.docType) : e.folder ? esc(e.folder) : `<span class="faint">${esc(fileKind((e.files[0] || { name: '' }).name)[0])}</span>`}</td>
-          <td class="meta">${esc(e.from || '')}</td>
+          <td class="meta">${e.sent ? `<span class="faint">To</span> ` : ''}${esc(e.from || '')}</td>
           <td class="meta nowrap">${e.docDate ? ukDate(e.docDate) : `<span class="faint">Added ${ukDate(e.createdAt)}</span>`}</td>
           <td class="r meta">${e.files.length}${e.textPending ? ` <span class="faint" title="Reading the words">…</span>` : ''}</td></tr>`;
       }).join('')}</tbody></table></div>`;
@@ -654,8 +737,10 @@
   }
   async function libAfterAdd(r, kind, entryId) {
     if (!r) return;
-    if (r.errors.length) toast(`Added ${r.added}. Not added: ${r.errors.join('; ')}`, 8000);
-    else if (r.added) toast(`✓ Added ${r.added} file${r.added === 1 ? '' : 's'}`);
+    const sk = (r.skipped || []).length ? ` Skipped ${r.skipped.length} already in OpenSafe.` : '';
+    if (r.errors.length) toast(`Added ${r.added}.${sk} Not added: ${r.errors.join('; ')}`, 8000);
+    else if (r.added) toast(`✓ Added ${r.added} file${r.added === 1 ? '' : 's'}.${sk}`, sk ? 5000 : 3000);
+    else if (sk) toast(sk.trim(), 4000);
     await refresh();
     // a new document: open it and ask for its details
     if (!entryId && kind === 'document' && r.ids.length === 1) { go('libitem', { libId: r.ids[0] }); libForm(libEntry(r.ids[0]), true); }
@@ -683,8 +768,8 @@
         <button data-action="libBundle" data-ids="${esc(JSON.stringify([e.id]))}">${icon('printer')}Make a PDF with contents page…</button>
         <button data-action="libDel" class="danger">${icon('trash')}Delete</button></div></span>
       <button class="btn primary" data-action="libEdit">${icon('edit')}Edit details</button></div>
-    <div class="dhead libhead"><div><div class="meta">${esc(e.kind === 'document' ? e.docType : (e.folder || 'Data'))}${e.from ? ' · ' + esc(e.from) : ''}</div><h1 style="margin:2px 0 6px">${esc(e.title)}</h1>
-      <div>${e.inVault ? `<span class="pill vault">${icon('lock')}Vault</span> ` : ''}${e.onPhone ? `<span class="pill">${icon('phone')}On my phone</span> ` : ''}${e.actBy ? (e.actDone ? `<span class="pill good">${icon('check')}Done (was due ${ukDate(e.actBy)})</span>` : `<span class="pill ${e.actBy < today ? 'bad' : 'warn'}">${icon('calendar')}Reply or act by ${ukDate(e.actBy)}</span>`) : ''}</div></div></div>
+    <div class="dhead libhead"><div><div class="meta">${esc(e.kind === 'document' ? e.docType : (e.folder || 'Data'))}${e.from ? (e.sent ? ' · to ' : ' · ') + esc(e.from) : ''}</div><h1 style="margin:2px 0 6px">${esc(e.title)}</h1>
+      <div>${e.inVault ? `<span class="pill vault">${icon('lock')}Vault</span> ` : ''}${e.onPhone ? `<span class="pill">${icon('phone')}On my phone</span> ` : ''}${e.sent ? `<span class="pill">${icon('upload')}Sent by me</span> ${replyPill(e)} ` : ''}${e.caseName ? `<span class="pill case" data-action="libCaseOpen" data-case="${esc(e.caseName)}">${icon('folder')}${esc(e.caseName)}</span> ` : ''}${e.actBy ? (e.actDone ? `<span class="pill good">${icon('check')}Done (was due ${ukDate(e.actBy)})</span>` : `<span class="pill ${e.actBy < today ? 'bad' : 'warn'}">${icon('calendar')}Reply or act by ${ukDate(e.actBy)}</span>`) : ''}</div></div></div>
     ${e.suggest && Object.keys(e.suggest).length ? `<div class="sugbar">${icon('search')}<span><b>OpenSafe read this letter.</b> Suggested: ${[e.suggest.from && `from <b>${esc(e.suggest.from)}</b>`, e.suggest.docDate && `dated <b>${ukDate(e.suggest.docDate)}</b>`, e.suggest.ref && `reference <b>${esc(e.suggest.ref)}</b>`].filter(Boolean).join(', ')}.</span><span class="spacer"></span><button class="btn small primary" data-action="libSugUse">${icon('check')}Use these</button><button class="btn small ghost" data-action="libSugNo">No thanks</button></div>` : ''}
     <div class="libgrid"><div class="libleft">
       <div class="card" id="libFiles"><h2>${icon('file')}Files <span class="faint">(${e.files.length})</span></h2>
@@ -697,7 +782,7 @@
             <button data-action="libFileRemove" data-file="${esc(x.id)}" class="danger">${icon('trash')}Remove this file</button></div></span></div>`; }).join('')}</div>` : '<p class="muted">No files.</p>'}
         <div class="drop" id="libDrop2">Drag more files anywhere on this page, or <a href="#" data-action="libAddMore">choose files…</a>${e.kind === 'document' ? ' (for example the other pages of the letter)' : ''}</div></div>
       <div class="card"><h2>Details</h2>
-        ${row(e.kind === 'document' ? 'Type' : 'Folder', esc(e.kind === 'document' ? e.docType : e.folder))}${row('From', esc(e.from))}${row(e.kind === 'document' ? 'Date on it' : 'Date', e.docDate ? ukDate(e.docDate) : '')}${row('Reference', esc(e.ref))}
+        ${row(e.kind === 'document' ? 'Type' : 'Folder', esc(e.kind === 'document' ? e.docType : e.folder))}${row(e.sent ? 'To' : 'From', esc(e.from))}${row('Case', e.caseName ? `<a href="#" data-action="libCaseOpen" data-case="${esc(e.caseName)}">${esc(e.caseName)}</a>` : '')}${e.sent ? row('Reply expected by', e.expectBy ? ukDate(e.expectBy) : '') : ''}${row(e.kind === 'document' ? 'Date on it' : 'Date', e.docDate ? ukDate(e.docDate) : '')}${row('Reference', esc(e.ref))}
         ${row('Tags', e.tags.map(t => `<span class="pill">${esc(t)}</span>`).join(' '))}
         ${e.notes ? `<div class="lkv" style="display:block"><span class="k">Notes</span><div class="v" style="white-space:pre-wrap;margin-top:4px">${esc(e.notes)}</div></div>` : ''}
         ${row('Added', ukDate(e.createdAt) + (e.source === 'phone' ? ' · scanned on the phone' : ''))}
@@ -733,18 +818,32 @@
       ${isNew ? `<p class="muted s3" style="margin-top:0">Fill in what you know; everything except the title is optional. You can change it later.</p>` : ''}
       <label class="f s2">Title<input name="title" maxlength="200" required value="${esc(e.title)}"></label>
       ${doc ? `<label class="f">Type<select name="docType">${types.map(t => opt(t, t, e.docType)).join('')}</select></label>` : `<label class="f">Folder<input name="folder" list="libFolders" maxlength="120" value="${esc(e.folder)}" placeholder="e.g. Emails, Tax, Holiday"><datalist id="libFolders">${folders.map(x => `<option value="${esc(x)}">`).join('')}</datalist></label>`}
-      <label class="f">From<input name="from" maxlength="200" value="${esc(e.from)}" placeholder="${doc ? 'e.g. Veterans UK, HMRC, the council' : ''}"></label>
+      <label class="f s3" style="flex-direction:row;align-items:center;gap:10px"><span class="switch"><input type="checkbox" name="sent" id="lfSent" ${e.sent ? 'checked' : ''}> I sent this</span><span class="faint small">a letter or email from you, so you can keep track of the reply</span></label>
+      <label class="f"><span id="lfFromLbl">${e.sent ? 'To' : 'From'}</span><input name="from" maxlength="200" value="${esc(e.from)}" placeholder="${doc ? 'e.g. Veterans UK, HMRC, the council' : ''}"></label>
+      <label class="f">Case<input name="caseName" list="libCases" maxlength="120" value="${esc(e.caseName || '')}" placeholder="e.g. CMS recalculation"><datalist id="libCases">${(state.snap.data.libCases || []).map(c => `<option value="${esc(c.name)}">`).join('')}</datalist></label>
       <label class="f">${doc ? 'Date on it' : 'Date'}<input type="date" name="docDate" value="${esc(e.docDate)}"></label>
       <label class="f">Reference<input name="ref" maxlength="120" value="${esc(e.ref)}" placeholder="Account, case or claim number"></label>
-      <label class="f">Reply or act by<input type="date" name="actBy" value="${esc(e.actBy)}"><span class="faint small">Shows in Reminders until marked done</span></label>
-      <label class="f" style="align-self:center"><span class="switch"><input type="checkbox" name="actDone" ${e.actDone ? 'checked' : ''}> Done</span></label>
+      <label class="f lfRecv">Reply or act by<input type="date" name="actBy" value="${esc(e.actBy)}"><span class="faint small">Shows in Reminders until marked done</span></label>
+      <label class="f lfRecv" style="align-self:center"><span class="switch"><input type="checkbox" name="actDone" ${e.actDone ? 'checked' : ''}> Done</span></label>
+      <label class="f lfSent">Expect a reply by<input type="date" name="expectBy" value="${esc(e.expectBy || '')}"><span class="faint small">${[14, 28, 56].map(d => `<a href="#" data-days="${d}">${d} days</a>`).join(' · ')} after the date on it</span></label>
+      <label class="f lfSent" style="align-self:center"><span class="switch"><input type="checkbox" name="replyDone" ${e.replyDone ? 'checked' : ''}> Reply received</span><span class="faint small">or add their reply to the same case</span></label>
       <label class="f s3">Tags<input name="tags" maxlength="400" value="${esc(e.tags.join(', '))}" placeholder="Separate with commas"></label>
       <label class="f s3">Notes<textarea name="notes" rows="4" maxlength="5000">${esc(e.notes)}</textarea></label></div>
       <div class="df"><button type="button" class="btn" data-action="close">${isNew ? 'Later' : 'Cancel'}</button><button class="btn primary" type="submit">Save</button></div></form>`);
+    const lf = $('#libForm');
+    const showSent = () => { const on = lf.elements.sent.checked; lf.querySelectorAll('.lfSent').forEach(x => x.style.display = on ? '' : 'none'); lf.querySelectorAll('.lfRecv').forEach(x => x.style.display = on ? 'none' : ''); $('#lfFromLbl').textContent = on ? 'To' : 'From'; };
+    lf.elements.sent.onchange = showSent; showSent();
+    lf.querySelectorAll('[data-days]').forEach(a => a.onclick = (ev) => {
+      ev.preventDefault();
+      const base = lf.elements.docDate.value || new Date().toISOString().slice(0, 10);
+      const d = new Date(base + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + Number(a.dataset.days));
+      lf.elements.expectBy.value = d.toISOString().slice(0, 10);
+    });
     $('#libForm').onsubmit = async (ev) => {
       ev.preventDefault();
       const fd = new FormData(ev.target), v = Object.fromEntries(fd.entries());
       v.id = e.id; v.actDone = fd.get('actDone') === 'on'; v.tags = String(v.tags || '').split(',');
+      v.sent = fd.get('sent') === 'on'; v.replyDone = fd.get('replyDone') === 'on';
       const ok = await run(() => keep.libSave(v), '✓ Saved');
       if (ok) { closeModal(); await refresh(); }
     };
@@ -786,7 +885,16 @@
       case 'libSugNo': if (e) { await run(() => keep.libSuggestion(e.id, false)); await refresh(); } return true;
       case 'libSelClear': state.libPick.clear(); refreshLibList(); return true;
       case 'libOnPhone': { const ids = JSON.parse(act.dataset.ids), on = !!act.dataset.on; const ok = await run(() => keep.libOnPhone(ids, on), on ? `✓ ${ids.length === 1 ? 'It goes' : 'They go'} on your phone next time you use Phone app → Save inventory for phone` : 'Taken off the phone copy (next time you save it)'); if (ok !== undefined) await refresh(); return true; }
-      case 'libBundle': bundleForm(act.dataset.ids ? JSON.parse(act.dataset.ids) : [...(state.libPick || [])]); return true;
+      case 'libMode': state.libMode = act.dataset.v; render(); return true;
+      case 'libCaseOpen': go('case', { caseName: act.dataset.case }); return true;
+      case 'libCaseRename': {
+        const to = await promptText('Rename case', 'New name for this case', state.caseName);
+        if (to && to.trim() && to.trim() !== state.caseName) { const ok = await run(() => keep.libRenameCase(state.caseName, to.trim()), '✓ Renamed'); if (ok !== undefined) { state.caseName = to.trim(); await refresh(); } }
+        return true;
+      }
+      case 'libCaseAdd': casePicker(state.caseName); return true;
+      case 'libCaseSet': { const ids = JSON.parse(act.dataset.ids); const name = await promptText('Put in a case', 'Case name (a new one, or one you already have)', '', (state.snap.data.libCases || []).map(c => c.name)); if (name !== null && name !== undefined) { const ok = await run(() => keep.libMove(ids, { caseName: name.trim() }), name.trim() ? `✓ Put in "${name.trim()}"` : '✓ Taken out of the case'); if (ok !== undefined) { state.libPick && state.libPick.clear(); await refresh(); } } return true; }
+      case 'libBundle': bundleForm(act.dataset.ids ? JSON.parse(act.dataset.ids) : [...(state.libPick || [])], state.view === 'case' ? state.caseName : ''); return true;
       case 'libMoveTo': { const ids = JSON.parse(act.dataset.ids), to = { kind: act.dataset.kind }; if (act.dataset.folder !== undefined) to.folder = act.dataset.folder; await libMoveIds(ids, to, to.kind === 'document' ? 'Documents' : to.folder ? 'Data › ' + to.folder : 'Data'); return true; }
       case 'libMoveNewFolder': newFolderForm(JSON.parse(act.dataset.ids)); return true;
       case 'libLinkPick': linkPick(act.dataset.ids ? JSON.parse(act.dataset.ids) : [state.libId]); return true;
@@ -814,6 +922,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
       ...libFolders().map(f => ({ label: 'Data › ' + f, action: 'libMoveTo', icon: 'folder', data: { ids: data, kind: 'data', folder: f } })),
       { label: 'New Data folder…', action: 'libMoveNewFolder', icon: 'plus', data: { ids: data } },
       '-', { label: 'Link to an item…', action: 'libLinkPick', icon: 'box', data: { ids: data } },
+      { label: 'Put in a case…', action: 'libCaseSet', icon: 'folder', data: { ids: data } },
       ids.every(id => (libEntry(id) || {}).onPhone) ? { label: 'Take off my phone', action: 'libOnPhone', icon: 'phone', data: { ids: data, on: '' } } : { label: 'Keep a copy on my phone', action: 'libOnPhone', icon: 'phone', data: { ids: data, on: '1' } },
       unlocked && { label: inV ? 'Move out of the vault' : 'Move into the vault', action: 'libVaultMany', icon: inV ? 'unlock' : 'lock', data: { ids: data, to: inV ? '' : '1' } }];
   }
@@ -973,6 +1082,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
   // ---------- one search for everything ----------
   // ---------- Help and What's new ----------
   const NEWS = [
+    ['2.13.0', 'Cases and replies', ['<b>Cases</b>: put letters about one matter in a case and see them as a timeline, sent and received, with a Bundle PDF of the whole case.', '<b>I sent this</b>: track letters you sent; Reminders shows "No reply yet" after the date, until their reply is added to the case.', 'Filter Documents and Data by who it\'s from or to, by tag and by case; a warning when the same file is added twice.']],
     ['2.12.0', 'Help and checks', ['This page: what changed in recent versions, and a short checklist for trying the new features on your own PC and phone.']],
     ['2.11.0', 'Two PCs', ['Keep OpenSafe the same on two PCs through a shared folder such as OneDrive (Import & backup → Two PCs). If both were changed, it asks which copy to keep and saves the other as a backup.']],
     ['2.10.0', 'Bundles and documents on the phone', ['<b>Bundle PDF</b>: tick letters → one PDF in date order with a contents page and page numbers.', '<b>Keep a copy on my phone</b>: chosen documents go in the phone inventory file, to read offline in Capture.']],
@@ -1205,13 +1315,13 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
   // ---------- render ----------
   function render() {
     if (!state.snap) return;
-    const navView = state.view === 'item' || state.view === 'bin' ? 'items' : state.view === 'libitem' ? libKindPage((libEntry(state.libId) || {}).kind) : state.view;
+    const navView = state.view === 'item' || state.view === 'bin' ? 'items' : state.view === 'libitem' ? libKindPage((libEntry(state.libId) || {}).kind) : state.view === 'case' ? 'docs' : state.view;
     $$('.side [data-nav]').forEach(b => b.classList.toggle('on', b.dataset.nav === navView));
     const v = $('#view');
     const pageKey = [state.view, state.itemId, state.libId].join('|');
     if (pageKey !== state.lastPageKey) { state.lastPageKey = pageKey; v.classList.remove('enter'); void v.offsetWidth; v.classList.add('enter'); }
     else v.classList.remove('enter');
-    const views = { dashboard: viewDashboard, items: viewItems, item: viewItem, reminders: viewReminders, phone: viewPhone, reports: viewReports, settings: viewSettings, vault: viewVault, policies: viewPolicies, bin: viewBin, trips: viewTrips, places: viewPlaces, data: viewData, docs: () => viewLibrary('docs'), files: () => viewLibrary('files'), libitem: viewLibItem, search: viewSearch, help: viewHelp };
+    const views = { dashboard: viewDashboard, items: viewItems, item: viewItem, reminders: viewReminders, phone: viewPhone, reports: viewReports, settings: viewSettings, vault: viewVault, policies: viewPolicies, bin: viewBin, trips: viewTrips, places: viewPlaces, data: viewData, docs: () => viewLibrary('docs'), files: () => viewLibrary('files'), libitem: viewLibItem, search: viewSearch, help: viewHelp, case: viewCase };
     v.innerHTML = (views[state.view] || viewDashboard)();
     if (state.view === 'phone') { loadCapture(); loadPhone(); const d = $('#wifiDetails'); if (d) d.ontoggle = () => { state.wifiOpen = d.open; }; }
     if (state.view === 'item') wireDrop();

@@ -504,6 +504,11 @@ class Store {
     e.actBy = cleanDate(get('actBy'));       // reply or act by (shows in Reminders)
     e.actDone = get('actDone') === true || get('actDone') === 'on' || get('actDone') === 'true';
     e.folder = cleanString(get('folder'), 120);
+    e.caseName = cleanString(get('caseName'), 120); // a case groups letters about one matter (shown as a timeline)
+    const yes = (v) => v === true || v === 'on' || v === 'true';
+    e.sent = yes(get('sent'));                         // sent by me (then "from" is who it went to)
+    e.expectBy = e.sent ? cleanDate(get('expectBy')) : ''; // a reply is expected by
+    e.replyDone = e.sent && yes(get('replyDone'));
     e.notes = cleanString(get('notes'), MAX_STRING);
     e.tags = cleanTags(get('tags'));
     e.assetIds = (Array.isArray(get('assetIds')) ? get('assetIds') : []).map(x => cleanString(x, 80)).filter(Boolean).slice(0, 200);
@@ -540,7 +545,7 @@ class Store {
     const out = [];
     for (const e of this.libraryView(kind)) {
       const full = this._libFind(e.id).e;
-      const meta = [e.title, e.docType, e.from, e.ref, e.folder, e.notes, e.tags.join(' '), ...e.files.map(f => f.name)].join(' ').toLowerCase();
+      const meta = [e.title, e.docType, e.from, e.ref, e.folder, e.caseName, e.notes, e.tags.join(' '), ...e.files.map(f => f.name)].join(' ').toLowerCase();
       const body = Object.values(full.text || {}).join('\n');
       const low = body.toLowerCase();
       if (!words.every(w => meta.includes(w) || low.includes(w))) continue;
@@ -573,7 +578,7 @@ class Store {
     if (!Buffer.isBuffer(buffer) || !buffer.length) throw new Error(`${originalName}: the file is empty.`);
     const fid = uid(), file = fid + (ext && ext.length <= 10 ? ext : '');
     this._storeFile({ id: e.id }, file, buffer, inVault);
-    const rec = { id: fid, file, name: safeFileName(originalName || file), size: buffer.length, addedAt: nowIso() };
+    const rec = { id: fid, file, name: safeFileName(originalName || file), size: buffer.length, addedAt: nowIso(), sha: crypto.createHash('sha256').update(buffer).digest('hex') };
     e.files.push(rec);
     e.updatedAt = nowIso();
     if (save) this.save();
@@ -686,11 +691,80 @@ class Store {
         e.docType = kind === 'document' ? (LIBRARY_DOC_TYPES.includes(e.prevDocType) ? e.prevDocType : 'Letter') : '';
       }
       if (folder !== undefined) e.folder = folder;
+      if (to && to.caseName !== undefined) e.caseName = cleanString(to.caseName, 120);
       e.updatedAt = nowIso(); n++;
     }
     this.save();
     return n;
   }
+  // ---------- cases and replies ----------
+  _allLibrary() { const { normal, vault } = this._libLists(); return [...normal, ...(vault || [])]; }
+  /** A later letter received in the same case counts as the reply to one you sent. */
+  _replyTo(e, all) {
+    if (!e.sent || !e.caseName) return null;
+    const key = (x) => (x.docDate || (x.createdAt || '').slice(0, 10)) + '|' + (x.createdAt || '');
+    return all.filter(x => x.id !== e.id && !x.sent && x.caseName === e.caseName && key(x) > key(e))
+      .sort((a, b) => key(a).localeCompare(key(b)))[0] || null;
+  }
+  /** Reply status for sent letters: { id: { replyId, replyTitle } | waiting/overdue }. */
+  replyStatus() {
+    const all = this._allLibrary(), today = new Date().toISOString().slice(0, 10), out = {};
+    for (const e of all) {
+      if (!e.sent) continue;
+      const rep = this._replyTo(e, all);
+      out[e.id] = rep ? { replied: true, replyId: rep.id, replyTitle: rep.title, replyDate: rep.docDate }
+        : e.replyDone ? { replied: true } : { replied: false, waiting: !!e.expectBy, overdue: !!(e.expectBy && e.expectBy < today) };
+    }
+    return out;
+  }
+  /** Cases with their letters, newest activity first. */
+  libraryCases() {
+    const all = this._allLibrary(), rs = this.replyStatus(), map = new Map();
+    for (const e of all) {
+      if (!e.caseName) continue;
+      const k = e.caseName.toLowerCase();
+      if (!map.has(k)) map.set(k, { name: e.caseName, ids: [], froms: new Set(), refs: new Set(), first: '', last: '', waiting: 0, overdue: 0, vault: 0 });
+      const c = map.get(k);
+      c.ids.push(e.id);
+      if (e.from) c.froms.add(e.from);
+      if (e.ref) c.refs.add(e.ref);
+      const d = e.docDate || (e.createdAt || '').slice(0, 10);
+      if (d && (!c.first || d < c.first)) c.first = d;
+      if (d && d > c.last) c.last = d;
+      const st = rs[e.id];
+      if (st && !st.replied && st.waiting) { c.waiting++; if (st.overdue) c.overdue++; }
+      if (this.vault && this.vault.library && this.vault.library.includes(e)) c.vault++;
+    }
+    return [...map.values()].map(c => Object.assign(c, { froms: [...c.froms], refs: [...c.refs], count: c.ids.length }))
+      .sort((a, b) => b.last.localeCompare(a.last));
+  }
+  renameCase(from, to) {
+    const f = cleanString(from, 120).toLowerCase(), t = cleanString(to, 120);
+    if (!f) throw new Error('Which case?');
+    let n = 0;
+    for (const e of this._allLibrary()) if ((e.caseName || '').toLowerCase() === f) { e.caseName = t; e.updatedAt = nowIso(); n++; }
+    this.save();
+    return n;
+  }
+
+  // ---------- the same file twice ----------
+  _fileSha(e, f) {
+    if (!f.sha) { try { f.sha = crypto.createHash('sha256').update(this.readAttachment(e.id, f.file)).digest('hex'); this._shaChanged = true; } catch (_) { return ''; } }
+    return f.sha;
+  }
+  /** Where a file with these exact bytes is already kept (documents and data; vault only while open). */
+  findLibraryFiles(buffers) {
+    const want = buffers.map(b => crypto.createHash('sha256').update(b).digest('hex'));
+    const found = want.map(() => null);
+    this._shaChanged = false;
+    for (const e of this._allLibrary()) for (const f of e.files) {
+      const h = this._fileSha(e, f);
+      want.forEach((w, i) => { if (!found[i] && h && w === h) found[i] = { id: e.id, title: e.title, kind: e.kind, name: f.name }; });
+    }
+    if (this._shaChanged) this.save();
+    return found;
+  }
+
   /** Link (or unlink) documents/data to items, so they show on the items' pages. */
   linkLibrary(ids, assetId, on = true) {
     const aid = cleanString(assetId, 80);
@@ -1370,7 +1444,13 @@ class Store {
         if (n <= days) out.push({ assetId: a.id, assetName: a.name, kind: s.type || 'Service', date: s.nextDueDate, daysLeft: n });
       }
     }
-    for (const e of [...(this.data.library || []), ...((this.vault && this.vault.library) || [])]) {
+    const libAll = [...(this.data.library || []), ...((this.vault && this.vault.library) || [])];
+    for (const e of libAll) {
+      if (!e.sent || !e.expectBy || e.replyDone || this._replyTo(e, libAll)) continue;
+      const n = diff(e.expectBy);
+      if (n <= days) out.push({ libraryId: e.id, libraryKind: e.kind, assetName: e.title + (e.from ? ` (to ${e.from})` : ''), kind: n < 0 ? 'No reply yet' : 'Reply expected', date: e.expectBy, daysLeft: n });
+    }
+    for (const e of libAll) {
       if (!e.actBy || e.actDone) continue;
       const n = diff(e.actBy);
       if (n <= days) out.push({ libraryId: e.id, libraryKind: e.kind, assetName: e.title + (e.from ? ` (${e.from})` : ''), kind: 'Reply or act by', date: e.actBy, daysLeft: n });

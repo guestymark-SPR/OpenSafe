@@ -130,6 +130,7 @@ contextBridge.exposeInMainWorld('keep', {
   libSuggestion: (id, use) => call('lib:suggestion', id, use),
   libBundle: (ids, opts) => call('lib:bundle', ids, opts),
   libOnPhone: (ids, on) => call('lib:onPhone', ids, on),
+  libRenameCase: (from, to) => call('lib:renameCase', from, to),
   libMove: (ids, to) => call('lib:move', ids, to),
   libLink: (ids, assetId, on) => call('lib:link', ids, assetId, on),
   libGet: (id) => call('lib:get', id),
