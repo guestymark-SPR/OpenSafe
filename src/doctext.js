@@ -140,6 +140,19 @@ function emailInfo(buf) {
 }
 
 // ---------- PDF ----------
+// The drawing library must be the very same copy pdf.js loads (from app.asar.unpacked in the installed app),
+// or its Path2D shapes aren't recognised and pages with embedded fonts or clipping fail to draw.
+let canvasLib = null;
+function canvasModule() { if (!canvasLib) canvasLib = require(unpacked(require.resolve('@napi-rs/canvas'))); return canvasLib; }
+
+// pdf.js's own decoders (JPEG 2000 and JBIG2 images, often used in official letters), the standard
+// PDF fonts and character maps. Paths must end in "/"; Windows reads them with forward slashes too.
+function pdfOptions(buf) {
+  const dir = unpacked(path.dirname(require.resolve('pdfjs-dist/package.json'))).replace(/\\/g, '/');
+  return { data: new Uint8Array(buf), isEvalSupported: false, disableFontFace: true, verbosity: 0,
+    wasmUrl: dir + '/wasm/', standardFontDataUrl: dir + '/standard_fonts/', cMapUrl: dir + '/cmaps/', cMapPacked: true };
+}
+
 let pdfjsP = null;
 function pdfjs() {
   if (!pdfjsP) {
@@ -153,7 +166,7 @@ function pdfjs() {
   return pdfjsP;
 }
 async function renderPage(page, longSide = 2200) {
-  const { createCanvas } = require('@napi-rs/canvas');
+  const { createCanvas } = canvasModule();
   const vp1 = page.getViewport({ scale: 1 });
   const scale = Math.min(3, longSide / Math.max(vp1.width, vp1.height));
   const vp = page.getViewport({ scale });
@@ -165,7 +178,7 @@ async function renderPage(page, longSide = 2200) {
 }
 async function pdfText(buf) {
   const lib = await pdfjs();
-  const task = lib.getDocument({ data: new Uint8Array(buf), isEvalSupported: false, disableFontFace: true, verbosity: 0 });
+  const task = lib.getDocument(pdfOptions(buf));
   const doc = await task.promise;
   const out = []; let read = 0;
   try {
@@ -186,7 +199,7 @@ async function pdfText(buf) {
 /** A PNG picture of the first page of a PDF (for previews). */
 async function pdfFirstPage(buf, longSide = 1000) {
   const lib = await pdfjs();
-  const task = lib.getDocument({ data: new Uint8Array(buf), isEvalSupported: false, disableFontFace: true, verbosity: 0 });
+  const task = lib.getDocument(pdfOptions(buf));
   try { const doc = await task.promise; return { png: await renderPage(await doc.getPage(1), longSide), pages: doc.numPages }; }
   finally { await task.destroy(); }
 }
@@ -212,4 +225,4 @@ function canRead(name) {
   return ext === '.pdf' || IMAGE.has(ext) || PLAIN.has(ext) || ['.docx', '.docm', '.xlsx', '.xlsm', '.pptx', '.odt', '.ods', '.odp', '.eml', '.html', '.htm', '.rtf'].includes(ext);
 }
 
-module.exports = { extractText, canRead, emailInfo, unzip, pdfText, pdfFirstPage, pdfjs, decodeEntities, mime: { splitPart, param, qp, decodeWords, charset } };
+module.exports = { extractText, canRead, emailInfo, unzip, pdfText, pdfFirstPage, pdfjs, canvasModule, pdfOptions, decodeEntities, mime: { splitPart, param, qp, decodeWords, charset } };

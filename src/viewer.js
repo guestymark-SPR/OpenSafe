@@ -14,7 +14,7 @@ async function pdfDoc(key, buffer) {
   const hit = pdfCache.get(key);
   if (hit) { hit.at = Date.now(); return hit.doc; }
   const lib = await doctext.pdfjs();
-  const task = lib.getDocument({ data: new Uint8Array(buffer), isEvalSupported: false, disableFontFace: true, verbosity: 0 });
+  const task = lib.getDocument(doctext.pdfOptions(buffer));
   const doc = await task.promise;
   pdfCache.set(key, { task, doc, at: Date.now() });
   while (pdfCache.size > 3) { const old = [...pdfCache.entries()].sort((a, b) => a[1].at - b[1].at)[0]; pdfCache.delete(old[0]); old[1].task.destroy().catch(() => {}); }
@@ -26,7 +26,7 @@ async function pdfPage(key, buffer, n, width) {
   const page = await doc.getPage(n);
   const vp1 = page.getViewport({ scale: 1 });
   const w = Math.max(200, Math.min(2600, Number(width) || 1200));
-  const { createCanvas } = require('@napi-rs/canvas');
+  const { createCanvas } = doctext.canvasModule();
   const vp = page.getViewport({ scale: w / vp1.width });
   const canvas = createCanvas(Math.ceil(vp.width), Math.ceil(vp.height));
   const ctx = canvas.getContext('2d');
@@ -146,7 +146,7 @@ async function view(name, buffer) {
   const ext = path.extname(name || '').toLowerCase();
   if (ext === '.pdf') {
     const lib = await doctext.pdfjs();
-    const task = lib.getDocument({ data: new Uint8Array(buffer), isEvalSupported: false, disableFontFace: true, verbosity: 0 });
+    const task = lib.getDocument(doctext.pdfOptions(buffer));
     try {
       const doc = await task.promise;
       const pages = [];

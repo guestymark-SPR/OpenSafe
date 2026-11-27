@@ -46,6 +46,17 @@ jobs:
           Write-Host $r
           if ($r -notmatch '"shop":"Screwfix"' -or $r -notmatch '189.97') { throw "Receipt reading self-test failed" }
 
+      - name: Check PDF pages draw in the built app
+        shell: pwsh
+        run: |
+          $env:ELECTRON_RUN_AS_NODE = "1"
+          $p = Start-Process -FilePath "dist\win-unpacked\OpenSafe.exe" -ArgumentList "test\packaged-pdf-check.js", "dist\win-unpacked\resources" -NoNewWindow -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP\pdf.txt" -RedirectStandardError "$env:RUNNER_TEMP\pdf-err.txt"
+          if (-not $p.WaitForExit(180000)) { $p.Kill(); throw "The PDF check didn't finish in 3 minutes" }
+          Get-Content "$env:RUNNER_TEMP\pdf.txt" | Write-Host
+          Get-Content "$env:RUNNER_TEMP\pdf-err.txt" | Where-Object { $_ -notmatch 'legacy' } | Write-Host
+          $r = Get-Content "$env:RUNNER_TEMP\pdf.txt" -Raw
+          if ($p.ExitCode -ne 0 -or $r -match 'FAIL' -or $r -notmatch 'scanned.pdf text read') { throw "PDF check failed in the built app" }
+
       - name: Publish release if this version is new (or incomplete)
         shell: bash
         env:

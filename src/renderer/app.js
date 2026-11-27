@@ -836,7 +836,7 @@
       if (vstate.fileId !== key || !el.isConnected) return;
       const im = document.createElement('img'); im.src = url; im.alt = `Page ${n}`; im.dataset.w = want; el.appendChild(im);
       vstate.pageImgs[n] = true;
-    } catch (_) { vstate.pageImgs[n] = false; el.classList.add('bad'); }
+    } catch (err) { vstate.pageImgs[n] = false; el.classList.add('bad'); el.dataset.err = String((err && err.message) || '').slice(0, 200); }
   }
   async function viewerAction(act) {
     const e = libEntry(vstate.id);
