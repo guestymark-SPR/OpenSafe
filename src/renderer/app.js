@@ -448,6 +448,27 @@
       <p class="faint" style="margin:4px 0 0">Backups run while OpenSafe is open (and unlocked). Older ones in the folder are removed automatically.</p></div>`;
   }
 
+  function syncCard() {
+    const y = state.snap.sync || {};
+    const when = (t) => t ? new Date(t).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+    if (!y.enabled) {
+      return `<div class="card tile" id="syncCard"><h2>${icon('copy')}Two PCs</h2>
+        <p class="muted">Use OpenSafe on two PCs (say a laptop and a desktop) and keep them the same, through a folder both can see, such as OneDrive. Choose the same folder on each PC.</p>
+        <p class="faint" style="margin-top:0">The whole inventory is handed over, not mixed: the PC with the newest changes wins. If both were changed, OpenSafe asks which to keep and saves the other as a backup. ${state.snap.security.encrypted ? 'With password protection on, the copy in the folder stays encrypted, and both PCs use the same password.' : '<b>Turn on password protection first</b>, so the copy in the folder is encrypted.'}</p>
+        <div class="acts"><button class="btn primary" data-action="syncChoose">${icon('folder')}Choose shared folder…</button></div></div>`;
+    }
+    const r = y.remote;
+    const line = y.conflict ? `<span style="color:var(--bad)">${icon('alert')}Both PCs were changed. Choose which copy to keep.</span>`
+      : y.lastError ? `<span style="color:var(--bad)">${icon('alert')}${esc(y.lastError)}</span>`
+      : y.dirty ? `${icon('upload')}Changes on this PC are being copied to the folder…`
+      : r && r.inStep ? `${icon('check')}In step${r.mine ? '' : ` with <b>${esc(r.by || 'your other PC')}</b>`}` : 'Checking…';
+    return `<div class="card tile" id="syncCard"><h2>${icon('copy')}Two PCs</h2>
+      <p style="margin:0 0 6px">${line}</p>
+      <p class="muted small" style="margin:0">Shared folder: <span class="mono">${esc(y.folder)}</span><br>This PC: <b>${esc(y.device || '')}</b>${y.lastSyncAt ? ` · last ${y.lastAction === 'pull' ? 'updated from the folder' : 'copied to the folder'} ${esc(when(y.lastSyncAt))}` : ''}${r && !r.mine ? `<br>Newest copy in the folder: from <b>${esc(r.by || '')}</b>, ${esc(when(r.at))}` : ''}</p>
+      <p class="faint" style="margin:8px 0 0">OpenSafe checks every 90 seconds while it's open, and when it starts and closes. Settings are shared too, so pick an automatic-backup folder that exists on both PCs.</p>
+      <div class="acts">${y.conflict ? `<button class="btn primary" data-action="syncResolve">Choose which copy…</button>` : `<button class="btn" data-action="syncNow">${icon('copy')}Check now</button>`}<button class="btn ghost" data-action="syncStop">Stop keeping in step</button></div></div>`;
+  }
+
   function securityCard() {
     const sec = state.snap.security;
     if (!sec.encrypted) {
@@ -1738,6 +1759,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
         <div class="acts"><button class="btn primary" data-action="backup">Back up to a folder…</button><button class="btn" data-action="restore">Restore from a backup…</button></div>
         <p class="faint" style="margin:12px 0 0">Data folder: <span class="mono">${esc(state.snap.dataDir)}</span> <button class="btn small ghost" data-action="openData">Open</button></p></div>
       ${autoBackupCard()}
+      ${syncCard()}
     </div>`;
   }
 
@@ -2200,6 +2222,10 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
         case 'addValuation': valuationForm(a); break;
         case 'rmValuation': if (confirm('Delete this valuation from the history? The item\'s value now isn\'t changed.')) { await run(() => keep.removeValuation(a.id, act.dataset.vid), 'Deleted'); await refresh(); } break;
         case 'bcLookup': barcodeLookup(a); break;
+        case 'syncChoose': { const st = await run(() => keep.syncChoose()); if (st) toast(st.lastError ? st.lastError : '✓ Keeping in step through that folder', 4500); await refresh(); break; }
+        case 'syncNow': { act.disabled = true; const st = await run(() => keep.syncNow()); if (st && !st.lastError) toast('✓ ' + (st.dirty ? 'Copying…' : 'In step')); await refresh(); break; }
+        case 'syncResolve': await run(() => keep.syncResolve()); await refresh(); break;
+        case 'syncStop': if (confirm('Stop keeping this PC in step with the shared folder?\n\nNothing is deleted: this PC keeps its inventory, and the copy in the folder stays there.')) { await run(() => keep.syncStop(), 'Stopped. This PC no longer uses the shared folder.'); await refresh(); } break;
         case 'phoneView': {
           const pass = $('#pvPass').value;
           if (pass.length < 6) { toast('Use a passphrase of at least 6 characters'); break; }
@@ -2329,6 +2355,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
       else { const sc = $('#view').scrollTop; render(); $('#view').scrollTop = sc; }
     }, 700);
   });
+  if (keep.onToast) keep.onToast((m) => toast(m, 4000));
   keep.onChanged(async () => {
     if (!state.snap || state.snap.locked) return;
     const before = state.snap.data.assets.length;

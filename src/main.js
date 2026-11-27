@@ -35,6 +35,8 @@ let win = null;
 let store = null;
 let phone = null;
 let pendingImport = null; // a .opensafe file opened while OpenSafe was locked
+let sync = null;          // keeping two PCs in step (src/sync.js)
+let syncTimer = null, syncPushTimer = null, syncAsking = false;
 const OPEN_DIR = path.join(os.tmpdir(), 'OpenSafe-open'); // decrypted copies of documents you open
 const MIME = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif', '.pdf': 'application/pdf' };
 
@@ -128,7 +130,85 @@ function sendSecurity() {
 
 /** Everything that should happen once the data is readable (at start-up, or after unlocking). */
 let backfillTimer = null;
+// ---------- two PCs in step ----------
+/** Copy files to or from the shared folder when it's clear which way (no reading of the data). */
+function syncFiles() {
+  if (!sync || !sync.enabled()) return null;
+  const plan = sync.plan();
+  if (plan.action === 'push' && sync._dataFile()) sync.push();
+  else if (plan.action === 'pull') sync.pull();
+  else if (plan.action === 'wait') sync.setError(plan.why);
+  return plan;
+}
+function scheduleSyncPush() {
+  clearTimeout(syncPushTimer);
+  syncPushTimer = setTimeout(() => syncTick().catch(() => {}), 15000);
+}
+/** Read the copy just taken from the other PC (or lock, if its password setup differs). */
+async function reloadAfterPull(secBefore) {
+  const secAfter = fs.existsSync(store.securityFile) ? fs.readFileSync(store.securityFile, 'utf8') : null;
+  if (!store.data) { sendSecurity(); return; } // still locked: it's read when unlocked
+  if (secAfter === null) { store.keys = null; store.load(); }
+  else if (secBefore !== null && secAfter === secBefore && !store.isLocked()) store.load();
+  else { await lockAll(); return; }
+  sync.afterLoad();
+  readSoon();
+  notifyChanged();
+}
+async function syncTick({ quiet = true } = {}) {
+  if (!sync || !sync.enabled() || syncAsking) return sync ? sync.status() : null;
+  try {
+    const plan = sync.plan();
+    if (plan.action === 'push') sync.push();
+    else if (plan.action === 'pull') {
+      const before = fs.existsSync(store.securityFile) ? fs.readFileSync(store.securityFile, 'utf8') : null;
+      sync.pull();
+      await reloadAfterPull(before);
+      if (win && !win.isDestroyed()) win.webContents.send('toast', `Updated with the changes from ${(plan.by && plan.by.name) || 'your other PC'}`);
+    } else if (plan.action === 'conflict' || plan.action === 'first') await askSync(plan);
+    else if (plan.action === 'wait') { sync.setError(plan.why); if (!quiet) throw new Error(plan.why); }
+    else if (sync.cfg.lastError) sync.setError('');
+  } catch (e) {
+    if (e.code !== 'WAIT') sync.setError(e.message); else sync.setError(e.message);
+    if (!quiet) throw e;
+  }
+  notifyChanged();
+  return sync.status();
+}
+/** Both PCs changed (or first time with things on both): ask which copy to keep. Nothing is lost either way. */
+async function askSync(plan) {
+  if (syncAsking || !win || win.isDestroyed()) { sync.cfg.conflict = true; sync._writeLocal(); return; }
+  syncAsking = true;
+  try {
+    const other = (plan.by && plan.by.name) || 'your other PC';
+    const when = plan.at ? new Date(plan.at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+    const c = await dialog.showMessageBox(win, {
+      type: 'question', title: 'Two PCs', noLink: true, defaultId: 2, cancelId: 2,
+      buttons: [`Use the copy from ${other}`, "Use this PC's copy", 'Decide later'],
+      message: plan.action === 'first' ? `The shared folder already has an inventory from ${other}, and this PC has its own.` : `Things were changed on this PC and on ${other} since they were last in step.`,
+      detail: `OpenSafe hands over the whole inventory rather than mixing the two, so choose which one to keep${when ? ` (${other}'s copy is from ${when})` : ''}.
+
+The other one isn't lost: it's saved as a backup you can restore from Import & backup → Restore from a backup.`
+    });
+    if (c.response === 0) {
+      store.backupTo(store.backupDir);
+      const before = fs.existsSync(store.securityFile) ? fs.readFileSync(store.securityFile, 'utf8') : null;
+      sync.pull();
+      await reloadAfterPull(before);
+    } else if (c.response === 1) {
+      const dest = sync.saveRemoteAsBackup(store.backupDir);
+      if (store.data) store.save();
+      sync.push();
+      if (dest) dialog.showMessageBox(win, { type: 'info', title: 'Two PCs', message: `This PC's copy is now the one in the shared folder.`, detail: `${other}'s copy was saved as a backup in:
+${dest}` });
+    } else { sync.cfg.conflict = true; sync._writeLocal(); return; }
+    sync.cfg.conflict = false; sync._writeLocal();
+  } catch (e) { sync.setError(e.message); }
+  finally { syncAsking = false; notifyChanged(); }
+}
+
 function afterUnlock() {
+  if (sync) sync.afterLoad();
   // Read the dates older photos were taken (a few at a time, so the app stays responsive).
   clearInterval(backfillTimer);
   backfillTimer = setInterval(() => {
@@ -189,7 +269,11 @@ async function init() {
   }
   applyTheme();
   store = new Store(DATA_DIR);
-  if (!store.isEncrypted()) store.load(); // with protection on, data is read after the password
+  sync = new Sync(store);
+  store.onSave = () => { if (sync.noteSaved()) scheduleSyncPush(); };
+  let startPlan = null;
+  try { startPlan = syncFiles(); } catch (e) { sync.setError(e.message); } // before anything is read, so OpenSafe opens the newest copy
+  if (!store.isEncrypted()) { store.load(); sync.afterLoad(); } // with protection on, data is read after the password
   phone = new PhoneServer({ store, onChange: notifyChanged });
   cleanOpenDir();
 
@@ -217,6 +301,10 @@ async function init() {
   if (startFile) pendingImport = startFile;
   if (!store.isLocked()) { if (win) win.webContents.once('did-finish-load', () => setTimeout(afterUnlock, 1500)); else setTimeout(afterUnlock, 1500); }
 
+  if (sync.enabled()) {
+    syncTimer = setInterval(() => syncTick().catch(() => {}), 90 * 1000);
+    if (startPlan && (startPlan.action === 'conflict' || startPlan.action === 'first')) setTimeout(() => askSync(startPlan).catch(() => {}), 2500);
+  }
   updater.init((st) => { if (win && !win.isDestroyed()) win.webContents.send('update:status', st); });
 }
 
@@ -263,6 +351,7 @@ const doctext = require('./doctext');
 const phonedocs = require('./phonedocs');
 const viewer = require('./viewer');
 const bundle = require('./bundle');
+const { Sync } = require('./sync');
 /** Turn a page of HTML into an A4 PDF, with scripts off and nothing loaded from the internet. */
 async function renderHtmlToPdf(html) {
   fs.mkdirSync(OPEN_DIR, { recursive: true });
@@ -425,6 +514,7 @@ function snapshot() {
   data.libBin = store.libraryBinView();
   return {
     data,
+    sync: sync ? sync.status() : null,
     security: store.securityState(),
     theme: readPrefs().theme || 'system',
     summary: store.summary(),
@@ -642,6 +732,23 @@ function registerIpc() {
   });
   h('lib:readNow', () => { readSoon(); return true; });
   // Bundle PDF: chosen entries in date order, with a contents page and page numbers
+  h('sync:now', () => syncTick({ quiet: false }));
+  h('sync:resolve', async () => { const p = sync.plan(); if (p.action === 'conflict' || p.action === 'first') await askSync(p); else await syncTick({ quiet: false }); return sync.status(); });
+  h('sync:stop', () => { clearInterval(syncTimer); syncTimer = null; sync.setFolder(''); sync.cfg.conflict = false; sync._writeLocal(); notifyChanged(); return sync.status(); });
+  h('sync:choose', async () => {
+    if (store.isEncrypted() === false) {
+      const w = await dialog.showMessageBox(win, { type: 'warning', title: 'Two PCs', noLink: true, buttons: ['Continue anyway', 'Cancel'], defaultId: 1, cancelId: 1,
+        message: 'Password protection is off, so the copy in the shared folder won\'t be encrypted.',
+        detail: 'Anyone who can open that folder (for example in OneDrive on the web) could read your items, letters and photos. Turning on password protection first (Settings) keeps the shared copy encrypted.' });
+      if (w.response !== 0) return null;
+    }
+    const r = await dialog.showOpenDialog(win, { title: 'Choose the shared folder (the same one on both PCs)', properties: ['openDirectory', 'createDirectory'] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    sync.setFolder(r.filePaths[0]);
+    sync.afterLoad();
+    if (!syncTimer) syncTimer = setInterval(() => syncTick().catch(() => {}), 90 * 1000);
+    return syncTick({ quiet: false });
+  });
   h('lib:onPhone', (ids, on) => libNote(store.setLibraryOnPhone((Array.isArray(ids) ? ids : [ids]).map(String), !!on)));
   h('lib:bundle', async (ids, opts) => {
     ids = (Array.isArray(ids) ? ids : []).map(String);
@@ -1153,6 +1260,7 @@ app.on('window-all-closed', async () => {
   if (bgEnabled() && !quitting) {
     // Keep running by the clock for reminders, but lock as if OpenSafe had closed.
     try { writeSchedule(); } catch (_) {}
+    try { if (sync && sync.enabled() && sync.cfg.dirty && sync.plan().action === 'push') sync.push(); } catch (_) { /* tried again next time */ }
     if (phone) await phone.stop();
     await ocr.stop();
     if (store && store.isEncrypted()) store.lock();
@@ -1162,6 +1270,7 @@ app.on('window-all-closed', async () => {
   }
   if (phone) await phone.stop();
   await ocr.stop();
+  try { if (sync && sync.enabled() && sync.cfg.dirty && sync.plan().action === 'push') sync.push(); } catch (_) { /* tried again next time */ }
   if (store) store.lock();
   cleanOpenDir();
   app.quit();

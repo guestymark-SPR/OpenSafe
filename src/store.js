@@ -246,8 +246,13 @@ class Store {
   save() {
     if (!this.data) throw new Error('OpenSafe is locked.');
     if (this.vault && this.keys && this.keys[sec.KEY_VAULT] && this.data.vault) {
-      const vjson = Buffer.from(JSON.stringify({ assets: this.vault.assets, fileMeta: this.vault.fileMeta, bin: this.vault.bin || [], library: this.vault.library || [], libBin: this.vault.libBin || [], docText: this.vault.docText || {} }));
-      this.data.vault.blob = sec.seal(this.keys[sec.KEY_VAULT], sec.KEY_VAULT, vjson).toString('base64');
+      const vstr = this._vaultJson(this.vault);
+      // only re-encrypt when the vault really changed, so an unchanged vault saves identically
+      // (keeps two PCs from sending each other copies that differ only in their encryption)
+      if (vstr !== this._vaultPlain || !this.data.vault.blob) {
+        this.data.vault.blob = sec.seal(this.keys[sec.KEY_VAULT], sec.KEY_VAULT, Buffer.from(vstr)).toString('base64');
+        this._vaultPlain = vstr;
+      }
     }
     const json = Buffer.from(JSON.stringify(this.data, null, 2));
     if (this.isEncrypted()) {
@@ -257,7 +262,9 @@ class Store {
       this._atomicWrite(this.file, json);
     }
     this._dailyBackup(json);
+    if (typeof this.onSave === 'function') { try { this.onSave(); } catch (_) { /* never block saving */ } }
   }
+  _vaultJson(v) { return JSON.stringify({ assets: v.assets, fileMeta: v.fileMeta, bin: v.bin || [], library: v.library || [], libBin: v.libBin || [], docText: v.docText || {} }); }
 
   _dailyBackup(json) {
     const day = new Date().toISOString().slice(0, 10);
@@ -1782,6 +1789,7 @@ class Store {
     this.keys = null;
     this.data = null;
     this.vault = null;
+    this._vaultPlain = null;
   }
 
   // ---------- vault ----------
@@ -1824,6 +1832,7 @@ class Store {
     for (const a of [...this.data.assets, ...(this.data.bin || []).map(b => b.asset)]) for (const r of [...a.photos, ...a.documents]) if (r.vault) live.add(r.id);
     for (const id of Object.keys(v.fileMeta)) if (!live.has(id)) delete v.fileMeta[id];
     this.vault = v;
+    this._vaultPlain = this.data.vault.blob ? this._vaultJson(v) : null;
   }
 
   async unlockVault(pin) {

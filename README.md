@@ -117,6 +117,17 @@ Emails, Word files and saved web pages are shown with scripts switched off. Use 
 
 **Privacy:** with password protection on, the files and the words read from them are encrypted like everything else. **More → Move into the vault** puts a whole document or entry behind the vault PIN; while the vault is locked it's hidden and left out of search. Deleted documents and data stay in their own bin for 30 days. Backups include them.
 
+## Two PCs
+
+**Import & backup → Two PCs → Choose shared folder…** keeps OpenSafe the same on two PCs (say a laptop and a desktop) through a folder both can see, such as one in OneDrive. Choose the same folder on each PC.
+
+- **How it works:** the whole inventory is handed over rather than mixed. When you change something, OpenSafe copies this PC's inventory to the folder (about 15 seconds later, and when it closes). The other PC checks the folder when it starts and every 90 seconds while it's open, and takes the newer copy. Only changed photos and files are copied each time.
+- **If both PCs were changed** before they caught up with each other, nothing is overwritten. OpenSafe asks which copy to keep (**Use the copy from …** or **Use this PC's copy**) and saves the other as a backup you can restore from **Restore from a backup…**.
+- **The first time on the second PC:** if that PC has no items yet, it takes the copy straight away. If it already has its own, it asks first.
+- **Encryption:** with password protection on, everything in the shared folder stays encrypted, and the second PC opens with the first PC's password (and the same vault PIN). It locks after taking a copy that came with a different password setup. Without password protection the folder copy isn't encrypted, so OpenSafe warns you before you start.
+- **A copy still arriving:** OpenSafe checks every file against the list the other PC wrote, and waits if OneDrive hasn't finished copying, so a half-copied inventory is never taken.
+- **Worth knowing:** settings (such as the automatic-backup folder) are shared too. The vault locks when a newer copy arrives. Use one PC at a time for the best results: changes made on both at once need the choice above. **Stop keeping in step** leaves both copies where they are.
+
 ## Password protection and the vault
 
 **Settings → Password protection** encrypts everything OpenSafe stores: the item list, photos, documents and daily backups.
@@ -262,6 +273,7 @@ src/doctext.js      Reads the words in PDFs, Office files, emails and pictures (
 src/phonedocs.js    Turns scanned documents from the phone into PDFs
 src/viewer.js       Shows PDFs, emails, Word and Excel files inside OpenSafe
 src/letterinfo.js   Suggests who a letter is from, its date and reference
+src/sync.js         Keeps two PCs in step through a shared folder
 src/bundle.js       Bundle PDF: chosen documents in date order with a contents page and page numbers
 src/renderer/       Desktop UI (plain HTML/CSS/JS)
 src/phone/          Phone page for the Wi-Fi link

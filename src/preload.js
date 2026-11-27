@@ -113,6 +113,11 @@ contextBridge.exposeInMainWorld('keep', {
   installUpdate: () => call('update:install'),
   onUpdate: (fn) => ipcRenderer.on('update:status', (_e, st) => fn(st)),
   onChanged: (fn) => ipcRenderer.on('data:changed', () => fn()),
+  onToast: (fn) => ipcRenderer.on('toast', (_e, msg) => fn(msg)),
+  syncNow: () => call('sync:now'),
+  syncResolve: () => call('sync:resolve'),
+  syncStop: () => call('sync:stop'),
+  syncChoose: () => call('sync:choose'),
   onLibrary: (fn) => ipcRenderer.on('lib:changed', () => fn()),
   libPick: (kind, entryId) => call('lib:pick', kind, entryId),
   // Where each dropped file is on disk ('' for files some apps, such as Outlook, drop without a path).
