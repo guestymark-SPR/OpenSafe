@@ -113,4 +113,20 @@ function draftReply(e, me = {}) {
   };
 }
 
-module.exports = { html, docx, normalise, draftReply, signOff, longDate, wp, packDocx };
+/** A subject access request (UK GDPR Article 15), with the supplementary information the ICO lists. */
+function draftSar(me = {}, org = '') {
+  return {
+    fromName: me.name || '', fromAddress: me.address || '', fromPhone: me.phone || '', fromEmail: me.email || '',
+    toName: org, toAddress: '', date: new Date().toISOString().slice(0, 10), yourRef: '', theirDate: '', ourRef: '',
+    subject: 'Subject access request', greeting: 'Dear Sir or Madam,',
+    body: [
+      'I am writing to make a subject access request under Article 15 of the UK General Data Protection Regulation for the personal information you hold about me.',
+      'Please send me:\n- a copy of all the personal information you hold about me, including letters, emails, notes of phone calls, case notes and other records, electronic or on paper;\n- why you are using it, what kinds of information you hold, who you have shared it with, how long you will keep it, and where you got it from if not from me;\n- whether you have used it to make any automated decisions about me.',
+      'To help you find it: [your reference or account numbers with them, dates, and what it is about. Delete this if you want everything].',
+      'Please send it to me electronically if you can.',
+      'I understand you should respond within one calendar month of receiving this request. If you need anything from me to confirm who I am or to find the information, please tell me straight away.'
+    ].join('\n\n')
+  };
+}
+
+module.exports = { draftSar, html, docx, normalise, draftReply, signOff, longDate, wp, packDocx };

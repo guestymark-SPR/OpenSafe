@@ -776,6 +776,40 @@ class Store {
     this.save();
   }
 
+  // ---------- complaints (see src/complaints.js) ----------
+  _cleanComplaint(c, existing) {
+    const T = require('./complaints').TEMPLATES;
+    const get = (k) => c[k] !== undefined ? c[k] : existing && existing[k];
+    const out = { id: (existing && existing.id) || uid(), createdAt: (existing && existing.createdAt) || nowIso() };
+    out.type = T[get('type')] ? get('type') : 'custom';
+    out.title = cleanString(get('title'), 200) || 'Complaint';
+    out.org = cleanString(get('org'), 200);
+    out.caseName = cleanString(get('caseName'), 120);
+    out.awareOn = cleanDate(get('awareOn'));
+    out.closedOn = cleanDate(get('closedOn'));
+    out.outcome = cleanString(get('outcome'), 2000);
+    out.steps = (Array.isArray(get('steps')) ? get('steps') : []).slice(0, 20).map(x => ({ startedOn: cleanDate(x && x.startedOn), replyOn: cleanDate(x && x.replyOn), note: cleanString(x && x.note, 2000) }));
+    out.customSteps = out.type === 'custom' ? (Array.isArray(get('customSteps')) ? get('customSteps') : []).slice(0, 10).map(x => ({ name: cleanString(x && x.name, 120) || 'Stage', days: Math.max(0, Math.min(365, Number(x && x.days) || 0)) })) : [];
+    return out;
+  }
+  complaints() { return (this.data.complaints || []).slice(); }
+  saveComplaint(c) {
+    this.data.complaints = this.data.complaints || [];
+    const i = c.id ? this.data.complaints.findIndex(x => x.id === c.id) : -1;
+    if (c.id && i < 0) throw new Error('Complaint not found');
+    const next = this._cleanComplaint(c, i >= 0 ? this.data.complaints[i] : null);
+    if (i >= 0) this.data.complaints[i] = next; else this.data.complaints.push(next);
+    this.save();
+    return next;
+  }
+  deleteComplaint(id) {
+    const n = (this.data.complaints || []).length;
+    this.data.complaints = (this.data.complaints || []).filter(x => x.id !== id);
+    if (this.data.complaints.length === n) throw new Error('Complaint not found');
+    this.save();
+    return true;
+  }
+
   // ---------- cases and replies ----------
   _allLibrary() { const { normal, vault } = this._libLists(); return [...normal, ...(vault || [])]; }
   /** A later letter received in the same case counts as the reply to one you sent. */
@@ -813,6 +847,12 @@ class Store {
       const st = rs[e.id];
       if (st && !st.replied && st.waiting) { c.waiting++; if (st.overdue) c.overdue++; }
       if (this.vault && this.vault.library && this.vault.library.includes(e)) c.vault++;
+    }
+    for (const cp of this.data.complaints || []) { // a case can start with a complaint before any letters
+      if (!cp.caseName) continue;
+      const k = cp.caseName.toLowerCase();
+      if (!map.has(k)) map.set(k, { name: cp.caseName, ids: [], froms: new Set(cp.org ? [cp.org] : []), refs: new Set(), first: '', last: (cp.createdAt || '').slice(0, 10), waiting: 0, overdue: 0, vault: 0 });
+      const c = map.get(k); c.complaints = (c.complaints || 0) + 1;
     }
     return [...map.values()].map(c => Object.assign(c, { froms: [...c.froms], refs: [...c.refs], count: c.ids.length }))
       .sort((a, b) => b.last.localeCompare(a.last));
@@ -1533,6 +1573,14 @@ class Store {
       if (!e.actBy || e.actDone) continue;
       const n = diff(e.actBy);
       if (n <= days) out.push({ libraryId: e.id, libraryKind: e.kind, assetName: e.title + (e.from ? ` (${e.from})` : ''), kind: 'Reply or act by', date: e.actBy, daysLeft: n });
+    }
+    const cm = require('./complaints');
+    for (const c of this.data.complaints || []) {
+      if (c.closedOn) continue;
+      const st = cm.status(c, new Date(t0).toISOString().slice(0, 10));
+      const cur = st.steps[st.current];
+      if (cur && cur.state === 'waiting' && cur.dueReply) { const n = diff(cur.dueReply); if (n <= days) out.push({ complaintId: c.id, caseName: c.caseName, assetName: `${c.title}${c.org ? ' (' + c.org + ')' : ''}: ${cur.name}`, kind: 'Complaint reply due', date: cur.dueReply, daysLeft: n }); }
+      if (st.next && st.next.startBy) { const n = diff(st.next.startBy); if (n <= days && n >= -30) out.push({ complaintId: c.id, caseName: c.caseName, assetName: `${c.title}${c.org ? ' (' + c.org + ')' : ''}`, kind: `Last day for: ${st.next.name}`, date: st.next.startBy, daysLeft: n }); }
     }
     for (const p of this.data.policies || []) {
       if (!p.renewalDate) continue;

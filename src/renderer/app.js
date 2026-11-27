@@ -672,7 +672,8 @@
     const L = d.letter, me = !L.fromName;
     const cases = (state.snap.data.libCases || []).map(c => c.name);
     const tb = (name, label, v, extra = '') => `<label class="f">${label}<input name="${name}" value="${esc(v || '')}" ${extra}></label>`;
-    openModal(`<form class="dialog wide" id="letterForm"><div class="dh"><h2>${entryId ? 'Change letter' : L.replyTo ? 'Write a reply' : 'Write a letter'}</h2></div><div class="db letterdb">
+    openModal(`<form class="dialog wide" id="letterForm"><div class="dh"><h2>${entryId ? 'Change letter' : d.sar ? 'Subject access request' : L.replyTo ? 'Write a reply' : 'Write a letter'}</h2></div><div class="db letterdb">
+      ${d.sar ? `<p class="s3 muted" style="margin:0">Asks for a copy of the personal information they hold about you. It's free in most cases. They should reply within one calendar month of receiving it (up to two more months if it's complex, but they must tell you within the first month). OpenSafe sets the reply date and starts a complaint ladder in the case, so you know when to follow up and when you can go to the ICO. Many organisations also take requests by email or an online form: you can copy this text into one.</p>` : ''}
       <details class="s3 hidebox" ${me ? 'open' : ''}><summary><b>Your details</b> <span class="faint">${me ? '(filled in once, then remembered)' : esc(L.fromName)}</span></summary>
         <div class="grid g2" style="margin-top:8px">${tb('fromName', 'Your name', L.fromName, 'maxlength="120"')}${tb('fromPhone', 'Phone (optional)', L.fromPhone, 'maxlength="60"')}
           <label class="f">Your address<textarea name="fromAddress" rows="4" maxlength="600">${esc(L.fromAddress)}</textarea></label>${tb('fromEmail', 'Email (optional)', L.fromEmail, 'maxlength="120" type="email"')}</div></details>
@@ -684,7 +685,7 @@
       ${tb('subject', 'Subject (in bold)', L.subject, 'maxlength="200"')}
       <label class="f s3">Letter<textarea name="body" rows="12" maxlength="20000" required>${esc(L.body)}</textarea><span class="faint small">Leave a blank line between paragraphs. Your name and the ending are added for you.</span></label>
       <label class="f">Case<input name="caseName" list="ltCases" maxlength="120" value="${esc(d.caseName || '')}" placeholder="${L.replyTo ? 'Both letters go in it' : 'Optional'}"><datalist id="ltCases">${cases.map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
-      <label class="f">Expect a reply within<select name="expect"><option value="">No reminder</option>${[14, 28, 56].map(n => `<option value="${n}" ${n === 28 && !entryId ? 'selected' : ''}>${n} days</option>`).join('')}</select></label>
+      <label class="f" ${d.sar ? 'style="display:none"' : ''}>Expect a reply within<select name="expect"><option value="">No reminder</option>${[14, 28, 56].map(n => `<option value="${n}" ${n === 28 && !entryId ? 'selected' : ''}>${n} days</option>`).join('')}</select></label>
       <div class="f"><span>Save as</span><span style="display:flex;gap:16px"><label class="switch"><input type="checkbox" name="fmtPdf" checked> PDF</label><label class="switch"><input type="checkbox" name="fmtDocx" checked> Word</label></span></div>
       <div class="err s3" id="ltErr"></div></div>
       <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">${icon('check')}${entryId ? 'Save changes' : 'Save letter'}</button></div></form>`);
@@ -698,7 +699,7 @@
       const formats = [el.fmtPdf.checked && 'pdf', el.fmtDocx.checked && 'docx'].filter(Boolean);
       busy(f, true, 'Saving letter…');
       try {
-        const r = await keep.letterSave({ letter, formats, caseName: el.caseName.value.trim(), expectDays: el.expect.value ? Number(el.expect.value) : 0, entryId: entryId || '' });
+        const r = await keep.letterSave({ letter, formats, caseName: el.caseName.value.trim(), expectDays: el.expect.value ? Number(el.expect.value) : 0, entryId: entryId || '', sar: !!d.sar });
         closeModal(); await refresh(); go('libitem', { libId: r.id }); toast('✓ Letter saved in Documents, marked as sent by you', 4500);
       } catch (ex) { $('#ltErr').textContent = ex.message; busy(f, false); }
     };
@@ -748,6 +749,88 @@
         const r = await keep.formFill(e.id, fileId, values, { flatten: form.elements.flatten.checked, remember: form.elements.remember.checked, labels });
         closeModal(); await refresh(); toast(`✓ Filled-in copy added (${r.filled} answer${r.filled === 1 ? '' : 's'})`, 4000);
       } catch (ex) { $('#ffErr').textContent = ex.message; busy(form, false); }
+    };
+  }
+  // ---- complaint ladder ----
+  function complaintsHtml(caseName) {
+    const list = (state.snap.data.complaints || []).filter(c => (c.caseName || '').toLowerCase() === String(caseName || '').toLowerCase());
+    if (!list.length) return '';
+    const day = (d) => d ? ukDate(d) : '';
+    return list.map(c => {
+      const st = state.snap.data.complaintInfo[c.id]; if (!st) return '';
+      return `<div class="card complaint ${c.closedOn ? 'closed' : ''}"><div class="ch"><h2 style="margin:0">${icon('alert')}${esc(c.title)}${c.org ? ` <span class="faint">· ${esc(c.org)}</span>` : ''}</h2><span class="spacer"></span>
+          ${c.closedOn ? `<span class="pill good">${icon('check')}Closed ${day(c.closedOn)}</span>` : `<span class="pill ${/^No reply/.test(st.action) ? 'bad' : 'warn'}">${esc(st.action.replace(/(\d{4}-\d{2}-\d{2})/g, (m) => ukDate(m)))}</span>`}
+          <button class="btn small ghost" data-action="libComplaintEdit" data-id="${esc(c.id)}">${icon('edit')}Edit</button></div>
+        <div class="meta" style="margin:2px 0 8px">${esc(st.name)}${c.awareOn && c.type !== 'sar' ? ` · knew about the problem from ${day(c.awareOn)}` : ''}</div>
+        <ol class="ladder">${st.steps.map((x, i) => {
+          const isNext = !c.closedOn && i === st.current + 1, isCur = !c.closedOn && i === st.current;
+          return `<li class="${x.state} ${isCur ? 'cur' : ''} ${isNext ? 'next' : ''}"><div class="lt"><b>${esc(x.name)}</b>${x.respondText ? ` <span class="faint">· they have ${esc(x.respondText)}</span>` : ''}</div>
+            <div class="meta">${esc(x.how)}${x.extendNote ? ' ' + esc(x.extendNote) : ''}</div>
+            <div class="ld">${[x.startedOn && `Started ${day(x.startedOn)}`, x.dueReply && `reply due ${day(x.dueReply)}`, x.replyOn && `<b>reply ${day(x.replyOn)}</b>`, !x.startedOn && x.within && (x.startBy ? `<b>start by ${day(x.startBy)}</b> (${esc(x.within.text)})` : esc(x.within.text))].filter(Boolean).join(' · ')}${x.note ? `<div class="faint">${esc(x.note)}</div>` : ''}</div>
+            ${isCur && x.state === 'waiting' ? `<button class="btn small" data-action="libComplaintReply" data-id="${esc(c.id)}" data-i="${i}">${icon('check')}Got their reply…</button>` : ''}
+            ${isNext || (st.current < 0 && i === 0 && !c.closedOn) ? `<button class="btn small primary" data-action="libComplaintStart" data-id="${esc(c.id)}" data-i="${i}">Start this stage…</button>` : ''}</li>`;
+        }).join('')}</ol>
+        <div class="faint small">Time limits from the organisations' published rules, checked ${day(st.checked)}: ${st.sources.map(([t, u]) => `<a href="#" data-action="libComplaintSource" data-url="${esc(u)}">${esc(t)}</a>`).join(' · ')}. Their final response letter should say what you can do next; if it differs, go by that. Working days count Monday to Friday; a bank holiday adds a day.
+        ${c.closedOn ? (c.outcome ? ` Outcome: ${esc(c.outcome)}` : '') : ` <a href="#" data-action="libComplaintClose" data-id="${esc(c.id)}">Close it (resolved or given up)…</a>`}</div></div>`;
+    }).join('');
+  }
+  async function complaintForm(c, caseName) {
+    const T = await run(() => keep.complaintTemplates()); if (!T) return;
+    const cases = (state.snap.data.libCases || []).map(x => x.name);
+    const v = c || { type: 'dwp', title: '', org: '', caseName, awareOn: '', steps: [] };
+    openModal(`<form class="dialog" id="cpfForm"><div class="dh"><h2>${c ? 'Edit complaint' : 'Start a complaint'}</h2></div><div class="db">
+      <label class="f s3">Who it's about<select name="type">${Object.entries(T).map(([k, t]) => opt(k, t.name, v.type)).join('')}<option value="custom" ${v.type === 'custom' ? 'selected' : ''}>Someone else (set your own stages)</option></select></label>
+      <label class="f s2">What it's about<input name="title" maxlength="200" required value="${esc(v.title)}" placeholder="e.g. Wrong income used in my calculation"></label>
+      <label class="f">Organisation<input name="org" maxlength="200" value="${esc(v.org)}" placeholder="e.g. Child Maintenance Service"></label>
+      <label class="f">Case<input name="caseName" list="cpfCases" maxlength="120" value="${esc(v.caseName || caseName || '')}"><datalist id="cpfCases">${cases.map(x => `<option value="${esc(x)}">`).join('')}</datalist></label>
+      <label class="f">When you first knew about the problem<input type="date" name="awareOn" value="${esc(v.awareOn || '')}"><span class="faint small">Some ombudsman time limits count from this.</span></label>
+      ${c ? '' : `<label class="f">First stage started<input type="date" name="startedOn" value="${new Date().toISOString().slice(0, 10)}"><span class="faint small">Leave empty if you haven't complained yet.</span></label>`}
+      <div class="s3" id="cpfSteps"></div>
+      <div class="err s3" id="cpfErr"></div></div>
+      <div class="df">${c ? '<button type="button" class="btn danger" id="cpfDel">Delete</button><span class="spacer"></span>' : ''}<button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Save</button></div></form>`);
+    const f = $('#cpfForm'), el = f.elements;
+    const showSteps = () => {
+      const t = T[el.type.value];
+      $('#cpfSteps').innerHTML = t ? `<div class="faint small">Stages: ${t.steps.map((x, i) => `${i + 1}. ${esc(x.name)}`).join(' → ')}</div>`
+        : `<div class="faint small">Your stages (name, and how many days they have to reply; 0 if none):</div>${[0, 1, 2].map(i => { const cs = (v.customSteps || [])[i] || {}; return `<div style="display:flex;gap:8px;margin-top:4px"><input name="csn${i}" placeholder="Stage ${i + 1}" value="${esc(cs.name || '')}" style="flex:1"><input name="csd${i}" type="number" min="0" max="365" value="${cs.days || ''}" style="width:90px" placeholder="days"></div>`; }).join('')}`;
+    };
+    el.type.onchange = showSteps; showSteps();
+    if (c) $('#cpfDel').onclick = async () => { if (confirm('Delete this complaint? Its letters stay in the case.')) { await run(() => keep.complaintDelete(c.id)); closeModal(); await refresh(); } };
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const out = { id: c ? c.id : undefined, type: el.type.value, title: el.title.value, org: el.org.value, caseName: el.caseName.value.trim(), awareOn: el.awareOn.value };
+      if (out.type === 'custom') out.customSteps = [0, 1, 2].map(i => ({ name: el['csn' + i].value.trim(), days: Number(el['csd' + i].value) || 0 })).filter(x => x.name);
+      if (!c) out.steps = el.startedOn.value ? [{ startedOn: el.startedOn.value }] : [];
+      if (out.type === 'custom' && !out.customSteps.length) { $('#cpfErr').textContent = 'Add at least one stage.'; return; }
+      const ok = await run(() => keep.complaintSave(out), c ? '✓ Saved' : '✓ Complaint started');
+      if (ok) { closeModal(); await refresh(); if (out.caseName && state.view !== 'case') go('case', { caseName: out.caseName }); }
+    };
+  }
+  function complaintStep(id, i, what) {
+    const c = (state.snap.data.complaints || []).find(x => x.id === id); if (!c) return;
+    const st = state.snap.data.complaintInfo[id];
+    const today = new Date().toISOString().slice(0, 10);
+    const title = what === 'close' ? 'Close this complaint' : what === 'reply' ? `Their reply: ${st.steps[i].name}` : `Start: ${st.steps[i].name}`;
+    openModal(`<form class="dialog narrow" id="csForm"><div class="dh"><h2>${esc(title)}</h2></div><div class="db">
+      <label class="f s3">${what === 'reply' ? 'Date of their reply' : what === 'close' ? 'Date' : 'Date you started it'}<input type="date" name="d" value="${today}" required></label>
+      <label class="f s3">${what === 'close' ? 'Outcome' : 'Note (optional)'}<textarea name="note" rows="3" maxlength="2000" placeholder="${what === 'reply' ? 'e.g. Final response: they say the income figure is right' : what === 'close' ? 'e.g. Recalculated from 1 May' : 'e.g. Sent the stage 2 form online, ref 12345'}"></textarea></label>
+      ${what === 'reply' ? '<p class="s3 faint small" style="margin:0">Add their letter to this case too, so it shows in the timeline and the bundle.</p>' : ''}</div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Save</button></div></form>`);
+    const f = $('#csForm');
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const d = f.elements.d.value, note = f.elements.note.value.trim();
+      const steps = (c.steps || []).map(x => Object.assign({}, x));
+      let patch = { id };
+      if (what === 'close') patch = { id, closedOn: d, outcome: note };
+      else {
+        while (steps.length <= i) steps.push({ startedOn: '', replyOn: '', note: '' });
+        if (what === 'reply') steps[i].replyOn = d; else steps[i].startedOn = d;
+        if (note) steps[i].note = [steps[i].note, note].filter(Boolean).join(' · ');
+        patch.steps = steps;
+      }
+      const ok = await run(() => keep.complaintSave(patch), '✓ Saved');
+      if (ok) { closeModal(); await refresh(); }
     };
   }
   /** Draft (or change) a statement about a case, then save it as Word and/or PDF in the case. */
@@ -807,8 +890,9 @@
     let lastYear = '';
     return `<div class="head"><a href="#" data-nav="docs" class="back">${icon('back')}Documents</a><h1>${esc(name)}</h1><span class="sub">${list.length} letter${list.length === 1 ? '' : 's'}${c && c.refs.length ? ' · Ref ' + esc(c.refs.join(', ')) : ''}</span><span class="spacer"></span>
         <button class="btn" data-action="libBundle" data-ids="${esc(ids)}">${icon('printer')}Bundle PDF of the case…</button>
-        ${dd('More', [{ label: 'Draft a statement…', action: 'libStatementNew', icon: 'file' }, { label: 'Write a letter in this case…', action: 'libLetterNew', icon: 'edit' }, { label: 'Add documents to this case…', action: 'libCaseAdd', icon: 'plus' }, '-', { label: 'Rename case…', action: 'libCaseRename', icon: 'edit' }])}</div>
-      ${!list.length ? '<div class="card empty">Nothing in this case now.</div>' : `<div class="timeline">${list.map(e => {
+        ${dd('More', [{ label: 'Start a complaint…', action: 'libComplaintNew', icon: 'alert' }, { label: 'Subject access request…', action: 'libSarNew', icon: 'mail' }, { label: 'Draft a statement…', action: 'libStatementNew', icon: 'file' }, { label: 'Write a letter in this case…', action: 'libLetterNew', icon: 'edit' }, { label: 'Add documents to this case…', action: 'libCaseAdd', icon: 'plus' }, '-', { label: 'Rename case…', action: 'libCaseRename', icon: 'edit' }])}</div>
+      ${complaintsHtml(name)}
+      ${!list.length ? '<div class="card empty">No letters in this case yet.</div>' : `<div class="timeline">${list.map(e => {
         const d = e.docDate || e.createdAt.slice(0, 10), y = d.slice(0, 4);
         const yr = y !== lastYear ? `<div class="tyear">${esc(y)}</div>` : ''; lastYear = y;
         return `${yr}<div class="titem ${e.sent ? 'sent' : 'recv'}" data-action="libOpen" data-lib="${esc(e.id)}">
@@ -1031,6 +1115,13 @@
         return true;
       }
       case 'libFormFill': { const f = await run(() => keep.formRead(e.id, act.dataset.file)); if (f) formFillForm(e, act.dataset.file, f); return true; }
+      case 'libComplaintNew': complaintForm(null, state.view === 'case' ? state.caseName : ''); return true;
+      case 'libComplaintEdit': complaintForm((state.snap.data.complaints || []).find(c => c.id === act.dataset.id), ''); return true;
+      case 'libComplaintReply': complaintStep(act.dataset.id, Number(act.dataset.i), 'reply'); return true;
+      case 'libComplaintStart': complaintStep(act.dataset.id, Number(act.dataset.i), 'start'); return true;
+      case 'libComplaintClose': complaintStep(act.dataset.id, -1, 'close'); return true;
+      case 'libComplaintSource': await run(() => keep.openLink(act.dataset.url)); return true;
+      case 'libSarNew': { const org = await promptText('Subject access request', 'Which organisation? (e.g. Child Maintenance Service)', '', Object.keys((await keep.sarDraft('')).addresses || {})); if (org && org.trim()) { const d = await run(() => keep.sarDraft(org.trim())); if (d) { d.addresses = d.addresses || {}; d.letter.toAddress = d.addresses[org.trim().toLowerCase()] || ''; d.caseName = state.view === 'case' ? state.caseName : ''; d.sar = true; letterForm(d, null); } } return true; }
       case 'libStatementNew': { const d = await run(() => keep.statementDraft(state.caseName)); if (d) statementForm({ title: d.title, text: d.text, caseName: state.caseName, count: d.count }, null); return true; }
       case 'libStatementEdit': statementForm({ title: e.title, text: e.statement.text, caseName: e.caseName || '' }, e.id); return true;
       case 'libLetterReply': { const d = await run(() => keep.letterDraft(e.id)); if (d) letterForm(d, null); return true; }
@@ -1225,6 +1316,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
   // ---------- one search for everything ----------
   // ---------- Help and What's new ----------
   const NEWS = [
+    ['2.18.0', 'Complaints and subject access', ['<b>Start a complaint…</b> (a case\'s More menu, or + New): each stage with its time limits for DWP and the CMS, Veterans UK, government, councils, banks, energy and phone companies, from their published rules. Deadlines go into Reminders.', '<b>Subject access request…</b>: a letter asking for the information an organisation holds on you, with the one-month reply date and what to do next.']],
     ['2.17.0', 'Statements and forms', ['<b>Draft a statement…</b> on a case (More menu): a numbered, dated account built from its letters, your highlights and notes, to edit and save as Word or PDF.', '<b>Fill in this form…</b> on a PDF\'s ⋯ menu: fillable forms get your name, address and earlier answers suggested; a filled-in copy is saved.']],
     ['2.16.0', 'Highlights and notes', ['In the reader, <b>Highlight</b> and drag over a PDF page to mark it; click a highlight to add a note. OpenSafe keeps the words under it, and search finds your notes.', 'A document\'s page lists its highlights; Bundle PDF can show them, with your notes on the contents page.']],
     ['2.15.0', 'Getting things in, and your calendar', ['<b>Watch a folder</b> (Import & backup): files saved into it are added to Documents or Data by themselves.', '<b>Share to OpenSafe</b> on the phone: share a PDF, photo or email from another app straight into Capture.', '<b>Add to my calendar…</b> on Reminders: a calendar file for Outlook, Google Calendar or your phone.']],
@@ -1255,6 +1347,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     ['mark', 1, 'Highlight a line in a PDF', 'Open a PDF letter in the reader, click <b>Highlight</b> and drag across a line. Click the yellow box and add a note. Searching for a word in your note should find the letter.'],
     ['statement', 2, 'Draft a statement', 'Open a case → More → <b>Draft a statement…</b>. Each letter should be a numbered paragraph in date order, with your highlights and notes. Save it and open the Word file.'],
     ['form', 2, 'Fill in a real form', 'Add a fillable PDF form you need (for example from a council or government site) and choose <b>⋯ → Fill in this form…</b>. Your name and address should be suggested; check the filled-in copy in your PDF app.'],
+    ['complaint', 2, 'Start a complaint', 'Open a case → More → <b>Start a complaint…</b>, pick who it\'s about and the date you complained. The stages should appear with their time limits; click <b>Got their reply…</b> and the date for the next stage should be worked out.'],
     ['twopc', 3, 'Two PCs (only if you have a second PC)', 'Choose the same OneDrive folder on both under Import & backup → Two PCs. Add an item on one; once OneDrive has copied it (usually a few minutes), it should appear on the other.']
   ];
   const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (_) { return d; } };
@@ -1995,7 +2088,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     const r = state.snap.reminders;
     const over = r.filter(x => x.daysLeft < 0), soon = r.filter(x => x.daysLeft >= 0);
     const block = (title, list, cls) => `<div class="card" style="margin-bottom:16px"><h2>${title}</h2>${list.length ? `<div class="rows">${list.map(x => `
-      <div class="rowi" ${x.libraryId ? `data-action="libOpen" data-lib="${esc(x.libraryId)}"` : x.policyId ? 'data-nav="policies"' : `data-open="${x.assetId}" data-opentab="${x.source === 'item' ? 'overview' : 'service'}"`}><span class="pill ${cls}">${esc(x.kind)}</span><span style="flex:1"><b>${esc(x.assetName)}</b></span>
+      <div class="rowi" ${x.complaintId ? `data-action="libCaseOpen" data-case="${esc(x.caseName || '')}"` : x.libraryId ? `data-action="libOpen" data-lib="${esc(x.libraryId)}"` : x.policyId ? 'data-nav="policies"' : `data-open="${x.assetId}" data-opentab="${x.source === 'item' ? 'overview' : 'service'}"`}><span class="pill ${cls}">${esc(x.kind)}</span><span style="flex:1"><b>${esc(x.assetName)}</b></span>
       <span class="meta">${ukDate(x.date)}</span><span class="nowrap" style="width:130px;text-align:right">${dueText(x.daysLeft)}</span></div>`).join('')}</div>` : '<div class="muted">None.</div>'}</div>`;
     return `<div class="head"><h1>Reminders</h1><span class="sub">Warranties, service and MOT dates, things lent or borrowed, insurance renewals and letters to reply to, looking ${state.snap.data.settings.reminderDays} days ahead</span><span class="spacer"></span><button class="btn" data-action="remIcs" title="A calendar file for Outlook, Google Calendar or your phone">${icon('calendar')}Add to my calendar…</button></div>
       ${block('Overdue', over, 'bad')}${block('Coming up', soon, 'warn')}`;

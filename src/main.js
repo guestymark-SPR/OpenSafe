@@ -368,6 +368,7 @@ const letter = require('./letter');
 const ics = require('./ics');
 const statement = require('./statement');
 const pdfform = require('./pdfform');
+const complaints = require('./complaints');
 const { FolderWatch } = require('./watcher');
 const { Sync } = require('./sync');
 /** Turn a page of HTML into an A4 PDF, with scripts off and nothing loaded from the internet. */
@@ -546,6 +547,8 @@ function snapshot() {
   data.libCases = store.libraryCases();
   const watch = watcher ? watcher.status() : null;
   data.libReplies = store.replyStatus();
+  data.complaints = store.complaints();
+  data.complaintInfo = Object.fromEntries(data.complaints.map(c => [c.id, complaints.status(c)]));
   return {
     data,
     sync: sync ? sync.status() : null,
@@ -825,6 +828,11 @@ function registerIpc() {
     libChanged(); readSoon();
     return { fileId: rec.id, filled: r.filled };
   });
+  // ---- complaints and subject access requests ----
+  h('complaint:save', (c) => { const r = store.saveComplaint(c || {}); notifyChanged(); return r; });
+  h('complaint:delete', (id) => { store.deleteComplaint(String(id)); notifyChanged(); return true; });
+  h('complaint:templates', () => Object.fromEntries(Object.entries(complaints.TEMPLATES).map(([k, t]) => [k, { name: t.name, steps: t.steps.map(x => ({ name: x.name, how: x.how })) }])));
+  h('letter:sarDraft', (org) => ({ letter: letter.draftSar(store.letterBook().me, String(org || '')), caseName: '', addresses: store.letterBook().addresses }));
   // ---- statements ----
   const caseEntries = (name) => { const k = String(name || '').toLowerCase(); return [...store.libraryView('document'), ...store.libraryView('data')].filter(e => (e.caseName || '').toLowerCase() === k && !e.statement); };
   h('statement:draft', (caseName) => {
@@ -878,6 +886,7 @@ function registerIpc() {
     let e;
     const details = { title: L.subject || `Letter to ${L.toName}`, docType: 'Letter', from: L.toName, docDate: L.date, ref: L.yourRef || L.ourRef, sent: true, reply: rep,
       caseName: String(p.caseName || '').slice(0, 120) };
+    if (p.sar) { details.expectBy = complaints.nextWorkingDay(complaints.addMonths(L.date, 1)); p.expectDays = 0; if (!details.caseName) details.caseName = `Subject access: ${L.toName}`.slice(0, 120); }
     if (p.expectDays) { const d = new Date(L.date + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + Math.max(1, Math.min(365, Number(p.expectDays) || 28))); details.expectBy = d.toISOString().slice(0, 10); }
     if (p.entryId) {
       e = store.saveLibraryEntry(Object.assign({ id: String(p.entryId) }, details));
@@ -886,6 +895,7 @@ function registerIpc() {
     for (const f of files) store.addLibraryFile(e.id, f.name, f.buf);
     // the letter you replied to joins the same case
     if (rep.replyTo && details.caseName) { try { store.moveLibrary([rep.replyTo], { caseName: details.caseName }); } catch (_) { /* gone or in the locked vault */ } }
+    if (p.sar && !p.entryId) store.saveComplaint({ type: 'sar', title: 'Subject access request', org: L.toName, caseName: details.caseName, awareOn: L.date, steps: [{ startedOn: L.date }] });
     store.rememberLetter(L); store.save();
     libChanged(); readSoon();
     return { id: e.id };

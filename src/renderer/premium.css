@@ -223,3 +223,15 @@ mark{background:color-mix(in srgb,#f5c542 45%,transparent);color:inherit;border-
 .fpage{font-weight:700;color:var(--muted,#666);margin-top:6px;border-bottom:1px solid var(--line);padding-bottom:2px}
 .frow{display:grid;grid-template-columns:minmax(180px,38%) 1fr;gap:10px;align-items:center}
 .frow input.suggested{background:rgba(255,224,0,.12)}
+/* complaint ladder */
+.complaint{margin-bottom:14px}.complaint .ch{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.complaint.closed{opacity:.8}
+.ladder{list-style:none;margin:0 0 10px;padding:0 0 0 26px;position:relative;counter-reset:st}
+.ladder:before{content:"";position:absolute;left:10px;top:6px;bottom:6px;width:2px;background:var(--line)}
+.ladder li{position:relative;padding:6px 0 10px;counter-increment:st}
+.ladder li:before{content:counter(st);position:absolute;left:-26px;top:6px;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700;background:var(--card,#fff);border:2px solid var(--line)}
+.ladder li.replied:before{background:var(--good,#2f7d4f);border-color:var(--good,#2f7d4f);color:#fff;content:"✓"}
+.ladder li.waiting:before{border-color:#d08a00}
+.ladder li.next:before{border-color:var(--accent,#1d4d4f)}
+.ladder .ld{font-size:12.5px;margin:3px 0 5px}
+.ladder li .btn{margin-right:6px}
