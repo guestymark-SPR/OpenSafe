@@ -87,7 +87,7 @@ Adding: **Add document…** or **Add files…**, or drag files anywhere onto the
 
 It can't read Outlook .msg files, old .doc/.xls files, handwriting or videos; those are stored but only their details can be searched. Reading is automatic, so a poor photo can give mistakes. **Show the words found** on a file shows what was read.
 
-**Reading files inside OpenSafe:** click **View** on a file (or its preview) to read it without leaving OpenSafe:
+**Reading files inside OpenSafe:** click a file to show it in the preview box, and double-click it (or click **View**) to read it without leaving OpenSafe:
 - **PDFs:** every page, with zoom;
 - **emails (.eml):** the formatted message with its pictures, who it's from and to, and its attachments (open, save a copy, or **Keep in Data**). Pictures from the internet are never loaded, because they can tell the sender you opened the email. Links ask before opening in your browser;
 - **Word (.docx):** headings, lists, tables and pictures, without the exact page layout;

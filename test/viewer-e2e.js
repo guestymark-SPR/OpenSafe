@@ -67,9 +67,19 @@ app.on('browser-window-created', (_e, win) => {
       await js(`document.querySelector('.libbigwrap').click()`); await wait(1500);
       R.previewOpensReader = await js(`!document.getElementById('viewer').classList.contains('hidden')`);
       await js(`document.querySelector('[data-action=libViewClose]').click()`); await wait(300);
+      // one click on a file shows it in the preview box; a double-click opens it
+      R.previewBefore = await js(`document.querySelector('.libpreview p').innerText`);
+      await js(`document.querySelectorAll('[data-libsel]')[1].querySelector('b').click()`); await wait(1500);
+      R.previewAfterClick = await js(`document.querySelector('.libpreview p').innerText + ' | selected: ' + document.querySelector('.libfile.on b').innerText + ' | img ' + ((document.querySelector('img.libbig') || {}).naturalWidth || 0) + ' | reader open: ' + !document.getElementById('viewer').classList.contains('hidden')`);
+      await shot('v1b-preview-photo');
+      await js(`document.querySelectorAll('[data-libsel]')[0].querySelector('b').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`); await wait(1500);
+      R.dblclickOpens = await js(`!document.getElementById('viewer').classList.contains('hidden') && document.querySelector('.vtitle b').innerText`);
+      await js(`document.querySelector('[data-action=libViewClose]').click()`); await wait(300);
 
       // ---- email
       await openEntry('files', 'Your crossing');
+      await wait(800);
+      R.emailPreview = await js(`document.getElementById('libMsg').innerText.slice(0, 80)`);
       await js(`document.querySelector('.btn[data-action=libFileView]').click()`); await wait(2500);
       R.emailHead = await js(`document.querySelector('.vmhead').innerText.replace(/\\s+/g, ' ')`);
       R.emailFrame = await js(`(() => { const d = document.querySelector('.vframe').contentDocument; const imgs = [...d.images]; return { text: d.body.innerText.replace(/\\s+/g, ' ').slice(0, 120), title: d.title, scripts: d.querySelectorAll('script').length, inlinePicture: imgs[0] && imgs[0].naturalWidth, trackerLoaded: imgs[1] && imgs[1].naturalWidth, sandbox: document.querySelector('.vframe').getAttribute('sandbox'), height: document.querySelector('.vframe').offsetHeight }; })()`);

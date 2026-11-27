@@ -616,8 +616,14 @@
     const e = libEntry(state.libId);
     if (!e) return `<div class="head"><button class="btn ghost" data-nav="docs">${icon('back')}Back</button></div><div class="card empty">This has been deleted, or it's in the vault and the vault is locked.</div>`;
     const L = LIB[libKindPage(e.kind)];
-    const first = e.files.find(x => previewable(x.name));
-    const big = first ? `<div class="libbigwrap" data-action="libFileView" data-file="${esc(first.id)}" title="Click to read it">${state.libThumbs[first.id] ? `<img class="libbig" src="${state.libThumbs[first.id]}" alt="">` : `<div class="libbig ph" data-libthumb="${esc(e.id)}" data-libfile="${esc(first.id)}">${icon('file')}</div>`}</div>` : '';
+    // the file shown in the preview box: the one clicked last, or the first that can be previewed
+    state.libSel = state.libSel || {};
+    const sel = e.files.find(x => x.id === state.libSel[e.id]) || e.files.find(x => previewable(x.name)) || e.files[0];
+    const first = sel;
+    let big = '';
+    if (sel && previewable(sel.name)) big = `<div class="libbigwrap" data-action="libFileView" data-file="${esc(sel.id)}" title="Click to read it">${state.libThumbs[sel.id] ? `<img class="libbig" src="${state.libThumbs[sel.id]}" alt="">` : `<div class="libbig ph" data-libthumb="${esc(e.id)}" data-libfile="${esc(sel.id)}">${icon('file')}</div>`}</div>`;
+    else if (sel && /\.eml$/i.test(sel.name)) big = `<pre class="libtext libmsg libprevmsg" id="libMsg" data-action="libFileView" data-file="${esc(sel.id)}" title="Click to read it">Loading…</pre>`;
+    else if (sel) big = `<div class="libbig ph libnoprev" data-action="libFileView" data-file="${esc(sel.id)}" title="Click to read it">${icon(fileKind(sel.name)[1])}<span>${esc(fileKind(sel.name)[0])}: no preview picture</span></div>`;
     const row = (label, v) => v ? `<div class="lkv"><span class="k">${label}</span><span class="v">${v}</span></div>` : '';
     const today = new Date().toISOString().slice(0, 10);
     return `<div class="head"><button class="btn ghost" data-nav="${libKindPage(e.kind)}">${icon('back')}${L.title}</button><span class="spacer"></span>
@@ -628,10 +634,9 @@
     <div class="dhead libhead"><div><div class="meta">${esc(e.kind === 'document' ? e.docType : (e.folder || 'Data'))}${e.from ? ' · ' + esc(e.from) : ''}</div><h1 style="margin:2px 0 6px">${esc(e.title)}</h1>
       <div>${e.inVault ? `<span class="pill vault">${icon('lock')}Vault</span> ` : ''}${e.actBy ? (e.actDone ? `<span class="pill good">${icon('check')}Done (was due ${ukDate(e.actBy)})</span>` : `<span class="pill ${e.actBy < today ? 'bad' : 'warn'}">${icon('calendar')}Reply or act by ${ukDate(e.actBy)}</span>`) : ''}</div></div></div>
     <div class="dash"><div class="dash-main">
-      ${!big && e.files.some(x => /\.eml$/i.test(x.name)) ? `<div class="card"><h2>${icon('mail')}Message</h2><pre class="libtext libmsg" id="libMsg">Loading…</pre></div>` : ''}
-      ${big ? `<div class="card libpreview">${big}<p class="faint small" style="margin:8px 0 0">${first.name.toLowerCase().endsWith('.pdf') ? 'First page. ' : ''}Click to read it.</p></div>` : ''}
+      ${big ? `<div class="card libpreview">${big}<p class="faint small" style="margin:8px 0 0"><b>${esc(first.name)}</b>${first.name.toLowerCase().endsWith('.pdf') ? ' · first page' : ''}. ${e.files.length > 1 ? 'Click a file below to preview it here; double-click to open it.' : 'Click to read it, or double-click the file below.'}</p></div>` : ''}
       <div class="card" id="libFiles"><h2>${icon('file')}Files <span class="faint">(${e.files.length})</span></h2>
-        ${e.files.length ? `<div class="rows">${e.files.map(x => { const k = fileKind(x.name); return `<div class="rowi libfile">${icon(k[1])}<span style="flex:1;min-width:0;cursor:pointer" data-action="libFileView" data-file="${esc(x.id)}"><b class="ell">${esc(x.name)}</b><div class="meta">${k[0]} · ${fileSize(x.size || 0)} · ${(e.textByFile || {})[x.id] !== undefined ? '' : ''}<span data-textstate="${esc(x.id)}">${libTextState(e, x)}</span></div></span>
+        ${e.files.length ? `<div class="rows">${e.files.map(x => { const k = fileKind(x.name); return `<div class="rowi libfile ${x.id === sel.id ? 'on' : ''}" data-libsel="${esc(x.id)}" title="Click to preview, double-click to open">${icon(k[1])}<span style="flex:1;min-width:0"><b class="ell">${esc(x.name)}</b><div class="meta">${k[0]} · ${fileSize(x.size || 0)} · ${(e.textByFile || {})[x.id] !== undefined ? '' : ''}<span data-textstate="${esc(x.id)}">${libTextState(e, x)}</span></div></span>
           <button class="btn small primary" data-action="libFileView" data-file="${esc(x.id)}">${icon('file')}View</button>
           <span class="menuwrap"><button class="btn small" data-action="moreMenu">${icon('more')}</button><div class="menu hidden">
             <button data-action="libFileOpen" data-file="${esc(x.id)}">${icon('upload')}Open in another app</button>
@@ -663,7 +668,7 @@
       for (const x of e.files) { const el = $(`[data-textstate="${CSS.escape(x.id)}"]`); if (el) el.textContent = libTextState(e, x); }
     } catch (_) { /* deleted or locked */ }
     wireLibDrop($('#libDrop2'), (libEntry(state.libId) || {}).kind, state.libId);
-    const m = $('#libMsg'), em = libEntry(state.libId), ef = em && em.files.find(x => /\.eml$/i.test(x.name));
+    const m = $('#libMsg'), em = libEntry(state.libId), ef = m && em && em.files.find(x => x.id === m.dataset.file);
     if (m && ef) keep.libText(em.id, ef.id).then(t => { m.textContent = t && t.trim() ? t : 'The message text will appear here once OpenSafe has read the file.'; }).catch(() => { m.textContent = ''; });
     loadLibThumbs();
   }
@@ -1729,8 +1734,19 @@
     await refresh();
   });
 
+  document.addEventListener('dblclick', (e) => {
+    const row = e.target.closest('[data-libsel]');
+    if (!row || e.target.closest('[data-action], .menuwrap') || !state.libId) return;
+    libViewOpen(state.libId, row.dataset.libsel);
+  });
   document.addEventListener('click', async (e) => {
     if (e.target.closest('.menu') || !e.target.closest('.menuwrap')) $$('.menu').forEach(m => m.classList.add('hidden'));
+    const selRow = e.target.closest('[data-libsel]');
+    if (selRow && !e.target.closest('[data-action], .menuwrap') && state.libId) {
+      state.libSel = state.libSel || {};
+      if (state.libSel[state.libId] !== selRow.dataset.libsel) { state.libSel[state.libId] = selRow.dataset.libsel; const sc = $('#view').scrollTop; render(); $('#view').scrollTop = sc; }
+      return;
+    }
     const zoom = e.target.closest('[data-zoom]');
     if (zoom) { const lb = $('#lightbox'); lb.innerHTML = `<img src="${esc(zoom.dataset.zoom)}" alt="">`; lb.classList.remove('hidden'); return; }
     if (e.target.closest('#lightbox')) { $('#lightbox').classList.add('hidden'); return; }
