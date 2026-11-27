@@ -55,7 +55,7 @@ jobs:
           Get-Content "$env:RUNNER_TEMP\pdf.txt" | Write-Host
           Get-Content "$env:RUNNER_TEMP\pdf-err.txt" | Where-Object { $_ -notmatch 'legacy' } | Write-Host
           $r = Get-Content "$env:RUNNER_TEMP\pdf.txt" -Raw
-          if ($p.ExitCode -ne 0 -or $r -match 'FAIL' -or $r -notmatch 'scanned.pdf text read') { throw "PDF check failed in the built app" }
+          if ($p.ExitCode -ne 0 -or $r -match 'FAIL' -or $r -notmatch 'scanned.pdf text read' -or $r -notmatch 'msg read' -or $r -notmatch 'bundle made' -or $r -notmatch 'sync loads') { throw "PDF check failed in the built app" }
 
       - name: Publish release if this version is new (or incomplete)
         shell: bash

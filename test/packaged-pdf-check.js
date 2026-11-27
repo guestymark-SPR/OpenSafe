@@ -22,6 +22,29 @@ const F = path.join(__dirname, 'fixtures', 'library');
   }
   const t = await doctext.extractText('scanned.pdf', fs.readFileSync(path.join(F, 'scanned.pdf')));
   if (!/tariff/.test(t)) { bad++; console.log('FAIL scanned.pdf text not read'); } else console.log('ok   scanned.pdf text read');
+  // 2.9.0+: Outlook .msg emails, letter details, bundle PDFs, two-PC sync (new libraries that must be packaged)
+  try {
+    const v = await viewer.view('outlook-inline.msg', fs.readFileSync(path.join(F, 'outlook-inline.msg')));
+    const mt = await doctext.extractText('outlook-plain.msg', fs.readFileSync(path.join(F, 'outlook-plain.msg')));
+    if (v.kind !== 'email' || !v.html || !/data:image\//.test(v.html) || !mt.trim()) throw new Error('nothing read');
+    console.log('ok   msg read');
+  } catch (e) { bad++; console.log('FAIL msg', e.message); }
+  try {
+    const li = require(path.join(R, 'app.asar', 'src', 'letterinfo.js'));
+    const sg = li.suggest('Veterans UK\nDate: 14 August 2026\nOur ref: AFCS/2026/88123\nDear Mark');
+    if (sg.ref !== 'AFCS/2026/88123' || sg.docDate !== '2026-08-14') throw new Error(JSON.stringify(sg));
+    console.log('ok   letter details');
+  } catch (e) { bad++; console.log('FAIL letter details', e.message); }
+  try {
+    const bundle = require(path.join(R, 'app.asar', 'src', 'bundle.js'));
+    const files = { a: { name: 'text.pdf', buffer: fs.readFileSync(path.join(F, 'text.pdf')) }, b: { name: 'letter.png', buffer: fs.readFileSync(path.join(F, 'letter.png')) } };
+    const r = await bundle.buildBundle({ entries: [{ id: 'e', title: 'T', docDate: '2026-01-01', files: [{ id: 'a', name: 'text.pdf' }, { id: 'b', name: 'letter.png' }] }],
+      readFile: (_e, f) => files[f], renderHtml: null, viewer, contents: false, title: 'Check' });
+    if (r.pages < 2 || r.skipped.length) throw new Error(r.pages + ' pages, ' + r.skipped.join('; '));
+    const page = await viewer.pdfPage('bundle', Buffer.from(r.bytes), r.pages, 600);
+    console.log('ok   bundle made', r.pages, 'pages; last page drawn', page.length, 'bytes');
+  } catch (e) { bad++; console.log('FAIL bundle', e.message); }
+  try { require(path.join(R, 'app.asar', 'src', 'sync.js')); console.log('ok   sync loads'); } catch (e) { bad++; console.log('FAIL sync', e.message); }
   viewer.clear(); await require(path.join(R, 'app.asar', 'src', 'ocr.js')).stop();
   process.exit(bad ? 1 : 0);
 })();
