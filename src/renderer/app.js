@@ -458,6 +458,18 @@
       <p class="faint" style="margin:4px 0 0">Backups run while OpenSafe is open (and unlocked). Older ones in the folder are removed automatically.</p></div>`;
   }
 
+  function watchCard() {
+    const w = state.snap.watch || {};
+    const when = (t) => t ? new Date(t).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+    if (!w.folder) return `<div class="card tile" id="watchCard"><h2>${icon('folder')}Watch a folder</h2>
+      <p class="muted">Anything saved into a folder you choose (your scanner's folder, or a folder you save emails and downloads into) is added to OpenSafe by itself, then moved into an <b>Added to OpenSafe</b> folder inside it.</p>
+      <div class="acts"><button class="btn primary" data-action="watchChoose" data-kind="document">${icon('letter')}Watch a folder for Documents…</button><button class="btn" data-action="watchChoose" data-kind="data">${icon('folder')}For Data…</button></div></div>`;
+    return `<div class="card tile" id="watchCard"><h2>${icon('folder')}Watch a folder</h2>
+      <p style="margin:0 0 6px">${w.lastError ? `<span style="color:var(--bad)">${icon('alert')}${esc(w.lastError)}</span>` : `${icon('check')}Watching: new files go to <b>${w.kind === 'data' ? 'Data' : 'Documents'}</b>`}</p>
+      <p class="muted small" style="margin:0"><span class="mono">${esc(w.folder)}</span>${w.added ? `<br>${w.added} added so far${w.lastName ? `, last: ${esc(w.lastName)} (${esc(when(w.lastAt))})` : ''}` : ''}</p>
+      <p class="faint" style="margin:8px 0 0">Each file becomes its own ${w.kind === 'data' ? 'entry' : 'document'}. A file already in OpenSafe is just moved aside. While OpenSafe is locked or closed, files wait in the folder. This setting is for this PC only.</p>
+      <div class="acts"><button class="btn" data-action="watchChoose" data-kind="${w.kind === 'data' ? 'data' : 'document'}">Change folder…</button><button class="btn ghost" data-action="watchStop">Stop watching</button></div></div>`;
+  }
   function syncCard() {
     const y = state.snap.sync || {};
     const when = (t) => t ? new Date(t).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '';
@@ -688,6 +700,16 @@
         closeModal(); await refresh(); go('libitem', { libId: r.id }); toast('✓ Letter saved in Documents, marked as sent by you', 4500);
       } catch (ex) { $('#ltErr').textContent = ex.message; busy(f, false); }
     };
+  }
+  function icsDone(res) {
+    openModal(`<div class="dialog narrow"><div class="dh"><h2>Calendar file saved</h2></div><div class="db"><div class="s3">
+      <p style="margin-top:0">${res.count} reminder${res.count === 1 ? '' : 's'} for the next 12 months, each as an all-day event with an alert at 9am the day before.</p>
+      <p><b>Outlook:</b> File → Open &amp; Export → Import/Export → <b>Import an iCalendar (.ics) or vCalendar file</b>. In the new Outlook or Outlook on the web: Calendar → <b>Add calendar</b> → <b>Upload from file</b>.<br>
+      <b>Google Calendar:</b> on a computer, Settings → <b>Import &amp; export</b> → choose the file.<br>
+      <b>Phone:</b> email it to yourself and open the attachment.</p>
+      <p class="faint small">It's a copy of today's reminders, not a live link: save a new file when they change. Your calendar may add a second copy of events you imported before, so remove the old ones first (importing into a calendar of their own makes that easy). The names of your items and letters go into that calendar.</p>
+      <p class="mono small">${esc(res.path)}</p></div></div>
+      <div class="df"><button class="btn" data-action="close">Close</button></div></div>`);
   }
   /** A small "type a name" box (with suggestions). Resolves to the text, or null if cancelled. */
   function promptText(title, label, value = '', suggestions = []) {
@@ -1132,6 +1154,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
   // ---------- one search for everything ----------
   // ---------- Help and What's new ----------
   const NEWS = [
+    ['2.15.0', 'Getting things in, and your calendar', ['<b>Watch a folder</b> (Import & backup): files saved into it are added to Documents or Data by themselves.', '<b>Share to OpenSafe</b> on the phone: share a PDF, photo or email from another app straight into Capture.', '<b>Add to my calendar…</b> on Reminders: a calendar file for Outlook, Google Calendar or your phone.']],
     ['2.14.0', 'Write letters, hide details', ['<b>Write a reply…</b> on a letter (More menu), or <b>+ New → Letter…</b>: a properly laid-out letter with their reference and date filled in, saved as PDF and Word, marked as sent and put in the case.', '<b>Hide private details</b> in Bundle PDF: black out NI numbers, bank details, card and phone numbers, emails and any words you type, including on scanned pages.']],
     ['2.13.0', 'Cases and replies', ['<b>Cases</b>: put letters about one matter in a case and see them as a timeline, sent and received, with a Bundle PDF of the whole case.', '<b>I sent this</b>: track letters you sent; Reminders shows "No reply yet" after the date, until their reply is added to the case.', 'Filter Documents and Data by who it\'s from or to, by tag and by case; a warning when the same file is added twice.']],
     ['2.12.0', 'Help and checks', ['This page: what changed in recent versions, and a short checklist for trying the new features on your own PC and phone.']],
@@ -1153,6 +1176,9 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     ['scan', 2, 'Scan a paper letter', 'Capture → 📄 Scan a document, take one page, export, import on the PC. It should arrive in Documents as a PDF.'],
     ['room', 2, 'Scan a room (optional)', 'Capture → Scan a room, point at a TV or laptop. Draft items should appear. The first time downloads about 15 MB.'],
     ['reminder', 0, 'Reminders while closed (optional, takes a day)', 'Settings → Keep reminders running. With something due in the next 7 days, a Windows notification should appear once a day, even with OpenSafe closed.'],
+    ['reply', 2, 'Write a reply', 'Open a letter → More → <b>Write a reply…</b>, type a line and save. The PDF and Word file should be in Documents, marked "Sent by me", with their reference and date at the top.'],
+    ['hide', 2, 'Hide details in a bundle', 'Tick a letter with your NI number on it → Bundle PDF… → <b>Hide private details</b>, tick National Insurance numbers. In the PDF, the number should be blacked out.'],
+    ['share', 1, 'Share a PDF to Capture on the phone', 'In your phone\'s Files or Gmail app, share a PDF and pick <b>OpenSafe</b>. Capture should open and ask where to keep it. (Capture must be installed on the home screen; the Share option may not appear straight away after the update.)'],
     ['twopc', 3, 'Two PCs (only if you have a second PC)', 'Choose the same OneDrive folder on both under Import & backup → Two PCs. Add an item on one; once OneDrive has copied it (usually a few minutes), it should appear on the other.']
   ];
   const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (_) { return d; } };
@@ -1833,7 +1859,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     const block = (title, list, cls) => `<div class="card" style="margin-bottom:16px"><h2>${title}</h2>${list.length ? `<div class="rows">${list.map(x => `
       <div class="rowi" ${x.libraryId ? `data-action="libOpen" data-lib="${esc(x.libraryId)}"` : x.policyId ? 'data-nav="policies"' : `data-open="${x.assetId}" data-opentab="${x.source === 'item' ? 'overview' : 'service'}"`}><span class="pill ${cls}">${esc(x.kind)}</span><span style="flex:1"><b>${esc(x.assetName)}</b></span>
       <span class="meta">${ukDate(x.date)}</span><span class="nowrap" style="width:130px;text-align:right">${dueText(x.daysLeft)}</span></div>`).join('')}</div>` : '<div class="muted">None.</div>'}</div>`;
-    return `<div class="head"><h1>Reminders</h1><span class="sub">Warranties, service and MOT dates, things lent or borrowed, insurance renewals and letters to reply to, looking ${state.snap.data.settings.reminderDays} days ahead</span></div>
+    return `<div class="head"><h1>Reminders</h1><span class="sub">Warranties, service and MOT dates, things lent or borrowed, insurance renewals and letters to reply to, looking ${state.snap.data.settings.reminderDays} days ahead</span><span class="spacer"></span><button class="btn" data-action="remIcs" title="A calendar file for Outlook, Google Calendar or your phone">${icon('calendar')}Add to my calendar…</button></div>
       ${block('Overdue', over, 'bad')}${block('Coming up', soon, 'warn')}`;
   }
 
@@ -1979,6 +2005,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
         <p class="faint" style="margin:12px 0 0">Data folder: <span class="mono">${esc(state.snap.dataDir)}</span> <button class="btn small ghost" data-action="openData">Open</button></p></div>
       ${autoBackupCard()}
       ${syncCard()}
+      ${watchCard()}
     </div>`;
   }
 
@@ -2445,6 +2472,9 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
         case 'addValuation': valuationForm(a); break;
         case 'rmValuation': if (confirm('Delete this valuation from the history? The item\'s value now isn\'t changed.')) { await run(() => keep.removeValuation(a.id, act.dataset.vid), 'Deleted'); await refresh(); } break;
         case 'bcLookup': barcodeLookup(a); break;
+        case 'watchChoose': { const st = await run(() => keep.watchChoose(act.dataset.kind)); if (st) toast(`✓ Watching that folder for ${st.kind === 'data' ? 'Data' : 'Documents'}`, 4000); await refresh(); break; }
+        case 'watchStop': await run(() => keep.watchStop(), 'Stopped watching the folder'); await refresh(); break;
+        case 'remIcs': { const res = await run(() => keep.remindersIcs()); if (res) icsDone(res); break; }
         case 'newsOpen': lsSet('seenVersion', state.snap.version); go('help'); break;
         case 'newsHide': lsSet('seenVersion', state.snap.version); render(); break;
         case 'helpGuide': await run(() => keep.openGuide()); break;

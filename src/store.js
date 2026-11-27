@@ -1249,7 +1249,7 @@ class Store {
     if (!obj || obj.format !== 'opensafe-export' || !Array.isArray(obj.items)) {
       throw new Error('This file isn\'t an OpenSafe export. Export it from OpenSafe Capture on your phone or tablet.');
     }
-    if (Number(obj.version) > 4) throw new Error('This file was made by a newer version of OpenSafe Capture. Update OpenSafe on this PC and try again.');
+    if (Number(obj.version) > 5) throw new Error('This file was made by a newer version of OpenSafe Capture. Update OpenSafe on this PC and try again.');
     const res = { added: 0, updated: 0, unchanged: 0, photos: 0, documents: 0, errors: [], names: [], changes: 0, changeLines: [], skippedChanges: [] };
     const touched = new Map(); // item id -> when it was last edited before this import (null for new items)
     for (const it of obj.items.slice(0, 10000)) {

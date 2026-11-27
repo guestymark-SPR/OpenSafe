@@ -7,10 +7,24 @@ async function importPhoneDocuments(store, obj) {
   const docs = Array.isArray(obj && obj.documents) ? obj.documents.slice(0, 500) : [];
   if (!docs.length) return out;
   const { PDFDocument } = require('pdf-lib');
-  const known = new Set(store.libraryView('document').map(e => e.phoneId).filter(Boolean));
+  const known = new Set(store.libraryView().map(e => e.phoneId).filter(Boolean));
   for (const d of docs) {
     const title = String((d && d.title) || 'Scanned document').slice(0, 200);
     try {
+      if (d && Array.isArray(d.files) && d.files.length) { // files shared to Capture from other apps (export version 5)
+        if (known.has(String(d.id))) { out.skipped++; continue; }
+        const kind = d.kind === 'data' ? 'data' : 'document';
+        const e = store.saveLibraryEntry({ kind, title, docType: d.docType, from: d.from, docDate: d.docDate, ref: d.ref, notes: d.notes, folder: kind === 'data' ? 'From phone' : '', source: 'phone', phoneId: String(d.id) });
+        let n = 0;
+        for (const f of d.files.slice(0, 50)) {
+          const buf = Buffer.from(String(f.data || ''), 'base64');
+          try { store.addLibraryFile(e.id, String(f.name || 'file').slice(0, 200), buf); n++; } catch (err) { out.errors.push(`${title}: ${err.message}`); }
+        }
+        if (!n) { store.deleteLibraryEntry(e.id); store.purgeLibraryEntry(e.id); continue; }
+        known.add(String(d.id));
+        out.added++;
+        continue;
+      }
       if (!d || !d.id || !Array.isArray(d.pages) || !d.pages.length) throw new Error('no pages');
       if (known.has(String(d.id))) { out.skipped++; continue; }
       const pdf = await PDFDocument.create();

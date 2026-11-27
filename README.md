@@ -119,6 +119,8 @@ Emails, Word files and saved web pages are shown with scripts switched off. Use 
 
 **Filters:** besides Type (or Folder) and Sort, Documents and Data can be filtered by **From / to**, **Tag**, **Case** and **Sent** (sent by me, or waiting for a reply). Each filter appears once there's something to choose.
 
+**Watch a folder:** **Import & backup → Watch a folder** takes anything saved into a folder you choose (your scanner's folder, or one you save emails and downloads into) and adds it to Documents (each file its own document) or Data, once the file has finished saving. Each file is then moved into an **Added to OpenSafe** folder inside it; a file that's already kept is just moved. Temporary files (such as unfinished downloads) are left alone, and while OpenSafe is locked or closed, files wait. The folder is set per PC.
+
 **Same file twice:** adding a file that's already kept (exactly the same file, in Documents or Data, or in the vault while it's unlocked) asks first: **Skip those** or **Add anyway**.
 
 **Bundle PDF:** tick letters (or Data entries) and choose **Bundle PDF…** (also on right-click and a document's **More** menu) to get one PDF for an MP, a solicitor, a tribunal or an appeal. They go in by the date on each one (oldest or newest first; undated ones last), with a contents page at the front (date, who from, title, reference and the pages each one is on) and *Page 3 of 40* on every page. PDFs and photos go in as they are; emails (.eml and .msg), Word and Excel files are turned into pages. Pictures from the internet in emails are never loaded. Anything that can't go in a PDF (such as videos) is listed on the contents page as not included. **Hide private details** (in the same window) blacks out what you tick (National Insurance numbers, bank sort codes and account numbers, card numbers, phone numbers, email addresses) and any words you type, such as names. Words are found in each page's text or, on scanned pages, by reading the page on this PC. Every page is then redrawn as a picture, so hidden details can't be copied out of the PDF; your own copies aren't changed. It tells you what it hid. Always check the PDF before sending: things can be missed, especially handwriting or faint scans. Typed words aren't saved.
@@ -128,6 +130,10 @@ Emails, Word files and saved web pages are shown with scripts switched off. Use 
 **Reply or act by:** give a letter a date to reply by and it shows in **Reminders** until you tick **Done**.
 
 **Privacy:** with password protection on, the files and the words read from them are encrypted like everything else. **More → Move into the vault** puts a whole document or entry behind the vault PIN; while the vault is locked it's hidden and left out of search. Deleted documents and data stay in their own bin for 30 days. Backups include them.
+
+## Reminders in your calendar
+
+**Reminders → Add to my calendar…** saves a calendar file (.ics) of the next 12 months' reminders (warranties, MOT, tax and service dates, things due back, insurance renewals, letters to reply to or waiting for a reply), each as an all-day event with an alert at 9am the day before. Import it into Outlook (File → Open & Export → Import/Export → *Import an iCalendar (.ics) or vCalendar file*, or in the new Outlook and on the web, **Add calendar → Upload from file**) or Google Calendar (Settings → **Import & export**). It's a copy, not a live link: save a new one when reminders change, removing the old events first if your calendar keeps copies. The names of your items and letters go into that calendar.
 
 ## Two PCs
 
@@ -228,6 +234,7 @@ On the PC, go to **Phone app → Send your inventory to the phone**, choose a pa
 - **Encryption:** the file is encrypted with AES-256-GCM using a key from your passphrase (PBKDF2-SHA256, 310,000 rounds). You enter the passphrase once per file: after that the phone keeps the unlock key in the app's storage (as a non-extractable Web Crypto key; the passphrase itself isn't stored), so it opens straight away. **⋮ → Lock inventory** removes the key so it asks again. Anyone who can unlock your phone and open Capture can see the inventory, so keep a screen lock on the phone.
 - **Read-only:** it's a copy with small photos and the main details. Make a new file whenever you want the phone up to date. Vault items are left out unless you tick **Include vault items** while the vault is open.
 - **Labels:** **Scan label** (or the phone's camera app) opens the item a QR label belongs to.
+- **Share to OpenSafe:** with Capture installed on the home screen, a PDF, photo, email or other file can be shared to it from another app (Files, Gmail, a banking app…). Capture asks for a title and whether it's a document or Data, keeps it, and sends it with your next **Export to PC** as it is (needs OpenSafe 2.15 or later on the PC). The Share option may not appear straight away after Capture updates.
 - **Documents:** letters and files you marked **Keep a copy on my phone** on the PC are under **📄 Documents**, as page pictures (pinch to zoom), searchable by title, sender, reference and the words in them. An item's page lists the documents linked to it. Each page makes the file bigger; OpenSafe shows the file size when it saves it.
 
 Camera scanning uses the browser's BarcodeDetector, which Chrome on Android supports. If a browser lacks it, type the number in.
@@ -288,6 +295,8 @@ src/letterinfo.js   Suggests who a letter is from, its date and reference
 src/sync.js         Keeps two PCs in step through a shared folder
 src/letter.js       Letters you write (A4 page and Word file)
 src/redact.js       Hides private details in Bundle PDFs
+src/ics.js          Reminders as a calendar file
+src/watcher.js      Watches a folder for new files
 src/bundle.js       Bundle PDF: chosen documents in date order with a contents page and page numbers
 src/renderer/       Desktop UI (plain HTML/CSS/JS)
 src/phone/          Phone page for the Wi-Fi link

@@ -37,6 +37,7 @@ let phone = null;
 let pendingImport = null; // a .opensafe file opened while OpenSafe was locked
 let sync = null;          // keeping two PCs in step (src/sync.js)
 let syncTimer = null, syncPushTimer = null, syncAsking = false;
+let watcher = null;       // a watched folder (src/watcher.js)
 const OPEN_DIR = path.join(os.tmpdir(), 'OpenSafe-open'); // decrypted copies of documents you open
 const MIME = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif', '.pdf': 'application/pdf' };
 
@@ -301,6 +302,17 @@ async function init() {
   if (startFile) pendingImport = startFile;
   if (!store.isLocked()) { if (win) win.webContents.once('did-finish-load', () => setTimeout(afterUnlock, 1500)); else setTimeout(afterUnlock, 1500); }
 
+  watcher = new FolderWatch(path.join(DATA_DIR, 'watch.json'), {
+    canTake: () => !!store.data,
+    onFile: async (name, buf, kind) => {
+      if (store.findLibraryFiles([buf])[0]) return 'duplicate'; // already kept: just move it aside
+      const r = await addLibraryBuffers(kind, [{ name, buf }], '', { folder: kind === 'data' ? 'Watched folder' : '' });
+      if (!r.added) throw new Error(r.errors.join('; ') || 'not added');
+      return 'added';
+    },
+    onChange: (taken) => { const n = taken.filter(t => t.how === 'added').length; if (n && win && !win.isDestroyed()) win.webContents.send('toast', `Added ${n} file${n === 1 ? '' : 's'} from the watched folder`); notifyChanged(); }
+  });
+  watcher.start();
   if (sync.enabled()) {
     syncTimer = setInterval(() => syncTick().catch(() => {}), 90 * 1000);
     if (startPlan && (startPlan.action === 'conflict' || startPlan.action === 'first')) setTimeout(() => askSync(startPlan).catch(() => {}), 2500);
@@ -353,6 +365,8 @@ const viewer = require('./viewer');
 const bundle = require('./bundle');
 const redact = require('./redact');
 const letter = require('./letter');
+const ics = require('./ics');
+const { FolderWatch } = require('./watcher');
 const { Sync } = require('./sync');
 /** Turn a page of HTML into an A4 PDF, with scripts off and nothing loaded from the internet. */
 async function renderHtmlToPdf(html) {
@@ -528,10 +542,12 @@ function snapshot() {
   data.library = store.libraryView();
   data.libBin = store.libraryBinView();
   data.libCases = store.libraryCases();
+  const watch = watcher ? watcher.status() : null;
   data.libReplies = store.replyStatus();
   return {
     data,
     sync: sync ? sync.status() : null,
+    watch,
     security: store.securityState(),
     theme: readPrefs().theme || 'system',
     summary: store.summary(),
@@ -766,6 +782,27 @@ function registerIpc() {
     sync.afterLoad();
     if (!syncTimer) syncTimer = setInterval(() => syncTick().catch(() => {}), 90 * 1000);
     return syncTick({ quiet: false });
+  });
+  h('watch:status', () => watcher.status());
+  h('watch:stop', () => { const st = watcher.set(''); notifyChanged(); return st; });
+  h('watch:choose', async (kind) => {
+    const r = await dialog.showOpenDialog(win, { title: 'Choose a folder to watch (new files in it are added to OpenSafe)', properties: ['openDirectory', 'createDirectory'] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    const f = r.filePaths[0];
+    const inside = (c, p) => { const r = path.relative(p, c); return !r || (!r.startsWith('..') && !path.isAbsolute(r)); };
+    if (inside(f, DATA_DIR) || inside(DATA_DIR, f)) throw new Error('Choose a folder outside OpenSafe\'s own data folder.');
+    const st = watcher.set(f, kind);
+    notifyChanged();
+    return st;
+  });
+  h('reminders:ics', async () => {
+    const list = store.reminders(new Date(), 366).filter(r => r.daysLeft >= 0);
+    if (!list.length) throw new Error('There are no reminders in the next 12 months.');
+    const r = await dialog.showSaveDialog(win, { title: 'Save calendar file', defaultPath: path.join(app.getPath('documents'), `OpenSafe reminders ${new Date().toISOString().slice(0, 10)}.ics`), filters: [{ name: 'Calendar', extensions: ['ics'] }] });
+    if (r.canceled || !r.filePath) return null;
+    const out = ics.build(list);
+    fs.writeFileSync(r.filePath, out.text, 'utf8');
+    return { path: r.filePath, count: out.count };
   });
   // ---- letters you write ----
   h('letter:draft', (replyToId) => {
@@ -1340,6 +1377,7 @@ app.on('window-all-closed', async () => {
   if (phone) await phone.stop();
   await ocr.stop();
   try { if (sync && sync.enabled() && sync.cfg.dirty && sync.plan().action === 'push') sync.push(); } catch (_) { /* tried again next time */ }
+  if (watcher) watcher.stop();
   if (store) store.lock();
   cleanOpenDir();
   app.quit();

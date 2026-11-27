@@ -9,6 +9,7 @@
   const FORMAT_VERSION_CHANGES = 2;  // items plus changes from scanning labels (needs OpenSafe 1.6 or later)
   const FORMAT_VERSION_FILES = 3;    // changes that carry photos or receipts (needs OpenSafe 1.8 or later)
   const FORMAT_VERSION_DOCS = 4;     // scanned documents (needs OpenSafe 2.6 or later)
+  const FORMAT_VERSION_SHARED = 5;   // files shared to Capture from other apps (needs OpenSafe 2.15 or later)
   const DEFAULT_CATS = ['Vehicles', 'Electronics', 'Computers & Phones', 'Tools', 'Camping & Outdoor', 'Motorbike Gear', 'Marine', 'Furniture', 'Appliances', 'Jewellery & Watches', 'Sports & Hobbies', 'Clothing', 'Other'];
   const DEFAULT_LOCS = ['Home', 'Garage', 'Car', 'Storage', 'Boat'];
   const FIELDS = ['name', 'category', 'location', 'brand', 'model', 'serial', 'barcode', 'webLink', 'condition', 'purchasePrice', 'currentValue', 'purchaseDate', 'warrantyExpiry', 'supplier', 'notes', 'tags'];
@@ -157,7 +158,8 @@
     $('docsBox').classList.toggle('hidden', !docs.length);
     $('docList').replaceChildren(...docs.map(d => {
       const el = document.createElement('div'); el.className = 'item'; el.dataset.doc = d.id;
-      el.innerHTML = `${d.pages[0] ? `<img src="${blobUrl(d.pages[0].blob)}" alt="">` : '<div class="ph">📄</div>'}<div class="t"><div class="n">${esc(d.title)}</div><div class="m">${esc([d.docType, d.from].filter(Boolean).join(' · ')) || '&nbsp;'}</div><div class="m">${d.pages.length} page${d.pages.length === 1 ? '' : 's'}</div></div>${d.exportedAt ? '<span class="pill done">Exported</span>' : '<span class="pill">New</span>'}`;
+      const fl = d.files || [], pic = d.pages[0] ? d.pages[0].blob : (fl.find(f => /^image\/(jpeg|png|webp|gif)/.test(f.type)) || {}).blob;
+      el.innerHTML = `${pic ? `<img src="${blobUrl(pic)}" alt="">` : `<div class="ph">${fl.length ? '📎' : '📄'}</div>`}<div class="t"><div class="n">${esc(d.title)}</div><div class="m">${esc(fl.length ? (d.kind === 'data' ? 'Data' : 'Document') + ' · shared from another app' : [d.docType, d.from].filter(Boolean).join(' · ')) || '&nbsp;'}</div><div class="m">${fl.length ? `${fl.length} file${fl.length === 1 ? '' : 's'}` : `${d.pages.length} page${d.pages.length === 1 ? '' : 's'}`}</div></div>${d.exportedAt ? '<span class="pill done">Exported</span>' : '<span class="pill">New</span>'}`;
       return el;
     }));
     $('changes').classList.toggle('hidden', !updates.length);
@@ -266,12 +268,13 @@
 
   async function buildExport(list, ups, dlist = []) {
     const hasFiles = ups.some(u => (u.photos && u.photos.length) || (u.documents && u.documents.length));
-    const out = { format: FORMAT, version: dlist.length ? FORMAT_VERSION_DOCS : hasFiles ? FORMAT_VERSION_FILES : ups.length ? FORMAT_VERSION_CHANGES : FORMAT_VERSION, app: 'OpenSafe Capture', exportedAt: new Date().toISOString(), device: navigator.userAgent.slice(0, 200), items: [] };
+    const out = { format: FORMAT, version: dlist.some(d => d.files && d.files.length) ? FORMAT_VERSION_SHARED : dlist.length ? FORMAT_VERSION_DOCS : hasFiles ? FORMAT_VERSION_FILES : ups.length ? FORMAT_VERSION_CHANGES : FORMAT_VERSION, app: 'OpenSafe Capture', exportedAt: new Date().toISOString(), device: navigator.userAgent.slice(0, 200), items: [] };
     if (dlist.length) {
       out.documents = [];
       for (const d of dlist) {
         const x = { id: d.id, createdAt: d.createdAt, title: d.title, docType: d.docType, from: d.from, docDate: d.docDate, ref: d.ref, actBy: d.actBy, notes: d.notes, pages: [] };
         for (const p of d.pages) x.pages.push({ type: 'image/jpeg', data: await blobToBase64(p.blob) });
+        if (d.files && d.files.length) { x.kind = d.kind; x.files = []; for (const f of d.files) x.files.push({ name: f.name, type: f.type, data: await blobToBase64(f.blob) }); }
         out.documents.push(x);
       }
     }
@@ -317,7 +320,7 @@
       : canShareFile(base + '.opensafe.txt', 'text/plain') ? [base + '.opensafe.txt', 'text/plain'] : null;
     const what = [list.length && `${list.length} item${list.length === 1 ? '' : 's'}`, ups.length && `${ups.length} change${ups.length === 1 ? '' : 's'}`, dlist.length && `${dlist.length} document${dlist.length === 1 ? '' : 's'}`].filter(Boolean).join(', ').replace(/, ([^,]*)$/, ' and $1');
     sheet(`<h2>Export ${what}</h2>
-      <p class="muted">One file with everything, photos included (${mb}).</p>${dlist.length ? '<p class="muted small">Scanned documents need OpenSafe 2.6 or later on the PC.</p>' : ''}${ups.length ? `<p class="muted small">Changes from scanning labels need OpenSafe ${ups.some(u => (u.photos && u.photos.length) || (u.documents && u.documents.length)) ? '1.8' : '1.6'} or later on the PC.</p>` : ''}
+      <p class="muted">One file with everything, photos included (${mb}).</p>${dlist.length ? `<p class="muted small">${dlist.some(d => d.files && d.files.length) ? 'Files shared from other apps need OpenSafe 2.15 or later on the PC.' : 'Scanned documents need OpenSafe 2.6 or later on the PC.'}</p>` : ''}${ups.length ? `<p class="muted small">Changes from scanning labels need OpenSafe ${ups.some(u => (u.photos && u.photos.length) || (u.documents && u.documents.length)) ? '1.8' : '1.6'} or later on the PC.</p>` : ''}
       ${shareName ? '<button class="btn primary" data-act="share">Send to PC…</button><p class="muted" style="margin-top:-4px">Pick Quick Share, Bluetooth, email, Google Drive or OneDrive.</p>' : ''}
       <button class="btn ${shareName ? '' : 'primary'}" data-act="download">Save to Downloads</button>
       <p class="muted">Then on your PC, double-click the file, or in OpenSafe choose <b>Phone app → Import from phone…</b>.</p>
@@ -1399,6 +1402,13 @@
   }
   async function docOpen(id) {
     const d = docs.find(x => x.id === id); if (!d) return;
+    if (d.files && d.files.length) { // shared from another app: kept as they are
+      dscan = { doc: d, editing: true };
+      sheet(`<h2>📎 ${esc(d.title)}</h2><ul class="stocklist">${d.files.map(f => `<li>${esc(f.name)}<small>${esc(sizeText(f.blob.size))}</small></li>`).join('')}</ul>
+        <p class="muted small">${d.exportedAt ? `Exported to the PC on ${ukDate(d.exportedAt.slice(0, 10))}. You can delete the phone's copy to free up space.` : `Goes to ${d.kind === 'data' ? 'Data' : 'Documents'} on the PC with your next export.`}</p>
+        <button class="btn danger" data-act="docDelete">Delete from this phone</button><button class="btn" data-act="closeSheet">Close</button>`);
+      return;
+    }
     dscan = { doc: Object.assign({}, d, { pages: d.pages.slice() }), editing: true };
     if (d.exportedAt) {
       sheet(`<h2>📄 ${esc(d.title)}</h2><div class="docpages">${d.pages.map((p, i) => `<div class="docpage"><img src="${blobUrl(p.blob)}" alt="Page ${i + 1}"><span class="pn">${i + 1}</span></div>`).join('')}</div>
@@ -1480,7 +1490,9 @@
       case 'docRotate': adj.rotate = (adj.rotate + 1) % 4; $('docAdjMsg').textContent = `The finished page will be turned ${adj.rotate * 90}° clockwise.`; break;
       case 'docRetake': { const cam = adj.fromCamera; $('docAdjust').classList.add('hidden'); adj = { mode: adj.mode }; if (cam) docCamera(); else docNextPicked(); break; }
       case 'docUse': docUsePage(); break;
-      case 'docDelete': if (dscan && confirm('Delete this scanned document from the phone?')) { await delDoc(dscan.doc.id); dscan = null; closeSheet(); renderList(); toast('Deleted'); } break;
+      case 'sharedSave': sharedSave().catch(ex => toast('Couldn\'t save: ' + (ex.message || ex), 6000)); break;
+      case 'sharedDrop': if (sharedNow) { await sharedForget(sharedNow); sharedNow = null; } closeSheet(); showShared(); break;
+      case 'docDelete': if (dscan && confirm('Delete this document from the phone?')) { await delDoc(dscan.doc.id); dscan = null; closeSheet(); renderList(); toast('Deleted'); } break;
       case 'roomAgain': closeSheet(); roomScan(room ? room.place : '').catch(ex => { roomStop(); toast(ex.message || String(ex), 5000); }); break;
       case 'roomDone': roomFinish(); break;
       case 'roomCancel': roomStop(); room = null; break;
@@ -1539,5 +1551,51 @@
   wireAdjustHandles();
   window.addEventListener('resize', () => { if (adj && adj.canvas && !$('docAdjust').classList.contains('hidden')) docDrawAdjust(); });
 
-  autoOpen().finally(() => { showHome(); openFromHash(); });
+  // ---------- files shared to Capture from another app ----------
+  const sizeText = (n) => n < 1048576 ? Math.max(1, Math.round(n / 1024)) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
+  async function sharedWaiting() {
+    if (!('caches' in window)) return [];
+    const c = await caches.open('opensafe-shared'), keys = await c.keys(), groups = new Map();
+    for (const k of keys) {
+      const m = new URL(k.url).pathname.match(/\/shared\/([^/]+)\/(\d+)$/); if (!m) continue;
+      const res = await c.match(k); if (!res) continue;
+      const blob = await res.blob();
+      if (!groups.has(m[1])) groups.set(m[1], { id: m[1], at: res.headers.get('X-At') || '', files: [], keys: [] });
+      const g = groups.get(m[1]);
+      g.files[+m[2]] = { name: decodeURIComponent(res.headers.get('X-Name') || 'file'), type: blob.type || res.headers.get('Content-Type') || '', blob };
+      g.keys.push(k);
+    }
+    return [...groups.values()].map(g => Object.assign(g, { files: g.files.filter(Boolean) })).filter(g => g.files.length);
+  }
+  async function sharedForget(g) { const c = await caches.open('opensafe-shared'); for (const k of g.keys) await c.delete(k); }
+  let sharedNow = null;
+  async function showShared() {
+    const waiting = await sharedWaiting().catch(() => []);
+    if (location.search.includes('shared=')) history.replaceState(null, '', location.pathname + location.hash);
+    if (!waiting.length) return false;
+    const g = sharedNow = waiting[0];
+    const first = g.files[0].name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ');
+    const looksData = g.files.every(f => /\.(eml|msg|xlsx?|csv|docx?|txt)$/i.test(f.name) || /^(text\/|message\/)/.test(f.type));
+    sheet(`<h2>📎 Shared to OpenSafe</h2>
+      <ul class="stocklist">${g.files.map(f => `<li>${esc(f.name)}<small>${esc(sizeText(f.blob.size))}</small></li>`).join('')}</ul>
+      <label>Title<input id="shTitle" value="${esc(g.files.length === 1 ? first : first + ' and ' + (g.files.length - 1) + ' more')}" maxlength="200"></label>
+      <label>Keep in<select id="shKind"><option value="document" ${looksData ? '' : 'selected'}>Documents (letters and papers)${g.files.length > 1 ? ', as one document' : ''}</option><option value="data" ${looksData ? 'selected' : ''}>Data (emails and other files)</option></select></label>
+      <p class="muted small">Kept on this phone until your next <b>Export to PC</b>. The files go across as they are.</p>
+      <button class="btn primary" data-act="sharedSave">Save</button><button class="btn" data-act="sharedDrop">Don't keep</button>`);
+    return true;
+  }
+  async function sharedSave() {
+    const g = sharedNow; if (!g) return;
+    const kind = $('shKind').value === 'data' ? 'data' : 'document';
+    const title = ($('shTitle').value || '').trim() || g.files[0].name;
+    const list = kind === 'data' && g.files.length > 1 ? g.files.map(f => [f.name.replace(/\.[^.]+$/, ''), [f]]) : [[title, g.files]];
+    const now = new Date().toISOString();
+    for (const [t, fs] of list) await putDoc({ id: uid(), createdAt: now, kind, title: t, docType: kind === 'document' ? 'Letter' : '', pages: [], files: fs.map(f => ({ name: f.name, type: f.type, blob: f.blob })) });
+    await sharedForget(g); sharedNow = null;
+    closeSheet(); await renderList();
+    toast(`✓ Saved. It goes to ${kind === 'data' ? 'Data' : 'Documents'} on the PC with your next export.`, 4000);
+    showShared();
+  }
+
+  autoOpen().finally(async () => { showHome(); openFromHash(); await showShared(); });
 })();
