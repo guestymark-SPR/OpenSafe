@@ -6,7 +6,7 @@
 // Run:          ELECTRON_RUN_AS_NODE=1 /tmp/pkgtest/linux-unpacked/opensafe test/packaged-pdf-check.js /tmp/pkgtest/linux-unpacked/resources
 const fs = require('fs');
 const path = require('path');
-const R = process.argv[2];
+const R = path.resolve(process.argv[2]);
 const viewer = require(path.join(R, 'app.asar', 'src', 'viewer.js'));
 const doctext = require(path.join(R, 'app.asar', 'src', 'doctext.js'));
 const F = path.join(__dirname, 'fixtures', 'library');
