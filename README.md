@@ -73,7 +73,7 @@ On an item's page, **Edit** and **Log service** are always shown; less-used acti
 - **Password protection and vault:** AES-256 encryption of everything, a recovery key, and a PIN-protected vault for sensitive items and files.
 - **Backups:** a copy of your item list every day, kept for 30 days, plus a full backup (with photos and documents) to any folder or USB stick, and restore.
 - **OpenSafe Capture:** an offline phone and tablet app for adding items with photos, imported on the PC from one file.
-- **Inventory on your phone:** a read-only, passphrase-encrypted copy of your PC inventory you can search on your phone.
+- **Inventory on your phone:** a read-only, passphrase-encrypted copy of your PC inventory you can search on your phone, with any documents you choose (see Documents and Data).
 - **QR labels:** print A4 sheets of 21 labels (63.5 × 38.1 mm, Avery L7160 size). Scanning a label on the phone opens that item. Print one label from an item's page with **More → Print QR label…**.
 - **Scan a label to update an item:** in Capture, tap **Scan an item's QR label** to move it, lend it (with the person's phone or email and a due-back date), mark it returned, needing repair, in repair, repaired, sold, lost or got rid of, or add a note. The changes go to the PC in your next export.
 - **Scan a room:** in Capture, point the camera round a room and it recognises everyday things (TVs, laptops, sofas, fridges, bikes and more) and makes a draft item for each, with photos. Runs on the phone, offline after a one-time download.
@@ -108,6 +108,10 @@ It can't read old .doc/.xls files, handwriting or videos; those are stored but o
 Emails, Word files and saved web pages are shown with scripts switched off. Use **Open in another app** to edit, print or see the exact layout. Old .doc files can't be shown inside OpenSafe yet; they open in Word.
 
 **Details filled in for you:** after reading a letter, OpenSafe looks for who it's from, the date on it and a reference number, and offers them in a bar at the top of the document (**Use these** or **No thanks**). It only offers details for empty boxes, never changes anything without you, and can be wrong, so check them.
+
+**Bundle PDF:** tick letters (or Data entries) and choose **Bundle PDF…** (also on right-click and a document's **More** menu) to get one PDF for an MP, a solicitor, a tribunal or an appeal. They go in by the date on each one (oldest or newest first; undated ones last), with a contents page at the front (date, who from, title, reference and the pages each one is on) and *Page 3 of 40* on every page. PDFs and photos go in as they are; emails (.eml and .msg), Word and Excel files are turned into pages. Pictures from the internet in emails are never loaded. Anything that can't go in a PDF (such as videos) is listed on the contents page as not included.
+
+**Documents on your phone:** right-click a document or Data entry (or tick several and use **Move to ▾**, or a document's **More** menu) → **Keep a copy on my phone**. The next time you use **Phone app → Save inventory for phone**, they go in the same encrypted file, as page pictures, so they can be read offline in Capture under **My inventory → 📄 Documents**, searched by the words in them, and opened from a linked item. Up to 40 pages per document and 300 in all, as they were when the file was saved. Vault entries only go when the vault is unlocked and **Include vault items** is ticked.
 
 **Reply or act by:** give a letter a date to reply by and it shows in **Reminders** until you tick **Done**.
 
@@ -196,11 +200,12 @@ How it works: it uses Google's free [MediaPipe](https://developers.google.com/ed
 
 ### Your inventory on the phone
 
-On the PC, go to **Import Files → See your inventory on your phone**, choose a passphrase (at least 6 characters) and click **Save inventory for phone…**. Send the `.opensafe-view` file to the phone the same way as an export, then in Capture open **My inventory**, load the file and enter the passphrase.
+On the PC, go to **Phone app → Send your inventory to the phone**, choose a passphrase (at least 6 characters) and click **Save inventory for phone…**. Send the `.opensafe-view` file to the phone the same way as an export, then in Capture open **My inventory**, load the file and enter the passphrase.
 
 - **Encryption:** the file is encrypted with AES-256-GCM using a key from your passphrase (PBKDF2-SHA256, 310,000 rounds). You enter the passphrase once per file: after that the phone keeps the unlock key in the app's storage (as a non-extractable Web Crypto key; the passphrase itself isn't stored), so it opens straight away. **⋮ → Lock inventory** removes the key so it asks again. Anyone who can unlock your phone and open Capture can see the inventory, so keep a screen lock on the phone.
 - **Read-only:** it's a copy with small photos and the main details. Make a new file whenever you want the phone up to date. Vault items are left out unless you tick **Include vault items** while the vault is open.
 - **Labels:** **Scan label** (or the phone's camera app) opens the item a QR label belongs to.
+- **Documents:** letters and files you marked **Keep a copy on my phone** on the PC are under **📄 Documents**, as page pictures (pinch to zoom), searchable by title, sender, reference and the words in them. An item's page lists the documents linked to it. Each page makes the file bigger; OpenSafe shows the file size when it saves it.
 
 Camera scanning uses the browser's BarcodeDetector, which Chrome on Android supports. If a browser lacks it, type the number in.
 
@@ -257,6 +262,7 @@ src/doctext.js      Reads the words in PDFs, Office files, emails and pictures (
 src/phonedocs.js    Turns scanned documents from the phone into PDFs
 src/viewer.js       Shows PDFs, emails, Word and Excel files inside OpenSafe
 src/letterinfo.js   Suggests who a letter is from, its date and reference
+src/bundle.js       Bundle PDF: chosen documents in date order with a contents page and page numbers
 src/renderer/       Desktop UI (plain HTML/CSS/JS)
 src/phone/          Phone page for the Wi-Fi link
 mobile/             OpenSafe Capture phone/tablet app (published to GitHub Pages)

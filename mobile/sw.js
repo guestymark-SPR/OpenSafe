@@ -1,6 +1,6 @@
 'use strict';
 // Offline support: keep the app's own files cached. Item data lives in IndexedDB, not here.
-const CACHE = 'opensafe-capture-v15';
+const CACHE = 'opensafe-capture-v16';
 // The room-scan engine is large (about 15 MB) and only fetched when first used. It lives in its own
 // cache, kept across app updates, so it isn't downloaded again each time the app changes.
 const ENGINE_CACHE = 'opensafe-detector-1.2.3';

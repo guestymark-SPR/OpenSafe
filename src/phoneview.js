@@ -32,7 +32,7 @@ function decryptView(text, passphrase) { // used by tests; the phone does the sa
 /**
  * Build the read-only inventory. makeThumb(buffer, ext) returns a small JPEG data URL (or null).
  */
-function buildView(store, { includeVault = false, makeThumb }) {
+function buildView(store, { includeVault = false, makeThumb, docs = null }) {
   const assets = store.allAssets().filter(a => includeVault || !store.isVaultAsset(a));
   const policies = store.data.policies || [];
   const items = assets.map(a => {
@@ -55,7 +55,52 @@ function buildView(store, { includeVault = false, makeThumb }) {
     items: t.items.filter(i => ids.has(i.assetId)).map(i => ({ id: i.assetId, packed: !!i.packed, back: !!i.back })),
     extras: t.extras.map(x => ({ id: x.id, text: x.text, packed: !!x.packed, back: !!x.back }))
   }));
-  return { exportedAt: new Date().toISOString(), count: items.length, items, trips };
+  const out = { exportedAt: new Date().toISOString(), count: items.length, items, trips };
+  if (docs && docs.length) out.docs = docs.map(d => Object.assign({}, d, { assetIds: (d.assetIds || []).filter(id => ids.has(id)) }));
+  return out;
 }
 
-module.exports = { encryptView, decryptView, buildView, itemLink, placeLink, CAPTURE_URL, ITERATIONS };
+const LIMITS = { pagesPerDoc: 40, pages: 300, width: 1100, text: 30000 };
+const extOf = (f) => (String(f).match(/\.[a-z0-9]+$/i) || [''])[0].toLowerCase();
+/**
+ * Documents and Data entries marked "on my phone", as page pictures the phone can show offline
+ * (the phone has no PDF or Word reader of its own), plus their details and words for searching.
+ * tools: { pdfPages(buffer, max) -> [jpeg Buffer], imageJpeg(buffer, name) -> jpeg Buffer | null,
+ *          htmlToPdf(html) -> PDF bytes, fileHtml(name, buffer) -> html | null }
+ */
+async function buildDocs(store, entries, tools, limits = LIMITS) {
+  const docs = [], skipped = [];
+  let total = 0;
+  const data = (b) => 'data:image/jpeg;base64,' + Buffer.from(b).toString('base64');
+  for (const e of entries) {
+    const d = { id: e.id, kind: e.kind, title: e.title, docType: e.docType, from: e.from, docDate: e.docDate, ref: e.ref, folder: e.folder,
+      actBy: e.actDone ? '' : e.actBy, notes: e.notes, tags: e.tags, assetIds: e.assetIds || [], files: [], pages: [], missing: [] };
+    d.text = Object.values(e.text || {}).join('\n').replace(/[ \t]+/g, ' ').slice(0, limits.text);
+    for (const f of e.files) {
+      d.files.push(f.name);
+      const room = Math.min(limits.pagesPerDoc - d.pages.length, limits.pages - total);
+      if (room <= 0) { d.missing.push(`${f.name} (too many pages for the phone copy)`); continue; }
+      try {
+        const buf = store.readAttachment(e.id, f.file), ext = extOf(f.name);
+        let pics = [];
+        if (ext === '.pdf') pics = await tools.pdfPages(buf, room);
+        else {
+          const one = ['.jpg', '.jpeg', '.png'].includes(ext) ? tools.imageJpeg(buf, f.name) : null;
+          if (one) pics = [one];
+          else {
+            const html = await tools.fileHtml(f.name, buf);
+            if (!html) { d.missing.push(`${f.name} (can't be shown on the phone)`); continue; }
+            pics = await tools.pdfPages(Buffer.from(await tools.htmlToPdf(html)), room);
+          }
+        }
+        if (!pics.length) { d.missing.push(`${f.name} (nothing to show)`); continue; }
+        d.pages.push(...pics.slice(0, room).map(data)); total += Math.min(pics.length, room);
+      } catch (err) { d.missing.push(`${f.name} (${err.code === 'VAULT_LOCKED' ? 'in the locked vault' : 'couldn\'t be read'})`); }
+    }
+    for (const m of d.missing) skipped.push(`${e.title}: ${m}`);
+    docs.push(d);
+  }
+  return { docs, skipped, pages: total };
+}
+
+module.exports = { buildDocs, LIMITS,  encryptView, decryptView, buildView, itemLink, placeLink, CAPTURE_URL, ITERATIONS };

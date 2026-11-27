@@ -231,6 +231,31 @@
     };
   }
 
+  /** Bundle PDF: the chosen letters in date order with a contents page and page numbers. */
+  function bundleForm(ids) {
+    const entries = ids.map(libEntry).filter(Boolean);
+    if (!entries.length) return toast('Tick the documents to put in the bundle first.');
+    const files = entries.reduce((n, e) => n + e.files.length, 0);
+    const undated = entries.filter(e => !e.docDate).length;
+    const dates = entries.map(e => e.docDate).filter(Boolean).sort();
+    openModal(`<form class="dialog narrow" id="bundleForm"><div class="dh"><h2>Bundle PDF</h2></div>
+      <div class="db"><p class="s3 muted" style="margin:0">One PDF of <b>${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}</b> (${files} file${files === 1 ? '' : 's'})${dates.length ? `, dated ${ukDate(dates[0])}${dates.length > 1 && dates[0] !== dates[dates.length - 1] ? ` to ${ukDate(dates[dates.length - 1])}` : ''}` : ''}, for sending to an MP, a solicitor, a tribunal or an appeal. PDFs and photos go in as they are; emails, Word and Excel files are turned into pages.</p>
+        <label class="f s3">Title<input name="title" maxlength="120" value="Bundle of documents" required></label>
+        <label class="f s3">Order<select name="order"><option value="oldest">By the date on each one, oldest first</option><option value="newest">By the date on each one, newest first</option></select></label>
+        <label class="switch s3" style="font-weight:500;display:flex;gap:10px"><input type="checkbox" name="contents" checked> Contents page at the front (date, who from, title, reference, page numbers)</label>
+        <label class="switch s3" style="font-weight:500;display:flex;gap:10px"><input type="checkbox" name="numbers" checked> Page numbers on every page (“Page 3 of 40”)</label>
+        ${undated ? `<p class="s3 note" style="margin:0">${undated === 1 ? '1 entry has' : undated + ' entries have'} no date, so ${undated === 1 ? 'it goes' : 'they go'} at the end. Add the date on the letter with <b>Edit details</b> to put ${undated === 1 ? 'it' : 'them'} in order.</p>` : ''}
+        <div class="err" id="bundleErr"></div></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Save bundle PDF…</button></div></form>`);
+    $('#bundleForm').onsubmit = async (ev) => {
+      ev.preventDefault();
+      const f = ev.target, el = f.elements, opts = { title: el.title.value, order: el.order.value, contents: el.contents.checked, numbers: el.numbers.checked };
+      busy(f, true, 'Building PDF…');
+      try { const r = await keep.libBundle(entries.map(e => e.id), opts); if (r) { closeModal(); toast(`✓ Bundle saved: ${r.documents} ${r.documents === 1 ? 'entry' : 'entries'}, ${r.pages} pages`, 4500); } else busy(f, false); }
+      catch (ex) { $('#bundleErr').textContent = ex.message; busy(f, false); }
+    };
+  }
+
   function bulkForm(ids) {
     const d = state.snap.data, L = state.snap.lists;
     const pols = d.policies || [];
@@ -575,7 +600,7 @@
         const hit = state.libHits && state.libHits.get(e.id);
         const due = e.actBy && !e.actDone ? `<span class="pill ${e.actBy < new Date().toISOString().slice(0, 10) ? 'bad' : 'warn'}">${icon('calendar')}Reply by ${ukDate(e.actBy)}</span>` : '';
         return `<tr data-action="libOpen" data-lib="${esc(e.id)}" draggable="true" class="${state.libPick.has(e.id) ? 'sel' : ''}"><td><input type="checkbox" data-action="libSelBox" data-lib="${esc(e.id)}" ${state.libPick.has(e.id) ? 'checked' : ''} aria-label="Select"></td><td>${libThumb(e)}</td>
-          <td><b>${esc(e.title)}</b> ${e.inVault ? `<span class="pill vault">${icon('lock')}Vault</span>` : ''} ${due}
+          <td><b>${esc(e.title)}</b> ${e.inVault ? `<span class="pill vault">${icon('lock')}Vault</span>` : ''} ${e.onPhone ? `<span class="pill" title="A copy goes in the inventory file for your phone">${icon('phone')}Phone</span>` : ''} ${due}
             ${e.ref ? `<div class="meta">Ref ${esc(e.ref)}</div>` : ''}${hit ? `<div class="meta snippet">…${esc(hit)}…</div>` : ''}</td>
           <td class="meta">${kind === 'document' ? esc(e.docType) : e.folder ? esc(e.folder) : `<span class="faint">${esc(fileKind((e.files[0] || { name: '' }).name)[0])}</span>`}</td>
           <td class="meta">${esc(e.from || '')}</td>
@@ -633,10 +658,12 @@
     return `<div class="head"><button class="btn ghost" data-nav="${libKindPage(e.kind)}">${icon('back')}${L.title}</button><span class="spacer"></span>
       <span class="menuwrap"><button class="btn" data-action="moreMenu">${icon('more')}More</button><div class="menu hidden">
         ${state.snap.security.vault.unlocked ? `<button data-action="libVault" data-to="${e.inVault ? '' : '1'}">${icon(e.inVault ? 'unlock' : 'lock')}${e.inVault ? 'Move out of the vault' : 'Move into the vault'}</button>` : state.snap.security.vault.exists ? '' : ''}
+        <button data-action="libOnPhone" data-ids="${esc(JSON.stringify([e.id]))}" data-on="${e.onPhone ? '' : '1'}">${icon('phone')}${e.onPhone ? 'Take off my phone' : 'Keep a copy on my phone'}</button>
+        <button data-action="libBundle" data-ids="${esc(JSON.stringify([e.id]))}">${icon('printer')}Make a PDF with contents page…</button>
         <button data-action="libDel" class="danger">${icon('trash')}Delete</button></div></span>
       <button class="btn primary" data-action="libEdit">${icon('edit')}Edit details</button></div>
     <div class="dhead libhead"><div><div class="meta">${esc(e.kind === 'document' ? e.docType : (e.folder || 'Data'))}${e.from ? ' · ' + esc(e.from) : ''}</div><h1 style="margin:2px 0 6px">${esc(e.title)}</h1>
-      <div>${e.inVault ? `<span class="pill vault">${icon('lock')}Vault</span> ` : ''}${e.actBy ? (e.actDone ? `<span class="pill good">${icon('check')}Done (was due ${ukDate(e.actBy)})</span>` : `<span class="pill ${e.actBy < today ? 'bad' : 'warn'}">${icon('calendar')}Reply or act by ${ukDate(e.actBy)}</span>`) : ''}</div></div></div>
+      <div>${e.inVault ? `<span class="pill vault">${icon('lock')}Vault</span> ` : ''}${e.onPhone ? `<span class="pill">${icon('phone')}On my phone</span> ` : ''}${e.actBy ? (e.actDone ? `<span class="pill good">${icon('check')}Done (was due ${ukDate(e.actBy)})</span>` : `<span class="pill ${e.actBy < today ? 'bad' : 'warn'}">${icon('calendar')}Reply or act by ${ukDate(e.actBy)}</span>`) : ''}</div></div></div>
     ${e.suggest && Object.keys(e.suggest).length ? `<div class="sugbar">${icon('search')}<span><b>OpenSafe read this letter.</b> Suggested: ${[e.suggest.from && `from <b>${esc(e.suggest.from)}</b>`, e.suggest.docDate && `dated <b>${ukDate(e.suggest.docDate)}</b>`, e.suggest.ref && `reference <b>${esc(e.suggest.ref)}</b>`].filter(Boolean).join(', ')}.</span><span class="spacer"></span><button class="btn small primary" data-action="libSugUse">${icon('check')}Use these</button><button class="btn small ghost" data-action="libSugNo">No thanks</button></div>` : ''}
     <div class="libgrid"><div class="libleft">
       <div class="card" id="libFiles"><h2>${icon('file')}Files <span class="faint">(${e.files.length})</span></h2>
@@ -737,6 +764,8 @@
       case 'libSugUse': if (e) { await run(() => keep.libSuggestion(e.id, true), '✓ Details filled in. Change them any time with Edit details.'); await refresh(); } return true;
       case 'libSugNo': if (e) { await run(() => keep.libSuggestion(e.id, false)); await refresh(); } return true;
       case 'libSelClear': state.libPick.clear(); refreshLibList(); return true;
+      case 'libOnPhone': { const ids = JSON.parse(act.dataset.ids), on = !!act.dataset.on; const ok = await run(() => keep.libOnPhone(ids, on), on ? `✓ ${ids.length === 1 ? 'It goes' : 'They go'} on your phone next time you use Phone app → Save inventory for phone` : 'Taken off the phone copy (next time you save it)'); if (ok !== undefined) await refresh(); return true; }
+      case 'libBundle': bundleForm(act.dataset.ids ? JSON.parse(act.dataset.ids) : [...(state.libPick || [])]); return true;
       case 'libMoveTo': { const ids = JSON.parse(act.dataset.ids), to = { kind: act.dataset.kind }; if (act.dataset.folder !== undefined) to.folder = act.dataset.folder; await libMoveIds(ids, to, to.kind === 'document' ? 'Documents' : to.folder ? 'Data › ' + to.folder : 'Data'); return true; }
       case 'libMoveNewFolder': newFolderForm(JSON.parse(act.dataset.ids)); return true;
       case 'libLinkPick': linkPick(act.dataset.ids ? JSON.parse(act.dataset.ids) : [state.libId]); return true;
@@ -764,6 +793,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
       ...libFolders().map(f => ({ label: 'Data › ' + f, action: 'libMoveTo', icon: 'folder', data: { ids: data, kind: 'data', folder: f } })),
       { label: 'New Data folder…', action: 'libMoveNewFolder', icon: 'plus', data: { ids: data } },
       '-', { label: 'Link to an item…', action: 'libLinkPick', icon: 'box', data: { ids: data } },
+      ids.every(id => (libEntry(id) || {}).onPhone) ? { label: 'Take off my phone', action: 'libOnPhone', icon: 'phone', data: { ids: data, on: '' } } : { label: 'Keep a copy on my phone', action: 'libOnPhone', icon: 'phone', data: { ids: data, on: '1' } },
       unlocked && { label: inV ? 'Move out of the vault' : 'Move into the vault', action: 'libVaultMany', icon: inV ? 'unlock' : 'lock', data: { ids: data, to: inV ? '' : '1' } }];
   }
   function libSelBar(kind) {
@@ -772,6 +802,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     const ids = [...state.libPick];
     return `<div class="selbar"><b>${n} selected</b>${dd('Move to', libMoveItems(ids), { cls: 'btn primary small', iconName: 'folder', align: 'left', scroll: true })}
       <button class="btn small" data-action="libLinkPick" data-ids="${esc(JSON.stringify(ids))}">${icon('box')}Link to an item…</button>
+      <button class="btn small" data-action="libBundle" data-ids="${esc(JSON.stringify(ids))}">${icon('printer')}Bundle PDF…</button>
       <button class="btn small danger" data-action="libDelMany">${icon('trash')}Delete…</button><button class="btn small" data-action="libSelClear">Clear selection</button></div>`;
   }
   /** A searchable list to choose from: rows [{ id, title, sub, thumb }]. */
@@ -847,7 +878,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
       items = [{ label: 'View', action: 'libFileView', icon: 'file', data: { file: f } }, { label: 'Open in another app', action: 'libFileOpen', icon: 'upload', data: { file: f } }, { label: 'Save a copy…', action: 'libFileCopy', icon: 'download', data: { file: f } }, { label: 'Show the words found', action: 'libFileText', icon: 'search', data: { file: f } }, '-', { label: 'Remove this file', action: 'libFileRemove', icon: 'trash', danger: true, data: { file: f } }];
     } else if (libRow) {
       const id = libRow.dataset.lib, ids = state.libPick && state.libPick.has(id) && state.libPick.size > 1 ? [...state.libPick] : [id];
-      items = [ids.length === 1 && { label: 'Open', action: 'libOpen', icon: 'file', data: { lib: id } }, ...libMoveItems(ids), '-', { label: ids.length > 1 ? `Delete ${ids.length}…` : 'Delete…', action: 'libDelMany', icon: 'trash', danger: true, data: { ids: JSON.stringify(ids) } }];
+      items = [ids.length === 1 && { label: 'Open', action: 'libOpen', icon: 'file', data: { lib: id } }, ...libMoveItems(ids), '-', { label: ids.length > 1 ? `Bundle PDF of ${ids.length}…` : 'Make a PDF with contents page…', action: 'libBundle', icon: 'printer', data: { ids: JSON.stringify(ids) } }, '-', { label: ids.length > 1 ? `Delete ${ids.length}…` : 'Delete…', action: 'libDelMany', icon: 'trash', danger: true, data: { ids: JSON.stringify(ids) } }];
     } else if (itemEl && asset(itemEl.dataset.open)) {
       const a = asset(itemEl.dataset.open), ids = state.sel.has(a.id) && state.sel.size > 1 ? [...state.sel] : [a.id];
       items = ids.length > 1
@@ -1589,6 +1620,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
         <p class="faint" style="margin:10px 0 0">Importing the same file twice is safe: nothing is added twice.</p></div>
       <div class="card tile" style="grid-column:1/-1"><h2>${icon('upload')}Send your inventory to the phone</h2>
         <p class="muted">A read-only, encrypted copy of your items with small photos, packing lists and the grab list, to search on the phone or open by scanning a QR label. You'll enter the passphrase once on the phone.</p>
+        ${(() => { const n = (state.snap.data.library || []).filter(e => e.onPhone).length; return `<p class="muted" style="margin-top:0">${icon('letter')}${n ? `<b>${n} document${n === 1 ? '' : 's'}</b> from Documents and Data go${n === 1 ? 'es' : ''} too, as page pictures you can read offline.` : 'No documents go with it yet.'} To add one, right-click it in Documents or Data → <b>Keep a copy on my phone</b>.</p>`; })()}
         <div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap">
           <label class="f" style="min-width:260px">Passphrase (at least 6 characters)<input id="pvPass" type="password" autocomplete="new-password"></label>
           ${state.snap.security.vault.unlocked ? '<label class="switch" style="font-weight:500"><input type="checkbox" id="pvVault"> Include vault items</label>' : ''}
@@ -2172,7 +2204,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
           const pass = $('#pvPass').value;
           if (pass.length < 6) { toast('Use a passphrase of at least 6 characters'); break; }
           act.disabled = true; act.textContent = 'Preparing…';
-          try { const r = await run(() => keep.phoneView(pass, $('#pvVault') && $('#pvVault').checked)); if (r) toast(`✓ Saved ${r.count} items (${r.kb} KB). Send that file to your phone.`, 5000); } catch (_) {}
+          try { const r = await run(() => keep.phoneView(pass, $('#pvVault') && $('#pvVault').checked)); if (r) toast(`✓ Saved ${r.count} items${r.docs ? ` and ${r.docs} document${r.docs === 1 ? '' : 's'} (${r.pages} pages)` : ''} (${r.kb >= 2048 ? (r.kb / 1024).toFixed(1) + ' MB' : r.kb + ' KB'}). Send that file to your phone.`, 6000); } catch (_) {}
           act.disabled = false; act.textContent = 'Save inventory for phone…'; $('#pvPass').value = ''; break;
         }
         case 'claimOne': claimForm([a.id]); break;

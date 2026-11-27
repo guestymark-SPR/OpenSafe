@@ -502,6 +502,7 @@ class Store {
     e.assetIds = (Array.isArray(get('assetIds')) ? get('assetIds') : []).map(x => cleanString(x, 80)).filter(Boolean).slice(0, 200);
     if (existing && LIBRARY_DOC_TYPES.includes(existing.prevDocType)) e.prevDocType = existing.prevDocType;
     if (existing && existing.suggestDone) e.suggestDone = true;
+    if (get('onPhone') === true) e.onPhone = true; // a copy goes in the inventory file for the phone
     if (existing && existing.suggest && typeof existing.suggest === 'object') { // drop suggestions for details now filled in
       const sg = {}; for (const k of ['from', 'docDate', 'ref']) if (existing.suggest[k] && !e[k]) sg[k] = String(existing.suggest[k]).slice(0, 200);
       if (Object.keys(sg).length) e.suggest = sg;
@@ -699,6 +700,18 @@ class Store {
     return n;
   }
   /** Folders used in Data, for suggestions. */
+  /** Mark entries to go (or stop going) in the inventory file for the phone. */
+  setLibraryOnPhone(ids, on) {
+    let n = 0;
+    for (const id of ids) { const { e } = this._libFind(id); if (on) e.onPhone = true; else delete e.onPhone; n++; }
+    this.save();
+    return n;
+  }
+  /** Entries marked for the phone (vault ones only when asked and the vault is open). */
+  phoneLibraryEntries(includeVault) {
+    const { normal, vault } = this._libLists();
+    return [...normal, ...(includeVault && vault ? vault : [])].filter(e => e.onPhone);
+  }
   libraryFolders() { const s = new Set(); for (const e of this.libraryView('data')) if (e.folder) s.add(e.folder); return [...s].sort((a, b) => a.localeCompare(b)); }
 
   // ---------- words in item receipts, manuals and other documents (for search) ----------

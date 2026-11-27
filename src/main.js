@@ -262,6 +262,21 @@ async function importFromPath(file) {
 const doctext = require('./doctext');
 const phonedocs = require('./phonedocs');
 const viewer = require('./viewer');
+const bundle = require('./bundle');
+/** Turn a page of HTML into an A4 PDF, with scripts off and nothing loaded from the internet. */
+async function renderHtmlToPdf(html) {
+  fs.mkdirSync(OPEN_DIR, { recursive: true });
+  const tmp = path.join(OPEN_DIR, `page-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.html`);
+  fs.writeFileSync(tmp, html, 'utf8');
+  const { session } = require('electron');
+  const ses = session.fromPartition('opensafe-print');
+  if (!ses.__opensafeBlock) { ses.__opensafeBlock = true; ses.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !/^(file|data):/i.test(d.url) })); }
+  const pw = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, javascript: false, session: ses } });
+  try {
+    await pw.loadFile(tmp);
+    return await pw.webContents.printToPDF({ pageSize: 'A4', printBackground: true, margins: { marginType: 'default' } });
+  } finally { pw.destroy(); fs.rm(tmp, () => {}); }
+}
 const LIB_MAX = 500 * 1024 * 1024; // per file
 const libNote = (e) => { libChanged(); return e; };
 async function libPdfPreview(buffer) {
@@ -626,6 +641,31 @@ function registerIpc() {
     return r.filePath;
   });
   h('lib:readNow', () => { readSoon(); return true; });
+  // Bundle PDF: chosen entries in date order, with a contents page and page numbers
+  h('lib:onPhone', (ids, on) => libNote(store.setLibraryOnPhone((Array.isArray(ids) ? ids : [ids]).map(String), !!on)));
+  h('lib:bundle', async (ids, opts) => {
+    ids = (Array.isArray(ids) ? ids : []).map(String);
+    if (!ids.length) throw new Error('Tick the documents to put in the bundle first.');
+    opts = opts || {};
+    const title = String(opts.title || '').trim().slice(0, 120) || 'Bundle';
+    const entries = ids.map(id => store.getLibraryEntry(id));
+    const r = await dialog.showSaveDialog(win, {
+      title: 'Save bundle PDF',
+      defaultPath: path.join(app.getPath('documents'), `${title.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Bundle'} ${new Date().toISOString().slice(0, 10)}.pdf`),
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    });
+    if (r.canceled || !r.filePath) return null;
+    const result = await bundle.buildBundle({
+      entries, viewer, title,
+      order: opts.order === 'newest' ? 'newest' : 'oldest', contents: opts.contents !== false, numbers: opts.numbers !== false,
+      readFile: (id, fileId) => store.readLibraryFile(id, fileId),
+      renderHtml: renderHtmlToPdf
+    });
+    fs.writeFileSync(r.filePath, result.bytes);
+    if (result.skipped.length) dialog.showMessageBox(win, { type: 'warning', title: 'Bundle PDF', message: 'Bundle saved, but some files weren\'t included', detail: result.skipped.join('\n') });
+    shell.openPath(r.filePath);
+    return { path: r.filePath, pages: result.pages, documents: result.documents, skipped: result.skipped };
+  });
   h('policy:save', (p) => store.savePolicy(p));
   h('policy:delete', async (id) => {
     const p = store.data.policies.find(x => x.id === id);
@@ -921,7 +961,26 @@ function registerIpc() {
       const small = width > height ? img.resize({ width: Math.min(360, width), quality: 'good' }) : img.resize({ height: Math.min(360, height), quality: 'good' });
       return 'data:image/jpeg;base64,' + small.toJPEG(72).toString('base64');
     };
-    const view = phoneview.buildView(store, { includeVault: !!includeVault && store.vaultUnlocked(), makeThumb });
+    const withVault = !!includeVault && store.vaultUnlocked();
+    const marked = store.phoneLibraryEntries(withVault);
+    const pd = marked.length ? await phoneview.buildDocs(store, marked, {
+      pdfPages: async (buf, max) => {
+        const key = 'phone-' + crypto.randomBytes(6).toString('hex');
+        const n = Math.min(max, (await viewer.view('x.pdf', buf)).pages.length), out = [];
+        for (let i = 1; i <= n; i++) out.push(nativeImage.createFromBuffer(await viewer.pdfPage(key, buf, i, phoneview.LIMITS.width)).toJPEG(68));
+        return out;
+      },
+      imageJpeg: (buf) => {
+        const img = nativeImage.createFromBuffer(buf);
+        if (img.isEmpty()) return null;
+        const { width, height } = img.getSize(), max = 1600;
+        const small = Math.max(width, height) > max ? (width > height ? img.resize({ width: max, quality: 'good' }) : img.resize({ height: max, quality: 'good' })) : img;
+        return small.toJPEG(72);
+      },
+      htmlToPdf: renderHtmlToPdf,
+      fileHtml: (name, buf) => bundle.fileHtml(name, buf, viewer)
+    }) : { docs: [], skipped: [], pages: 0 };
+    const view = phoneview.buildView(store, { includeVault: withVault, makeThumb, docs: pd.docs });
     const text = phoneview.encryptView(view, String(passphrase || ''));
     const r = await dialog.showSaveDialog(win, {
       title: 'Save inventory for your phone',
@@ -931,7 +990,8 @@ function registerIpc() {
     if (r.canceled || !r.filePath) return null;
     fs.writeFileSync(r.filePath, text, 'utf8');
     shell.showItemInFolder(r.filePath);
-    return { path: r.filePath, count: view.count, kb: Math.round(text.length / 1024) };
+    if (pd.skipped.length) dialog.showMessageBox(win, { type: 'warning', title: 'Inventory for your phone', message: 'Saved, but some files weren\'t included', detail: pd.skipped.join('\n') });
+    return { path: r.filePath, count: view.count, docs: pd.docs.length, pages: pd.pages, kb: Math.round(text.length / 1024) };
   });
 
   h('export:labels', async (ids, opts) => {

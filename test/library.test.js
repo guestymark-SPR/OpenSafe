@@ -238,3 +238,37 @@ test('words in item receipts are searched, kept out of the item data, and move w
   s.moveItemToVault(a.id, false);
   assert.strictEqual(s.data.docText[r.id].includes('556677'), true);
 });
+
+test('documents marked for the phone: kept on edit, vault only when asked, page limits', async () => {
+  const pv = require('../src/phoneview');
+  const s = tmpStore();
+  const a = s.saveLibraryEntry({ kind: 'document', title: 'Award', from: 'Veterans UK', docDate: '2026-08-14' });
+  s.addLibraryFile(a.id, 'one.pdf', Buffer.from('%PDF-1.4 fake'));
+  s.addLibraryFile(a.id, 'two.png', Buffer.from('png'));
+  s.addLibraryFile(a.id, 'clip.mp4', Buffer.from('video'));
+  const b = s.saveLibraryEntry({ kind: 'data', title: 'Not marked' });
+  assert.strictEqual(s.setLibraryOnPhone([a.id], true), 1);
+  s.saveLibraryEntry({ id: a.id, title: 'Award letter' }); // editing details keeps the mark
+  assert.deepStrictEqual(s.phoneLibraryEntries(false).map(e => e.title), ['Award letter']);
+  s.setLibraryText(a.id, s.getLibraryEntry(a.id).files[0].id, 'tariff level 8');
+  const tools = { pdfPages: async (buf, max) => Array.from({ length: Math.min(max, 5) }, () => Buffer.from('jpg')), imageJpeg: () => Buffer.from('jpg'), fileHtml: async () => null, htmlToPdf: async () => Buffer.alloc(0) };
+  const r = await pv.buildDocs(s, s.phoneLibraryEntries(false), tools, Object.assign({}, pv.LIMITS, { pagesPerDoc: 4 }));
+  assert.strictEqual(r.docs.length, 1);
+  assert.strictEqual(r.docs[0].pages.length, 4, 'no more than the per-document limit');
+  assert.ok(r.docs[0].pages[0].startsWith('data:image/jpeg;base64,'));
+  assert.match(r.docs[0].text, /tariff level 8/);
+  assert.deepStrictEqual(r.docs[0].missing, ['two.png (too many pages for the phone copy)', 'clip.mp4 (too many pages for the phone copy)']);
+  const r2 = await pv.buildDocs(s, s.phoneLibraryEntries(false), tools);
+  assert.strictEqual(r2.pages, 6); assert.deepStrictEqual(r2.skipped, ['Award letter: clip.mp4 (can\'t be shown on the phone)']);
+  // the view carries them, with links only to items that are in it
+  const view = pv.buildView(s, { docs: [Object.assign({}, r2.docs[0], { assetIds: ['gone'] })] });
+  assert.deepStrictEqual(view.docs[0].assetIds, []);
+  assert.strictEqual(pv.buildView(s, {}).docs, undefined, 'no docs field when none are marked');
+  s.setLibraryOnPhone([a.id], false);
+  assert.strictEqual(s.phoneLibraryEntries(false).length, 0);
+  // vault entries only go when asked
+  await s.enableEncryption(PW); await s.setupVault('2468');
+  s.setLibraryOnPhone([b.id], true); s.moveLibraryToVault(b.id, true);
+  assert.strictEqual(s.phoneLibraryEntries(false).length, 0);
+  assert.strictEqual(s.phoneLibraryEntries(true).length, 1);
+});

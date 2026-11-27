@@ -436,6 +436,8 @@
     $('grabChip').classList.toggle('on', grabOnly);
     $('grabChip').classList.toggle('hidden', !inv.items.some(a => a.grab));
     $('tripsChip').classList.toggle('hidden', !(inv.trips && inv.trips.length));
+    $('docsChip').classList.toggle('hidden', !(inv.docs && inv.docs.length));
+    $('docsChip').textContent = `📄 Documents${inv.docs && inv.docs.length ? ` (${inv.docs.length})` : ''}`;
     const list = inv.items.filter(a => (!grabOnly || a.grab) && (!q || [a.name, a.brand, a.model, a.serial, a.category, a.location, a.barcode, (a.details || {}).reg, (a.tags || []).join(' ')].join(' ').toLowerCase().includes(q)));
     if (grabOnly) list.sort((x, y) => (x.location || '~').localeCompare(y.location || '~') || x.name.localeCompare(y.name));
     $('invMeta').textContent = `${inv.count} items · copied from the PC on ${new Date(inv.exportedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
@@ -464,6 +466,7 @@
       ${/^https?:\/\//i.test(a.webLink || '') ? `<p><a class="weblink" href="${esc(a.webLink)}" target="_blank" rel="noopener noreferrer">🔗 ${esc(a.webLink.replace(/^https?:\/\/(www\.)?/, '').slice(0, 60))}</a></p>` : ''}
       ${a.notes ? `<p style="white-space:pre-wrap">${esc(a.notes)}</p>` : ''}
       ${updates.filter(u => u.itemId === a.id && !u.exportedAt).map(u => `<div class="waiting">⏳ Waiting to export: ${esc(u.summary)}</div>`).join('')}
+      ${(() => { const ld = (inv.docs || []).filter(x => (x.assetIds || []).includes(a.id)); return ld.length ? `<h3 class="stockh">📄 Linked documents</h3><ul class="stocklist">${ld.map(x => `<li data-act="doc" data-id="${x.id}">${esc(x.title)}<small>${esc([x.from, ukDate(x.docDate)].filter(Boolean).join(' · '))}</small></li>`).join('')}</ul>` : ''; })()}
       <p class="muted small">${a.photos} photo${a.photos === 1 ? '' : 's'} and ${a.documents} document${a.documents === 1 ? '' : 's'} on the PC.</p>
       <button class="btn primary" data-act="itemActions" data-id="${a.id}">Move, lend or report a problem…</button>
       <button class="btn" data-act="closeSheet">Close</button></div>`);
@@ -807,6 +810,38 @@
     t[key] = cur;
     await kvSet('tripTicks', all);
   }
+  // ---------- documents sent from the PC (page pictures, read-only) ----------
+  let docQ = '';
+  function showDocs(q) {
+    if (q !== undefined) docQ = q;
+    const docs = (inv && inv.docs) || [];
+    const words = docQ.toLowerCase().split(/\s+/).filter(Boolean);
+    const hay = (d) => [d.title, d.docType, d.from, d.ref, d.folder, d.notes, (d.tags || []).join(' '), d.files.join(' '), d.text].join(' ').toLowerCase();
+    const list = docs.filter(d => words.every(w => hay(d).includes(w))).sort((a, b) => (b.docDate || '').localeCompare(a.docDate || ''));
+    const snip = (d) => { const w = words.find(x => (d.text || '').toLowerCase().includes(x)); if (!w) return ''; const i = d.text.toLowerCase().indexOf(w); return '…' + d.text.slice(Math.max(0, i - 40), i + w.length + 50).replace(/\s+/g, ' ') + '…'; };
+    sheet(`<h2>📄 Documents</h2>
+      <input type="search" id="docQ" placeholder="Search titles, senders and the words in them" value="${esc(docQ)}" style="width:100%;margin:4px 0 8px">
+      ${list.length ? `<ul class="stocklist">${list.map(d => `<li data-act="doc" data-id="${d.id}">${esc(d.title)}<small>${esc([d.kind === 'document' ? d.docType : (d.folder || 'Data'), d.from, ukDate(d.docDate), d.ref ? 'Ref ' + d.ref : ''].filter(Boolean).join(' · '))}</small>${words.length && snip(d) ? `<small>${esc(snip(d))}</small>` : ''}</li>`).join('')}</ul>` : `<p class="muted">${docs.length ? 'Nothing matches.' : 'No documents in this inventory file.'}</p>`}
+      <p class="muted small">Copies chosen on the PC (right-click a document → Keep a copy on my phone), as they were when the file was saved.</p>
+      <button class="btn" data-act="closeSheet">Close</button>`);
+    const box = $('docQ');
+    box.oninput = () => { const pos = box.selectionStart; showDocs(box.value); const b = $('docQ'); b.focus(); b.setSelectionRange(pos, pos); };
+  }
+  function showDoc(id) {
+    const d = inv && (inv.docs || []).find(x => x.id === id);
+    if (!d) return toast('That document isn\'t in the inventory on this phone.');
+    const rows = [['Type', d.kind === 'document' ? d.docType : (d.folder || 'Data')], ['From', d.from], ['Date on it', ukDate(d.docDate)], ['Reference', d.ref], ['Reply or act by', ukDate(d.actBy)]].filter(([, v]) => v);
+    const items = (d.assetIds || []).map(x => inv.items.find(a => a.id === x)).filter(Boolean);
+    sheet(`<div class="detail"><h2>${esc(d.title)}</h2>
+      <div class="kv">${rows.map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${esc(v)}</div></div>`).join('')}</div>
+      ${d.notes ? `<p style="white-space:pre-wrap">${esc(d.notes)}</p>` : ''}
+      ${items.length ? `<p class="small">Linked to: ${items.map(a => `<a href="#" data-act="invItemOpen" data-id="${a.id}">${esc(a.name)}</a>`).join(', ')}</p>` : ''}
+      <div class="readpages">${d.pages.map((src, i) => `<img src="${src}" alt="Page ${i + 1}" loading="lazy">`).join('')}</div>
+      ${d.pages.length ? `<p class="muted small">${d.pages.length} page${d.pages.length === 1 ? '' : 's'}. Pinch to zoom.</p>` : '<p class="muted">No pages to show for this one.</p>'}
+      ${d.missing && d.missing.length ? `<p class="muted small">Not in the phone copy: ${d.missing.map(esc).join(', ')}</p>` : ''}
+      <button class="btn" data-act="docs">← All documents</button><button class="btn" data-act="closeSheet">Close</button></div>`);
+  }
+
   function showTrips() {
     const trips = (inv && inv.trips) || [];
     sheet(`<h2>⛺ Packing lists</h2>${trips.length ? `<ul class="stocklist">${trips.map(t => `<li data-act="trip" data-id="${t.id}">${esc(t.name)}<small>${t.items.length + t.extras.length} things${t.startDate ? ' · ' + ukDate(t.startDate) : ''}</small></li>`).join('')}</ul>` : '<p class="muted">No packing lists in this inventory file. Make one on the PC, then save a new inventory file.</p>'}
@@ -1424,6 +1459,9 @@
       case 'placeShow': showPlace(a.dataset.place); break;
       case 'grabFilter': grabOnly = !grabOnly; renderInv(); break;
       case 'trips': showTrips(); break;
+      case 'docs': showDocs(''); break;
+      case 'doc': showDoc(a.dataset.id); break;
+      case 'invItemOpen': e.preventDefault(); showInvItem(a.dataset.id); break;
       case 'trip': showTrip(a.dataset.id, 'packed'); break;
       case 'tripMode': showTrip(a.dataset.id, a.dataset.mode); break;
       case 'tripScan': tripScan(a.dataset.id); break;
