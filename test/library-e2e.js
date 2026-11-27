@@ -77,7 +77,7 @@ app.on('browser-window-created', (_e, win) => {
 
       // ---- a document's page
       await js(`[...document.querySelectorAll('#libList tbody tr')].find(r => r.innerText.includes('AFCS award')).click()`); await wait(2500);
-      R.docPage = await js(`document.querySelector('.libhead').innerText.replace(/\\s+/g, ' ') + ' || ' + document.querySelector('.dash-side').innerText.replace(/\\s+/g, ' ')`);
+      R.docPage = await js(`document.querySelector('.libhead').innerText.replace(/\\s+/g, ' ') + ' || ' + document.querySelector('.libleft > .card:last-child').innerText.replace(/\\s+/g, ' ')`);
       R.docPreview = await js(`(document.querySelector('img.libbig') || {}).naturalWidth || 0`);
       R.fileState = await js(`document.querySelector('[data-textstate]').innerText`);
       await shot('l5-doc-page');
@@ -154,7 +154,7 @@ app.on('browser-window-created', (_e, win) => {
       await shot('l8-data-dark');
       await js(`[...document.querySelectorAll('#libList tbody tr')].find(r => r.innerText.includes('Booking')).click()`); await wait(1500);
       await shot('l9-email-dark');
-      R.emailPage = await js(`document.querySelector('.dash-side').innerText.replace(/\\s+/g, ' ')`);
+      R.emailPage = await js(`document.querySelector('.libleft > .card:last-child').innerText.replace(/\\s+/g, ' ')`);
     } catch (e) { R.fatal = e.stack; }
     fs.writeFileSync(path.join(OUT, 'result.json'), JSON.stringify(R, null, 2));
     app.exit(0);
