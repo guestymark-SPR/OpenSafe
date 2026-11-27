@@ -87,6 +87,15 @@ Adding: **Add document…** or **Add files…**, or drag files onto the page. In
 
 It can't read Outlook .msg files, old .doc/.xls files, handwriting or videos; those are stored but only their details can be searched. Reading is automatic, so a poor photo can give mistakes. **Show the words found** on a file shows what was read.
 
+**Reading files inside OpenSafe:** click **View** on a file (or its preview) to read it without leaving OpenSafe:
+- **PDFs:** every page, with zoom;
+- **emails (.eml):** the formatted message with its pictures, who it's from and to, and its attachments (open, save a copy, or **Keep in Data**). Pictures from the internet are never loaded, because they can tell the sender you opened the email. Links ask before opening in your browser;
+- **Word (.docx):** headings, lists, tables and pictures, without the exact page layout;
+- **Excel (.xlsx):** each sheet as a table (first 1,000 rows);
+- **photos**, and the text of other readable files.
+
+Emails, Word files and saved web pages are shown with scripts switched off. Use **Open in another app** to edit, print or see the exact layout. Outlook .msg emails and old .doc files can't be shown inside OpenSafe yet; they open in Outlook or Word.
+
 **Reply or act by:** give a letter a date to reply by and it shows in **Reminders** until you tick **Done**.
 
 **Privacy:** with password protection on, the files and the words read from them are encrypted like everything else. **More → Move into the vault** puts a whole document or entry behind the vault PIN; while the vault is locked it's hidden and left out of search. Deleted documents and data stay in their own bin for 30 days. Backups include them.
@@ -233,6 +242,7 @@ src/phoneServer.js  Wi-Fi phone link (token-protected local web server)
 src/report.js       Insurance/inventory PDF layout
 src/doctext.js      Reads the words in PDFs, Office files, emails and pictures (for Documents and Data search)
 src/phonedocs.js    Turns scanned documents from the phone into PDFs
+src/viewer.js       Shows PDFs, emails, Word and Excel files inside OpenSafe
 src/renderer/       Desktop UI (plain HTML/CSS/JS)
 src/phone/          Phone page for the Wi-Fi link
 mobile/             OpenSafe Capture phone/tablet app (published to GitHub Pages)
@@ -241,4 +251,4 @@ test/               Unit tests and a screenshot smoke test
 
 MIT licence.
 
-OpenSafe uses [pdf.js](https://github.com/mozilla/pdf.js) (Mozilla, Apache-2.0) to read PDFs, [@napi-rs/canvas](https://github.com/Brooooooklyn/canvas) (MIT) to draw scanned PDF pages for reading, [Tesseract.js](https://github.com/naptha/tesseract.js) (Apache-2.0) to read text in pictures, and [pdf-lib](https://github.com/Hopding/pdf-lib) (MIT) to make PDFs.
+OpenSafe uses [pdf.js](https://github.com/mozilla/pdf.js) (Mozilla, Apache-2.0) to read PDFs, [@napi-rs/canvas](https://github.com/Brooooooklyn/canvas) (MIT) to draw scanned PDF pages for reading, [Tesseract.js](https://github.com/naptha/tesseract.js) (Apache-2.0) to read text in pictures, [pdf-lib](https://github.com/Hopding/pdf-lib) (MIT) to make PDFs, and [mammoth](https://github.com/mwilliamson/mammoth.js) (BSD-2-Clause) to show Word files.

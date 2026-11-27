@@ -128,5 +128,9 @@ contextBridge.exposeInMainWorld('keep', {
   libOpen: (id, fileId) => call('lib:open', id, fileId),
   libSaveCopy: (id, fileId) => call('lib:saveCopy', id, fileId),
   libPreview: (id, fileId) => call('lib:preview', id, fileId),
+  libView: (id, fileId) => call('lib:view', id, fileId),
+  openLink: (url) => call('lib:openLink', url),
+  libPdfPage: (id, fileId, n, width) => call('lib:pdfPage', id, fileId, n, width),
+  libMailAttachment: (id, fileId, index, how) => call('lib:mailAttachment', id, fileId, index, how),
   onNav: (fn) => ipcRenderer.on('nav', (_e, where) => fn(where))
 });

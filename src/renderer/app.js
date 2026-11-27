@@ -71,6 +71,7 @@
 
   // ---------- lock screen ----------
   function showLock(mode = 'unlock') {
+    if (vstate.id) libViewClose();
     closeModal();
     const ls = $('#lockscreen');
     ls.classList.remove('hidden');
@@ -445,6 +446,7 @@
       </div>`;
   }
   function go(view, extra = {}) {
+    if (vstate.id) libViewClose();
     Object.assign(state, { view }, extra);
     if (view !== 'item') state.itemId = null;
     render();
@@ -620,7 +622,7 @@
     if (!e) return `<div class="head"><button class="btn ghost" data-nav="docs">${icon('back')}Back</button></div><div class="card empty">This has been deleted, or it's in the vault and the vault is locked.</div>`;
     const L = LIB[libKindPage(e.kind)];
     const first = e.files.find(x => previewable(x.name));
-    const big = first ? (state.libThumbs[first.id] ? `<img class="libbig" src="${state.libThumbs[first.id]}" alt="" data-zoom="${state.libThumbs[first.id]}">` : `<div class="libbig ph" data-libthumb="${esc(e.id)}" data-libfile="${esc(first.id)}">${icon('file')}</div>`) : '';
+    const big = first ? `<div class="libbigwrap" data-action="libFileView" data-file="${esc(first.id)}" title="Click to read it">${state.libThumbs[first.id] ? `<img class="libbig" src="${state.libThumbs[first.id]}" alt="">` : `<div class="libbig ph" data-libthumb="${esc(e.id)}" data-libfile="${esc(first.id)}">${icon('file')}</div>`}</div>` : '';
     const row = (label, v) => v ? `<div class="lkv"><span class="k">${label}</span><span class="v">${v}</span></div>` : '';
     const today = new Date().toISOString().slice(0, 10);
     return `<div class="head"><button class="btn ghost" data-nav="${libKindPage(e.kind)}">${icon('back')}${L.title}</button><span class="spacer"></span>
@@ -632,11 +634,12 @@
       <div>${e.inVault ? `<span class="pill vault">${icon('lock')}Vault</span> ` : ''}${e.actBy ? (e.actDone ? `<span class="pill good">${icon('check')}Done (was due ${ukDate(e.actBy)})</span>` : `<span class="pill ${e.actBy < today ? 'bad' : 'warn'}">${icon('calendar')}Reply or act by ${ukDate(e.actBy)}</span>`) : ''}</div></div></div>
     <div class="dash"><div class="dash-main">
       ${!big && e.files.some(x => /\.eml$/i.test(x.name)) ? `<div class="card"><h2>${icon('mail')}Message</h2><pre class="libtext libmsg" id="libMsg">Loading…</pre></div>` : ''}
-      ${big ? `<div class="card libpreview">${big}<p class="faint small" style="margin:8px 0 0">${first.name.toLowerCase().endsWith('.pdf') ? 'First page. ' : ''}Click to enlarge, or open the file below.</p></div>` : ''}
+      ${big ? `<div class="card libpreview">${big}<p class="faint small" style="margin:8px 0 0">${first.name.toLowerCase().endsWith('.pdf') ? 'First page. ' : ''}Click to read it.</p></div>` : ''}
       <div class="card" id="libFiles"><h2>${icon('file')}Files <span class="faint">(${e.files.length})</span></h2>
-        ${e.files.length ? `<div class="rows">${e.files.map(x => { const k = fileKind(x.name); return `<div class="rowi libfile">${icon(k[1])}<span style="flex:1;min-width:0"><b class="ell">${esc(x.name)}</b><div class="meta">${k[0]} · ${fileSize(x.size || 0)} · ${(e.textByFile || {})[x.id] !== undefined ? '' : ''}<span data-textstate="${esc(x.id)}">${libTextState(e, x)}</span></div></span>
-          <button class="btn small" data-action="libFileOpen" data-file="${esc(x.id)}">Open</button>
+        ${e.files.length ? `<div class="rows">${e.files.map(x => { const k = fileKind(x.name); return `<div class="rowi libfile">${icon(k[1])}<span style="flex:1;min-width:0;cursor:pointer" data-action="libFileView" data-file="${esc(x.id)}"><b class="ell">${esc(x.name)}</b><div class="meta">${k[0]} · ${fileSize(x.size || 0)} · ${(e.textByFile || {})[x.id] !== undefined ? '' : ''}<span data-textstate="${esc(x.id)}">${libTextState(e, x)}</span></div></span>
+          <button class="btn small primary" data-action="libFileView" data-file="${esc(x.id)}">${icon('file')}View</button>
           <span class="menuwrap"><button class="btn small" data-action="moreMenu">${icon('more')}</button><div class="menu hidden">
+            <button data-action="libFileOpen" data-file="${esc(x.id)}">${icon('upload')}Open in another app</button>
             <button data-action="libFileCopy" data-file="${esc(x.id)}">${icon('download')}Save a copy…</button>
             <button data-action="libFileText" data-file="${esc(x.id)}">${icon('search')}Show the words found</button>
             <button data-action="libFileRemove" data-file="${esc(x.id)}" class="danger">${icon('trash')}Remove this file</button></div></span></div>`; }).join('')}</div>` : '<p class="muted">No files.</p>'}
@@ -667,7 +670,7 @@
     wireLibDrop($('#libDrop2'), (libEntry(state.libId) || {}).kind, state.libId);
     const m = $('#libMsg'), em = libEntry(state.libId), ef = em && em.files.find(x => /\.eml$/i.test(x.name));
     if (m && ef) keep.libText(em.id, ef.id).then(t => { m.textContent = t && t.trim() ? t : 'The message text will appear here once OpenSafe has read the file.'; }).catch(() => { m.textContent = ''; });
-    loadLibThumbs().then(() => { const e = libEntry(state.libId); const f = e && e.files.find(x => previewable(x.name)); const im = f && state.libThumbs[f.id]; const b = $('.libbig'); if (im && b && b.tagName === 'IMG') b.dataset.zoom = im; });
+    loadLibThumbs();
   }
   function libForm(e, isNew) {
     const doc = e.kind === 'document';
@@ -719,14 +722,132 @@
       case 'libDone': if (e) { await run(() => keep.libSave({ id: e.id, actDone: true }), '✓ Marked as done'); await refresh(); } return true;
       case 'libDel': if (e && confirm(`Delete "${e.title}"?\n\nIt goes to Deleted ${e.kind === 'document' ? 'documents' : 'data'} for 30 days, so you can restore it.`)) { const ok = await run(() => keep.libDelete(e.id)); if (ok) { toast('Deleted. You can restore it for 30 days.', 4000); await refresh(); go(libKindPage(e.kind)); } } return true;
       case 'libVault': if (e) { const to = !!act.dataset.to; const ok = await run(() => keep.libVault(e.id, to), to ? '✓ Moved into the vault' : '✓ Moved out of the vault'); if (ok) await refresh(); } return true;
-      case 'libFileOpen': if (e) await run(() => keep.libOpen(e.id, act.dataset.file)); return true;
-      case 'libFileCopy': if (e) { const p = await run(() => keep.libSaveCopy(e.id, act.dataset.file)); if (p) toast('✓ Copy saved'); } return true;
+      case 'libFileOpen': { const id = e ? e.id : vstate.id; if (id) await run(() => keep.libOpen(id, act.dataset.file)); return true; }
+      case 'libFileView': if (e) await libViewOpen(e.id, act.dataset.file); return true;
+      case 'libFileCopy': { const id = e ? e.id : vstate.id; if (id) { const p = await run(() => keep.libSaveCopy(id, act.dataset.file)); if (p) toast('✓ Copy saved'); } return true; }
       case 'libFileText': if (e) await libTextModal(e.id, act.dataset.file); return true;
       case 'libCopyText': await run(() => keep.copyPlain(state.libTextCopy || ''), '✓ Copied'); return true;
       case 'libFileRemove': if (e) { const f = e.files.find(x => x.id === act.dataset.file); if (f && confirm(`Remove "${f.name}" from this ${e.kind === 'document' ? 'document' : 'entry'}?\n\nThis deletes the file from OpenSafe and can't be undone. (Use Save a copy first if you want to keep it.)`)) { await run(() => keep.libRemoveFile(e.id, f.id), 'File removed'); await refresh(); } } return true;
       case 'libBin': libBinForm(act.dataset.kind); return true;
       case 'libRestore': { const ok = await run(() => keep.libRestore(act.dataset.lib), '✓ Restored'); if (ok) { await refresh(); const k = (state.snap.data.library.find(x => x.id === act.dataset.lib) || {}).kind; libBinForm(k || LIB[state.view] && LIB[state.view].kind || 'document'); } return true; }
       case 'libPurge': { const ok = await run(() => keep.libPurge(act.dataset.lib)); if (ok) { toast('Deleted for good'); await refresh(); libBinForm(LIB[state.view] ? LIB[state.view].kind : 'document'); } return true; }
+    }
+    return false;
+  }
+
+  // ---------- reading a file inside OpenSafe ----------
+  const vstate = { id: '', fileId: '', model: null, zoom: 1, sheet: 0, obs: null, pageImgs: {} };
+  const VMAX = 920; // page width at 100%
+  async function libViewOpen(id, fileId) {
+    const e = libEntry(id); if (!e) return;
+    Object.assign(vstate, { id, fileId, model: null, zoom: 1, sheet: 0, pageImgs: {} });
+    const v = $('#viewer'); v.classList.remove('hidden'); document.body.classList.add('viewing');
+    v.innerHTML = `<div class="vbody"><div class="vmsg">${icon('file')}Opening…</div></div>`;
+    libViewBar();
+    try { vstate.model = await keep.libView(id, fileId); }
+    catch (err) { $('#viewer .vbody').innerHTML = `<div class="vmsg">${icon('alert')}${esc(err.message || 'Couldn\'t open this file.')}</div>`; return; }
+    if (vstate.fileId !== fileId) return; // moved on meanwhile
+    libViewBar(); libViewBody();
+  }
+  function libViewClose() { const v = $('#viewer'); if (vstate.obs) vstate.obs.disconnect(); v.classList.add('hidden'); v.innerHTML = ''; document.body.classList.remove('viewing'); vstate.model = null; vstate.id = ''; }
+  function libViewBar() {
+    const e = libEntry(vstate.id); if (!e) return;
+    const f = e.files.find(x => x.id === vstate.fileId) || { name: '' }, i = e.files.indexOf(f), m = vstate.model;
+    const zoomable = m && (m.kind === 'pdf' || m.kind === 'image');
+    const bar = `<div class="vbar">
+      <button class="btn ghost" data-action="libViewClose" title="Close (Esc)">${icon('back')}Back</button>
+      <div class="vtitle"><b class="ell">${esc(f.name)}</b><span class="meta ell">${esc(e.title)}${m && m.kind === 'pdf' ? ` · ${m.pages.length} page${m.pages.length === 1 ? '' : 's'}` : ''}</span></div>
+      ${e.files.length > 1 ? `<span class="vnav"><button class="btn small" data-action="libViewFile" data-step="-1" ${i <= 0 ? 'disabled' : ''} title="Previous file">‹</button><span class="meta">File ${i + 1} of ${e.files.length}</span><button class="btn small" data-action="libViewFile" data-step="1" ${i >= e.files.length - 1 ? 'disabled' : ''} title="Next file">›</button></span>` : ''}
+      ${zoomable ? `<span class="vnav"><button class="btn small" data-action="libViewZoom" data-z="-1" title="Smaller">−</button><span class="meta vz">${Math.round(vstate.zoom * 100)}%</span><button class="btn small" data-action="libViewZoom" data-z="1" title="Bigger">+</button><button class="btn small" data-action="libViewZoom" data-z="0">Fit</button></span>` : ''}
+      <span class="spacer"></span>
+      <button class="btn small" data-action="libFileCopy" data-file="${esc(f.id)}">${icon('download')}Save a copy…</button>
+      <button class="btn small" data-action="libFileOpen" data-file="${esc(f.id)}" title="Open it in Word, your PDF app, your email program…">${icon('upload')}Open in another app</button></div>`;
+    const old = $('#viewer .vbar');
+    if (old) old.outerHTML = bar; else $('#viewer').insertAdjacentHTML('afterbegin', bar);
+  }
+  // a document shown in a sandbox: no scripts, nothing from the internet (the window's security policy applies to it too)
+  function sandboxFrame(html, page) {
+    const css = `<style>html{background:${page ? '#e9ecea' : '#fff'}}body{font:15px/1.55 "Segoe UI",system-ui,sans-serif;color:#1d1d1b;margin:0;padding:${page ? '28px 0' : '18px 22px'};overflow-wrap:anywhere}
+      ${page ? '.pg{background:#fff;max-width:760px;margin:0 auto;padding:56px 64px;box-shadow:0 2px 12px rgba(0,0,0,.12);min-height:600px}' : ''}
+      img{max-width:100%;height:auto} table{border-collapse:collapse;max-width:100%} td,th{border:1px solid #ccc;padding:4px 8px;vertical-align:top} a{color:#1d6b62}</style>`;
+    return `<iframe class="vframe" sandbox="allow-same-origin" referrerpolicy="no-referrer" srcdoc="${esc('<!doctype html><meta charset="utf-8">' + css + (page ? '<div class="pg">' + html + '</div>' : html))}"></iframe>`;
+  }
+  function fitFrame(fr) {
+    const fit = () => { try { const d = fr.contentDocument; if (!d) return; fr.style.height = Math.max(200, d.documentElement.scrollHeight + 4) + 'px';
+      // links: ask before opening them in your web browser
+      d.addEventListener('click', (ev) => { const a = ev.target.closest && ev.target.closest('a[href]'); if (!a) return; ev.preventDefault(); const href = a.getAttribute('href') || ''; if (/^(https?|mailto):/i.test(href)) keep.openLink(href).catch(() => {}); }, true);
+      for (const im of d.images) im.addEventListener('load', () => { fr.style.height = Math.max(200, d.documentElement.scrollHeight + 4) + 'px'; }); } catch (_) { /* not ready */ } };
+    fr.addEventListener('load', fit); fit();
+  }
+  function libViewBody() {
+    const m = vstate.model, body = document.createElement('div'); body.className = 'vbody';
+    const old = $('#viewer .vbody'); if (old) old.replaceWith(body); else $('#viewer').appendChild(body);
+    if (!m) return;
+    const note = m.note ? `<p class="vnote">${icon('alert')}${esc(m.note)}</p>` : '';
+    if (m.kind === 'pdf') {
+      body.innerHTML = `<div class="vpages">${m.pages.map((p, i) => `<div class="vpage" data-n="${i + 1}" data-ar="${(p.h / p.w).toFixed(5)}"><span class="pn">${i + 1}</span></div>`).join('')}</div>`;
+      libViewLayout();
+      if (vstate.obs) vstate.obs.disconnect();
+      vstate.obs = new IntersectionObserver((ents) => { for (const en of ents) if (en.isIntersecting) libViewPage(en.target); }, { root: body, rootMargin: '600px 0px' });
+      $$('.vpage', body).forEach(el => vstate.obs.observe(el));
+    } else if (m.kind === 'image') {
+      body.innerHTML = `<div class="vpages"><img class="vimg" src="${esc(m.url)}" alt=""></div>`;
+      libViewLayout();
+    } else if (m.kind === 'email') {
+      body.innerHTML = `<div class="vmail"><div class="card vmhead"><h2>${esc(m.subject || '(no subject)')}</h2>
+        ${[['From', m.from], ['To', m.to], ['Cc', m.cc], ['Date', m.date]].filter(x => x[1]).map(([k, v]) => `<div class="lkv"><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join('')}
+        ${m.attachments.length ? `<div class="vatts">${m.attachments.map(a => `<span class="vatt">${icon(fileKind(a.name)[1])}<span class="ell" title="${esc(a.name)}">${esc(a.name)}</span><span class="faint">${fileSize(a.size)}</span>
+          <span class="menuwrap"><button class="btn small" data-action="moreMenu">${icon('more')}</button><div class="menu hidden">
+            <button data-action="libAttOpen" data-i="${a.index}">${icon('upload')}Open</button><button data-action="libAttSave" data-i="${a.index}">${icon('download')}Save a copy…</button><button data-action="libAttKeep" data-i="${a.index}">${icon('folder')}Keep in Data</button></div></span></span>`).join('')}</div>` : ''}
+        ${m.remoteImages ? `<p class="vnote">${icon('lock')}${m.remoteImages} picture${m.remoteImages === 1 ? '' : 's'} from the internet ${m.remoteImages === 1 ? 'isn\'t' : 'aren\'t'} shown. OpenSafe never loads them, because they can tell the sender you opened the email.</p>` : ''}</div>
+        ${m.html ? sandboxFrame(m.html, false) : `<pre class="libtext libmsg vtext">${esc(m.text)}</pre>`}</div>`;
+      const fr = $('.vframe', body); if (fr) fitFrame(fr);
+    } else if (m.kind === 'html') {
+      body.innerHTML = note + sandboxFrame(m.html, true);
+      fitFrame($('.vframe', body));
+    } else if (m.kind === 'sheet') {
+      const s = m.sheets[vstate.sheet] || { rows: [] };
+      const cols = Math.max(1, ...s.rows.map(r => r.length));
+      const letter = (n) => { let t = ''; n++; while (n) { const r = (n - 1) % 26; t = String.fromCharCode(65 + r) + t; n = (n - r - 1) / 26; } return t; };
+      body.innerHTML = `${m.sheets.length > 1 ? `<div class="vtabs">${m.sheets.map((x, i) => `<button class="${i === vstate.sheet ? 'on' : ''}" data-action="libViewSheet" data-i="${i}">${esc(x.name)}</button>`).join('')}</div>` : ''}
+        <div class="vsheet"><table><thead><tr><th></th>${Array.from({ length: cols }, (_, i) => `<th>${letter(i)}</th>`).join('')}</tr></thead><tbody>
+        ${s.rows.map((r, ri) => `<tr><th>${ri + 1}</th>${Array.from({ length: cols }, (_, ci) => `<td>${esc(r[ci] || '')}</td>`).join('')}</tr>`).join('')}</tbody></table>
+        ${s.truncated ? '<p class="vnote">Only the first 1,000 rows are shown. Open it in Excel to see the rest.</p>' : ''}${!s.rows.length ? '<p class="vnote">This sheet is empty.</p>' : ''}</div>`;
+    } else if (m.kind === 'text') {
+      body.innerHTML = note + `<pre class="libtext libmsg vtext">${esc(m.text && m.text.trim() ? m.text : 'No text could be read from this file.')}</pre>`;
+    } else {
+      body.innerHTML = `<div class="vmsg">${icon('file')}<div>${esc(m.why || 'OpenSafe can\'t show this kind of file.')}</div><button class="btn primary" data-action="libFileOpen" data-file="${esc(vstate.fileId)}">${icon('upload')}Open in another app</button></div>`;
+    }
+  }
+  function libViewWidth() { const b = $('#viewer .vbody'); return Math.max(200, Math.min(VMAX, (b ? b.clientWidth : 900) - 48)) * vstate.zoom; }
+  function libViewLayout() {
+    const w = libViewWidth();
+    for (const el of $$('#viewer .vpage')) { el.style.width = w + 'px'; el.style.height = w * Number(el.dataset.ar) + 'px'; const im = el.querySelector('img'); if (im && Number(im.dataset.w) < w * (window.devicePixelRatio || 1) * 0.9) { im.remove(); delete vstate.pageImgs[el.dataset.n]; libViewPage(el); } }
+    const im = $('#viewer .vimg'); if (im) im.style.width = vstate.zoom === 1 ? '' : (im.naturalWidth * vstate.zoom) + 'px', im.classList.toggle('fit', vstate.zoom === 1);
+    const z = $('#viewer .vz'); if (z) z.textContent = Math.round(vstate.zoom * 100) + '%';
+  }
+  async function libViewPage(el) {
+    const n = Number(el.dataset.n), key = vstate.fileId;
+    if (el.querySelector('img') || vstate.pageImgs[n] === 'loading') return;
+    const want = Math.round(parseFloat(el.style.width) * (window.devicePixelRatio || 1));
+    vstate.pageImgs[n] = 'loading';
+    try {
+      const url = await keep.libPdfPage(vstate.id, key, n, want);
+      if (vstate.fileId !== key || !el.isConnected) return;
+      const im = document.createElement('img'); im.src = url; im.alt = `Page ${n}`; im.dataset.w = want; el.appendChild(im);
+      vstate.pageImgs[n] = true;
+    } catch (_) { vstate.pageImgs[n] = false; el.classList.add('bad'); }
+  }
+  async function viewerAction(act) {
+    const e = libEntry(vstate.id);
+    switch (act.dataset.action) {
+      case 'libViewClose': libViewClose(); return true;
+      case 'libViewFile': { if (!e) return true; const i = e.files.findIndex(x => x.id === vstate.fileId) + Number(act.dataset.step); if (e.files[i]) libViewOpen(e.id, e.files[i].id); return true; }
+      case 'libViewZoom': { const z = Number(act.dataset.z); const steps = [0.5, 0.67, 0.8, 1, 1.25, 1.5, 2, 3]; let i = steps.indexOf(vstate.zoom); if (i < 0) i = 3; vstate.zoom = z === 0 ? 1 : steps[Math.max(0, Math.min(steps.length - 1, i + z))]; libViewLayout(); return true; }
+      case 'libViewSheet': vstate.sheet = Number(act.dataset.i); libViewBody(); return true;
+      case 'libAttOpen': await run(() => keep.libMailAttachment(vstate.id, vstate.fileId, Number(act.dataset.i), 'open')); return true;
+      case 'libAttSave': { const p = await run(() => keep.libMailAttachment(vstate.id, vstate.fileId, Number(act.dataset.i), 'save')); if (p) toast('✓ Attachment saved'); return true; }
+      case 'libAttKeep': { const r = await run(() => keep.libMailAttachment(vstate.id, vstate.fileId, Number(act.dataset.i), 'data')); if (r && r.added) { toast('✓ Kept in Data, in the folder "Email attachments"', 4000); await refresh(); } else if (r && r.errors.length) toast(r.errors.join('; '), 6000); return true; }
     }
     return false;
   }
@@ -1605,7 +1726,7 @@
     if (lay) { state.f.layout = lay.dataset.layout; render(); return; }
 
     const act = e.target.closest('[data-action]');
-    if (act && act.dataset.action.startsWith('lib')) { e.preventDefault(); await libAction(act); return; }
+    if (act && act.dataset.action.startsWith('lib')) { e.preventDefault(); if (!(await viewerAction(act))) await libAction(act); return; }
     if (act) {
       const a = state.itemId && asset(state.itemId);
       switch (act.dataset.action) {
@@ -1813,11 +1934,13 @@
   });
 
   document.addEventListener('keydown', (e) => {
+    if (vstate.id && e.key === 'Escape' && $('#modal').classList.contains('hidden')) { e.preventDefault(); libViewClose(); return; }
     if (e.key === 'Escape') { $('#lightbox').classList.add('hidden'); if (!state.rk) closeModal(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n' && $('#modal').classList.contains('hidden')) { e.preventDefault(); itemForm(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); if (state.view !== 'items') go('items'); setTimeout(() => $('#q') && $('#q').focus(), 0); }
   });
 
+  window.addEventListener('resize', () => { if (vstate.model && (vstate.model.kind === 'pdf' || vstate.model.kind === 'image')) libViewLayout(); });
   // Documents and Data changed in the background (for example words read from a new file).
   let libTimer = null;
   keep.onLibrary(() => {

@@ -212,4 +212,4 @@ function canRead(name) {
   return ext === '.pdf' || IMAGE.has(ext) || PLAIN.has(ext) || ['.docx', '.docm', '.xlsx', '.xlsm', '.pptx', '.odt', '.ods', '.odp', '.eml', '.html', '.htm', '.rtf'].includes(ext);
 }
 
-module.exports = { extractText, canRead, emailInfo, unzip, pdfText, pdfFirstPage };
+module.exports = { extractText, canRead, emailInfo, unzip, pdfText, pdfFirstPage, pdfjs, decodeEntities, mime: { splitPart, param, qp, decodeWords, charset } };

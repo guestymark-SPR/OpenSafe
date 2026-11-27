@@ -147,6 +147,7 @@ function afterUnlock() {
 
 async function lockAll() {
   store.lock();
+  viewer.clear();
   if (phone) await phone.stop();
   cleanOpenDir();
   sendSecurity();
@@ -259,6 +260,7 @@ async function importFromPath(file) {
 // ---------- Documents and Data ----------
 const doctext = require('./doctext');
 const phonedocs = require('./phonedocs');
+const viewer = require('./viewer');
 const LIB_MAX = 500 * 1024 * 1024; // per file
 const libNote = (e) => { libChanged(); return e; };
 async function libPdfPreview(buffer) {
@@ -293,16 +295,21 @@ const readSoon = () => setTimeout(() => readLibraryText().catch(() => {}), 300);
 
 /** Add files from disk. Documents: all the files become one document. Data: one entry per file. */
 async function addLibraryPaths(kind, paths, entryId, fields) {
-  const res = { added: 0, ids: [], errors: [] };
-  const files = [];
+  const files = [], errors = [];
   for (const p of paths) {
     try {
       const st = fs.statSync(p);
       if (!st.isFile()) continue;
       if (st.size > LIB_MAX) throw new Error('over 500 MB');
       files.push({ name: path.basename(p), buf: fs.readFileSync(p) });
-    } catch (e) { res.errors.push(`${path.basename(p)}: ${e.message}`); }
+    } catch (e) { errors.push(`${path.basename(p)}: ${e.message}`); }
   }
+  const res = await addLibraryBuffers(kind, files, entryId, fields);
+  res.errors.unshift(...errors);
+  return res;
+}
+async function addLibraryBuffers(kind, files, entryId, fields) {
+  const res = { added: 0, ids: [], errors: [] };
   const detailsFor = (f) => {
     const base = { title: f.name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ').slice(0, 200) };
     if (/\.eml$/i.test(f.name)) { try { const i = doctext.emailInfo(f.buf); return { title: i.subject || base.title, from: i.from, docDate: i.date, folder: 'Emails' }; } catch (_) { /* use the name */ } }
@@ -538,6 +545,50 @@ function registerIpc() {
     if (ext === '.pdf') return libPdfPreview(buffer);
     return null;
   });
+  // Reading files inside OpenSafe
+  h('lib:openLink', async (url) => {
+    const u = String(url || '').slice(0, 2000);
+    if (!/^(https?:\/\/|mailto:)/i.test(u)) throw new Error('Only web and email links can be opened.');
+    const r = await dialog.showMessageBox(win, { type: 'question', buttons: ['Open in my browser', 'Copy link', 'Cancel'], defaultId: 2, cancelId: 2, title: 'Open link', message: 'Open this link from the email?', detail: u + '\n\nOnly open links you trust. Links in unexpected emails can lead to fake websites.' });
+    if (r.response === 0) await shell.openExternal(u);
+    else if (r.response === 1) clipboard.writeText(u);
+    return r.response;
+  });
+  h('lib:view', async (id, fileId) => {
+    const e = store.getLibraryEntry(String(id));
+    const f = e.files.find(x => x.id === String(fileId));
+    if (!f) throw new Error('File not found');
+    const { buffer } = store.readLibraryFile(e.id, f.id);
+    const v = await viewer.view(f.name, buffer);
+    if (v.kind === 'image') v.url = `keep://file/${encodeURIComponent(e.id)}/${encodeURIComponent(f.file)}`;
+    return Object.assign(v, { name: f.name, size: f.size });
+  });
+  h('lib:pdfPage', async (id, fileId, n, width) => {
+    const { buffer } = store.readLibraryFile(String(id), String(fileId));
+    const png = await viewer.pdfPage(String(fileId), buffer, Number(n), Number(width));
+    return 'data:image/png;base64,' + png.toString('base64');
+  });
+  h('lib:mailAttachment', async (id, fileId, index, how) => {
+    const { buffer } = store.readLibraryFile(String(id), String(fileId));
+    const a = viewer.emailAttachment(buffer, index);
+    if (how === 'open') {
+      const dir = path.join(OPEN_DIR, crypto.randomBytes(6).toString('hex'));
+      fs.mkdirSync(dir, { recursive: true });
+      const p = path.join(dir, a.name);
+      fs.writeFileSync(p, a.bytes);
+      const err = await shell.openPath(p);
+      if (err) throw new Error(err);
+      return true;
+    }
+    if (how === 'data') { // keep it in Data as its own entry
+      const res = await addLibraryBuffers('data', [{ name: a.name, buf: a.bytes }], '', { folder: 'Email attachments' });
+      return res;
+    }
+    const r = await dialog.showSaveDialog(win, { title: 'Save attachment', defaultPath: path.join(app.getPath('documents'), a.name) });
+    if (r.canceled || !r.filePath) return null;
+    fs.writeFileSync(r.filePath, a.bytes);
+    return r.filePath;
+  });
   h('lib:readNow', () => { readSoon(); return true; });
   h('policy:save', (p) => store.savePolicy(p));
   h('policy:delete', async (id) => {
@@ -580,7 +631,7 @@ function registerIpc() {
   // ---- vault ----
   h('vault:setup', async (pin) => { await store.setupVault(pin); sendSecurity(); return true; });
   h('vault:unlock', async (pin) => { await store.unlockVault(pin); sendSecurity(); readSoon(); return true; });
-  h('vault:lock', () => { store.lockVault(); cleanOpenDir(); sendSecurity(); return true; });
+  h('vault:lock', () => { store.lockVault(); viewer.clear(); cleanOpenDir(); sendSecurity(); return true; });
   h('vault:changePin', (cur, next) => store.changePin(cur, next));
   h('vault:recoverPin', async (rk, pin) => { await pwResult(() => store.recoverVaultPin(rk, pin)); sendSecurity(); return true; });
   h('vault:remove', () => { store.removeVault(); sendSecurity(); return true; });
