@@ -843,6 +843,18 @@ function registerIpc() {
     libChanged(); readSoon();
     return { id: e.id };
   });
+  // highlights and notes on PDF pages
+  h('lib:markAdd', async (id, m) => {
+    m = m || {};
+    const e = store.getLibraryEntry(String(id)), f = e.files.find(x => x.id === String(m.fileId));
+    if (!f || !/\.pdf$/i.test(f.name)) throw new Error('Highlights work on PDFs.');
+    const box = { x0: Math.min(m.x0, m.x1), x1: Math.max(m.x0, m.x1), y0: Math.min(m.y0, m.y1), y1: Math.max(m.y0, m.y1) };
+    let text = '';
+    try { text = await viewer.pdfTextIn(String(f.id), store.readLibraryFile(e.id, f.id).buffer, Number(m.page), box); } catch (_) { /* a scan: no words to copy */ }
+    return libNote(store.addMark(e.id, Object.assign({}, m, box, { text })));
+  });
+  h('lib:markUpdate', (id, markId, patch) => libNote(store.updateMark(String(id), String(markId), patch || {})));
+  h('lib:markRemove', (id, markId) => libNote(store.removeMark(String(id), String(markId))));
   h('lib:renameCase', (from, to) => libNote(store.renameCase(String(from || ''), String(to || ''))));
   h('lib:onPhone', (ids, on) => libNote(store.setLibraryOnPhone((Array.isArray(ids) ? ids : [ids]).map(String), !!on)));
   h('lib:bundle', async (ids, opts) => {
@@ -859,7 +871,7 @@ function registerIpc() {
     if (r.canceled || !r.filePath) return null;
     const result = await bundle.buildBundle({
       entries, viewer, title,
-      order: opts.order === 'newest' ? 'newest' : 'oldest', contents: opts.contents !== false, numbers: opts.numbers !== false,
+      order: opts.order === 'newest' ? 'newest' : 'oldest', contents: opts.contents !== false, numbers: opts.numbers !== false, marks: !!opts.marks,
       readFile: (id, fileId) => store.readLibraryFile(id, fileId),
       renderHtml: renderHtmlToPdf,
       redact: opts.redact && typeof opts.redact === 'object' ? {

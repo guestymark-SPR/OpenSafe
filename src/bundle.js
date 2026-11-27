@@ -66,6 +66,17 @@ async function imagePage(out, name, buffer) {
   return 1;
 }
 
+const MARK_RGB = { yellow: [1, 0.85, 0], green: [0.3, 0.78, 0.43], pink: [1, 0.41, 0.67], blue: [0.27, 0.59, 1] };
+/** A highlight (fractions of the page as shown) drawn on a PDF page, whatever its rotation. */
+function drawMark(page, k) {
+  const box = page.getCropBox(), r = ((page.getRotation().angle % 360) + 360) % 360, W = box.width, H = box.height;
+  const map = (u, v) => r === 90 ? [v * W, u * H] : r === 180 ? [W * (1 - u), v * H] : r === 270 ? [W * (1 - v), H * (1 - u)] : [u * W, (1 - v) * H];
+  const a = map(k.x0, k.y0), b = map(k.x1, k.y1);
+  const x = Math.min(a[0], b[0]), y = Math.min(a[1], b[1]);
+  const [cr, cg, cb] = MARK_RGB[k.color] || MARK_RGB.yellow;
+  page.drawRectangle({ x: box.x + x, y: box.y + y, width: Math.abs(a[0] - b[0]), height: Math.abs(a[1] - b[1]), color: rgb(cr, cg, cb), opacity: 0.38, blendMode: 'Multiply' });
+}
+
 /** Number every page at the bottom centre, the right way up whatever the page's rotation. */
 async function stampNumbers(doc, label = '') {
   const font = await doc.embedFont(StandardFonts.Helvetica);
@@ -93,11 +104,11 @@ function contentsHtml(title, rows, total, { prepared }) {
   return page(`<style>h1{font-size:18pt;margin:0 0 2pt} .muted{color:#666;font-size:9pt} table{width:100%;margin-top:14pt}
     th{text-align:left;font-size:8.5pt;color:#666;font-weight:600;padding:4pt;border-bottom:1px solid #999}
     td{padding:5pt 4pt;border-bottom:1px solid #e4e4e4;font-size:9.5pt} .n{width:24pt;color:#666} .r{text-align:right;white-space:nowrap} .d{white-space:nowrap}
-    .sub{color:#666;font-size:8.5pt} .miss{color:#a33;font-size:8.5pt}</style>
+    .sub{color:#666;font-size:8.5pt} .miss{color:#a33;font-size:8.5pt} .notes{font-size:8.5pt;margin-top:2pt;padding-left:6pt;border-left:2pt solid #f2c200}</style>
     <h1>${esc(title)}</h1><div class="muted">Contents · ${rows.length} document${rows.length === 1 ? '' : 's'} · ${total} pages · prepared ${esc(prepared)}</div>
     <table><thead><tr><th class="n">No.</th><th>Date</th><th>From</th><th>Title</th><th class="r">Pages</th></tr></thead><tbody>
     ${rows.map((r, i) => `<tr><td class="n">${i + 1}</td><td class="d">${esc(ukDate(r.docDate)) || '—'}</td><td>${esc(r.from || '')}</td>
-      <td>${esc(r.title)}${r.ref ? `<div class="sub">Ref: ${esc(r.ref)}</div>` : ''}${r.missing.length ? `<div class="miss">Not included: ${r.missing.map(esc).join(', ')}</div>` : ''}</td>
+      <td>${esc(r.title)}${r.ref ? `<div class="sub">Ref: ${esc(r.ref)}</div>` : ''}${(r.notes || []).length ? `<div class="notes">${r.notes.map(n => `<div>p.${n.at + (r.start - r.firstAt)}: ${esc(n.note)}</div>`).join('')}</div>` : ''}${r.missing.length ? `<div class="miss">Not included: ${r.missing.map(esc).join(', ')}</div>` : ''}</td>
       <td class="r">${r.pages ? (r.pages === 1 ? r.start : `${r.start}–${r.start + r.pages - 1}`) : '—'}</td></tr>`).join('')}
     </tbody></table>`, title);
 }
@@ -109,13 +120,13 @@ function contentsHtml(title, rows, total, { prepared }) {
  * @param viewer    ./viewer (to turn emails, Word and Excel files into pages)
  * @returns { bytes, pages, documents, skipped: string[] }
  */
-async function buildBundle({ entries, readFile, renderHtml, viewer, title = 'Bundle', order = 'oldest', contents = true, numbers = true, now = new Date(), redact: hide = null, ocrWords = null, progress = () => {} }) {
+async function buildBundle({ entries, readFile, renderHtml, viewer, title = 'Bundle', order = 'oldest', contents = true, numbers = true, now = new Date(), marks = false, redact: hide = null, ocrWords = null, progress = () => {} }) {
   if (!entries || !entries.length) throw new Error('Choose at least one document.');
   const list = orderEntries(entries, order);
   const body = await PDFDocument.create();
   const rows = [], skipped = [];
   for (const e of list) {
-    const row = { title: e.title, from: e.from, docDate: e.docDate, ref: e.ref, start: body.getPageCount() + 1, pages: 0, missing: [] };
+    const row = { title: e.title, from: e.from, docDate: e.docDate, ref: e.ref, start: body.getPageCount() + 1, pages: 0, missing: [], notes: [] };
     for (const f of e.files || []) {
       let name = f.name;
       try {
@@ -126,8 +137,13 @@ async function buildBundle({ entries, readFile, renderHtml, viewer, title = 'Bun
         if (ext === '.pdf') {
           let src;
           try { src = await PDFDocument.load(r.buffer, { ignoreEncryption: true }); } catch (_) { throw new Error('the PDF couldn\'t be read'); }
+          const first = body.getPageCount();
           const pages = await body.copyPages(src, src.getPageIndices());
           pages.forEach(p => body.addPage(p)); added = pages.length;
+          if (marks) for (const k of (e.marks || []).filter(m => m.fileId === f.id && m.page <= pages.length).sort((a, b) => a.page - b.page || a.y0 - b.y0)) {
+            drawMark(body.getPage(first + k.page - 1), k);
+            if (k.note) row.notes.push({ at: first + k.page, note: k.note, text: k.text });
+          }
         } else if (ext === '.jpg' || ext === '.jpeg' || ext === '.png') {
           try { added = await imagePage(body, name, r.buffer); } catch (_) { added = 0; }
         }
@@ -145,6 +161,7 @@ async function buildBundle({ entries, readFile, renderHtml, viewer, title = 'Bun
         skipped.push(`${e.title}: ${name} (${err.code === 'VAULT_LOCKED' ? 'in the locked vault' : err.message || 'couldn\'t be read'})`);
       }
     }
+    row.firstAt = row.start;
     rows.push(row);
   }
   if (!body.getPageCount()) throw new Error('None of the chosen files could be put in a PDF.\n\n' + skipped.join('\n'));
@@ -156,7 +173,7 @@ async function buildBundle({ entries, readFile, renderHtml, viewer, title = 'Bun
     found = r.found;
     body2 = await PDFDocument.load(r.bytes);
     title = redact.redactText(title, hide);
-    for (const row of rows) { row.title = redact.redactText(row.title, hide); row.from = redact.redactText(row.from, hide); row.ref = redact.redactText(row.ref, hide); row.missing = row.missing.map(m => redact.redactText(m, hide)); }
+    for (const row of rows) { row.title = redact.redactText(row.title, hide); row.from = redact.redactText(row.from, hide); row.ref = redact.redactText(row.ref, hide); row.missing = row.missing.map(m => redact.redactText(m, hide)); row.notes = row.notes.map(n => Object.assign({}, n, { note: redact.redactText(n.note, hide) })); }
   }
 
   const out = await PDFDocument.create();

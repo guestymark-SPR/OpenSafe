@@ -207,3 +207,16 @@ mark{background:color-mix(in srgb,#f5c542 45%,transparent);color:inherit;border-
 .dialog.wide{width:min(980px,100%)}
 .letterdb textarea[name=body]{font:11pt/1.5 Arial,sans-serif;min-height:240px}
 .modal .dialog.wide .db{max-height:calc(100vh - 170px);overflow:auto}
+/* highlights on PDF pages */
+.vmark{position:absolute;border-radius:2px;mix-blend-mode:multiply;cursor:pointer;z-index:2}
+.vmark.yellow{background:rgba(255,224,0,.45)}.vmark.green{background:rgba(80,200,110,.4)}.vmark.pink{background:rgba(255,105,170,.38)}.vmark.blue{background:rgba(70,150,255,.35)}
+.vmark.drawing{outline:1px dashed rgba(0,0,0,.4);pointer-events:none}
+.vmark .vmnote{position:absolute;right:-10px;top:-10px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.3);display:grid;place-items:center;mix-blend-mode:normal}
+.vmark .vmnote svg{width:11px;height:11px}
+.vmark.flash{animation:markflash 1.4s ease}
+@keyframes markflash{0%,100%{box-shadow:none}30%,70%{box-shadow:0 0 0 4px rgba(255,170,0,.7)}}
+#viewer.marking .vpage{cursor:crosshair}
+.markq{margin:0;padding:8px 12px;border-left:3px solid #f2c200;background:rgba(255,224,0,.12);font-style:italic}
+.markcolors{display:flex;gap:10px}.markcolors input{display:none}.markcolors .sw{display:inline-block;width:26px;height:26px;border-radius:50%;border:2px solid transparent;cursor:pointer}
+.markcolors input:checked+.sw{border-color:var(--ink,#222)}
+.sw.yellow{background:#ffe000}.sw.green{background:#50c86e}.sw.pink{background:#ff69aa}.sw.blue{background:#4696ff}

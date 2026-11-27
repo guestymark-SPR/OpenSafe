@@ -244,6 +244,7 @@
         <label class="f s3">Order<select name="order"><option value="oldest">By the date on each one, oldest first</option><option value="newest">By the date on each one, newest first</option></select></label>
         <label class="switch s3" style="font-weight:500;display:flex;gap:10px"><input type="checkbox" name="contents" checked> Contents page at the front (date, who from, title, reference, page numbers)</label>
         <label class="switch s3" style="font-weight:500;display:flex;gap:10px"><input type="checkbox" name="numbers" checked> Page numbers on every page (“Page 3 of 40”)</label>
+        ${entries.some(e => (e.marks || []).length) ? `<label class="switch s3" style="font-weight:500;display:flex;gap:10px"><input type="checkbox" name="marks"> Show my highlights, with my notes listed on the contents page</label>` : ''}
         <details class="s3 hidebox" ${lsGet('redactOn', false) ? 'open' : ''}><summary><b>Hide private details</b> <span class="faint">(optional)</span></summary>
           <p class="faint small" style="margin:6px 0">Blacks out what you choose on every page of this PDF. Your own copies aren't changed. Pages become pictures, so the PDF is bigger and its text can't be copied.</p>
           <div class="hidekinds">${[['ni', 'National Insurance numbers'], ['bank', 'Bank sort codes and account numbers'], ['card', 'Card numbers'], ['phone', 'Phone numbers'], ['email', 'Email addresses']].map(([k, l]) => `<label class="switch"><input type="checkbox" name="hide_${k}" ${(lsGet('redactKinds', ['ni', 'bank', 'card'])).includes(k) && lsGet('redactOn', false) ? 'checked' : ''}> ${l}</label>`).join('')}</div>
@@ -255,6 +256,7 @@
     $('#bundleForm').onsubmit = async (ev) => {
       ev.preventDefault();
       const f = ev.target, el = f.elements, opts = { title: el.title.value, order: el.order.value, contents: el.contents.checked, numbers: el.numbers.checked };
+      if (el.marks) opts.marks = el.marks.checked;
       const kinds = ['ni', 'bank', 'card', 'phone', 'email'].filter(k => el['hide_' + k].checked);
       const words = el.hideWords.value.split(/\n+/).map(w => w.trim()).filter(Boolean);
       const on = f.querySelector('.hidebox').open && (kinds.length || words.length);
@@ -850,6 +852,7 @@
             <button data-action="libFileText" data-file="${esc(x.id)}">${icon('search')}Show the words found</button>
             <button data-action="libFileRemove" data-file="${esc(x.id)}" class="danger">${icon('trash')}Remove this file</button></div></span></div>`; }).join('')}</div>` : '<p class="muted">No files.</p>'}
         <div class="drop" id="libDrop2">Drag more files anywhere on this page, or <a href="#" data-action="libAddMore">choose files…</a>${e.kind === 'document' ? ' (for example the other pages of the letter)' : ''}</div></div>
+      ${(e.marks || []).length ? `<div class="card"><h2>${icon('edit')}Your highlights and notes <span class="count">(${e.marks.length})</span></h2><div class="rows">${e.marks.slice().sort((a, b) => a.fileId.localeCompare(b.fileId) || a.page - b.page || a.y0 - b.y0).map(k => `<div class="rowi" data-action="libMarkOpen" data-mark="${esc(k.id)}"><span class="sw ${k.color}" style="width:12px;height:12px;border-radius:3px;flex:none"></span><span style="flex:1">${k.note ? `<b>${esc(k.note)}</b>` : ''}${k.text ? `<div class="meta">“${esc(k.text.slice(0, 160))}${k.text.length > 160 ? '…' : ''}”</div>` : ''}</span><span class="meta nowrap">${esc((e.files.find(f => f.id === k.fileId) || { name: '' }).name)} · p.${k.page}</span></div>`).join('')}</div></div>` : ''}
       <div class="card"><h2>Details</h2>
         ${row(e.kind === 'document' ? 'Type' : 'Folder', esc(e.kind === 'document' ? e.docType : e.folder))}${row(e.sent ? 'To' : 'From', esc(e.from))}${row('Case', e.caseName ? `<a href="#" data-action="libCaseOpen" data-case="${esc(e.caseName)}">${esc(e.caseName)}</a>` : '')}${e.sent ? row('Reply expected by', e.expectBy ? ukDate(e.expectBy) : '') : ''}${row(e.kind === 'document' ? 'Date on it' : 'Date', e.docDate ? ukDate(e.docDate) : '')}${row('Reference', esc(e.ref))}
         ${row('Tags', e.tags.map(t => `<span class="pill">${esc(t)}</span>`).join(' '))}
@@ -962,6 +965,13 @@
         return true;
       }
       case 'libCaseAdd': casePicker(state.caseName); return true;
+      case 'libMarkOpen': {
+        const k = (e.marks || []).find(x => x.id === act.dataset.mark); if (!k) return true;
+        await libViewOpen(e.id, k.fileId);
+        for (let i = 0; i < 30 && !$(`#viewer .vpage[data-n="${k.page}"]`); i++) await new Promise(r => setTimeout(r, 100));
+        await viewerAction({ dataset: { action: 'libMarkGo', mark: k.id } });
+        return true;
+      }
       case 'libLetterReply': { const d = await run(() => keep.letterDraft(e.id)); if (d) letterForm(d, null); return true; }
       case 'libLetterNew': { const d = await run(() => keep.letterDraft('')); if (d) { if (state.view === 'case') d.caseName = state.caseName; letterForm(d, null); } return true; }
       case 'libLetterEdit': { const d = await run(() => keep.letterDraft('')); if (d) letterForm({ letter: Object.assign({}, e.reply), caseName: e.caseName || '', addresses: d.addresses, expectBy: e.expectBy }, e.id); return true; }
@@ -1154,6 +1164,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
   // ---------- one search for everything ----------
   // ---------- Help and What's new ----------
   const NEWS = [
+    ['2.16.0', 'Highlights and notes', ['In the reader, <b>Highlight</b> and drag over a PDF page to mark it; click a highlight to add a note. OpenSafe keeps the words under it, and search finds your notes.', 'A document\'s page lists its highlights; Bundle PDF can show them, with your notes on the contents page.']],
     ['2.15.0', 'Getting things in, and your calendar', ['<b>Watch a folder</b> (Import & backup): files saved into it are added to Documents or Data by themselves.', '<b>Share to OpenSafe</b> on the phone: share a PDF, photo or email from another app straight into Capture.', '<b>Add to my calendar…</b> on Reminders: a calendar file for Outlook, Google Calendar or your phone.']],
     ['2.14.0', 'Write letters, hide details', ['<b>Write a reply…</b> on a letter (More menu), or <b>+ New → Letter…</b>: a properly laid-out letter with their reference and date filled in, saved as PDF and Word, marked as sent and put in the case.', '<b>Hide private details</b> in Bundle PDF: black out NI numbers, bank details, card and phone numbers, emails and any words you type, including on scanned pages.']],
     ['2.13.0', 'Cases and replies', ['<b>Cases</b>: put letters about one matter in a case and see them as a timeline, sent and received, with a Bundle PDF of the whole case.', '<b>I sent this</b>: track letters you sent; Reminders shows "No reply yet" after the date, until their reply is added to the case.', 'Filter Documents and Data by who it\'s from or to, by tag and by case; a warning when the same file is added twice.']],
@@ -1179,6 +1190,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     ['reply', 2, 'Write a reply', 'Open a letter → More → <b>Write a reply…</b>, type a line and save. The PDF and Word file should be in Documents, marked "Sent by me", with their reference and date at the top.'],
     ['hide', 2, 'Hide details in a bundle', 'Tick a letter with your NI number on it → Bundle PDF… → <b>Hide private details</b>, tick National Insurance numbers. In the PDF, the number should be blacked out.'],
     ['share', 1, 'Share a PDF to Capture on the phone', 'In your phone\'s Files or Gmail app, share a PDF and pick <b>OpenSafe</b>. Capture should open and ask where to keep it. (Capture must be installed on the home screen; the Share option may not appear straight away after the update.)'],
+    ['mark', 1, 'Highlight a line in a PDF', 'Open a PDF letter in the reader, click <b>Highlight</b> and drag across a line. Click the yellow box and add a note. Searching for a word in your note should find the letter.'],
     ['twopc', 3, 'Two PCs (only if you have a second PC)', 'Choose the same OneDrive folder on both under Import & backup → Two PCs. Add an item on one; once OneDrive has copied it (usually a few minutes), it should appear on the other.']
   ];
   const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (_) { return d; } };
@@ -1234,11 +1246,11 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
   }
 
   // ---------- reading a file inside OpenSafe ----------
-  const vstate = { id: '', fileId: '', model: null, zoom: 1, sheet: 0, obs: null, pageImgs: {} };
+  const vstate = { id: '', fileId: '', model: null, zoom: 1, sheet: 0, obs: null, pageImgs: {}, marking: false };
   const VMAX = 920; // page width at 100%
   async function libViewOpen(id, fileId) {
     const e = libEntry(id); if (!e) return;
-    Object.assign(vstate, { id, fileId, model: null, zoom: 1, sheet: 0, pageImgs: {} });
+    Object.assign(vstate, { id, fileId, model: null, zoom: 1, sheet: 0, pageImgs: {}, marking: false });
     const v = $('#viewer'); v.classList.remove('hidden'); document.body.classList.add('viewing');
     v.innerHTML = `<div class="vbody"><div class="vmsg">${icon('file')}Opening…</div></div>`;
     libViewBar();
@@ -1258,6 +1270,8 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
       ${e.files.length > 1 ? `<span class="vnav"><button class="btn small" data-action="libViewFile" data-step="-1" ${i <= 0 ? 'disabled' : ''} title="Previous file">‹</button><span class="meta">File ${i + 1} of ${e.files.length}</span><button class="btn small" data-action="libViewFile" data-step="1" ${i >= e.files.length - 1 ? 'disabled' : ''} title="Next file">›</button></span>` : ''}
       ${zoomable ? `<span class="vnav"><button class="btn small" data-action="libViewZoom" data-z="-1" title="Smaller">−</button><span class="meta vz">${Math.round(vstate.zoom * 100)}%</span><button class="btn small" data-action="libViewZoom" data-z="1" title="Bigger">+</button><button class="btn small" data-action="libViewZoom" data-z="0">Fit</button></span>` : ''}
       <span class="spacer"></span>
+      ${m && m.kind === 'pdf' ? `<button class="btn small ${vstate.marking ? 'primary' : ''}" data-action="libMarkMode" title="Drag over the page to highlight; click a highlight to add a note">${icon('edit')}${vstate.marking ? 'Highlighting: drag over the page' : 'Highlight'}</button>
+        ${(() => { const ms = libMarks(e); return ms.length ? dd(`Notes (${ms.length})`, ms.map(k => ({ label: `p.${k.page} · ${(k.note || k.text || 'Highlight').slice(0, 60)}`, action: 'libMarkGo', data: { mark: k.id } })), { cls: 'btn small', scroll: true }) : ''; })()}` : ''}
       <button class="btn small" data-action="libFileCopy" data-file="${esc(f.id)}">${icon('download')}Save a copy…</button>
       <button class="btn small" data-action="libFileOpen" data-file="${esc(f.id)}" title="Open it in Word, your PDF app, your email program…">${icon('upload')}Open in another app</button></div>`;
     const old = $('#viewer .vbar');
@@ -1288,6 +1302,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
       if (vstate.obs) vstate.obs.disconnect();
       vstate.obs = new IntersectionObserver((ents) => { for (const en of ents) if (en.isIntersecting) libViewPage(en.target); }, { root: body, rootMargin: '600px 0px' });
       $$('.vpage', body).forEach(el => vstate.obs.observe(el));
+      drawMarks(); wireMarking(body);
     } else if (m.kind === 'image') {
       body.innerHTML = `<div class="vpages"><img class="vimg" src="${esc(m.url)}" alt=""></div>`;
       libViewLayout();
@@ -1336,6 +1351,62 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
       vstate.pageImgs[n] = true;
     } catch (err) { vstate.pageImgs[n] = false; el.classList.add('bad'); el.dataset.err = String((err && err.message) || '').slice(0, 200); }
   }
+  // ---- highlights and notes on PDF pages ----
+  const libMarks = (e) => ((e && e.marks) || []).filter(k => k.fileId === vstate.fileId).sort((a, b) => a.page - b.page || a.y0 - b.y0);
+  function drawMarks() {
+    const e = libEntry(vstate.id);
+    $$('#viewer .vmark').forEach(x => x.remove());
+    for (const k of libMarks(e)) {
+      const pg = $(`#viewer .vpage[data-n="${k.page}"]`); if (!pg) continue;
+      const d = document.createElement('div');
+      d.className = `vmark ${k.color}`; d.dataset.mark = k.id; d.dataset.action = 'libMarkEdit';
+      Object.assign(d.style, { left: k.x0 * 100 + '%', top: k.y0 * 100 + '%', width: (k.x1 - k.x0) * 100 + '%', height: (k.y1 - k.y0) * 100 + '%' });
+      d.title = k.note || k.text || 'Highlight (click to add a note)';
+      if (k.note) d.innerHTML = `<span class="vmnote">${icon('edit')}</span>`;
+      pg.appendChild(d);
+    }
+  }
+  const mdrag = { start: null, box: null, pg: null };
+  function wireMarking(body) {
+    body.addEventListener('mousedown', (ev) => {
+      if (!vstate.marking || ev.button !== 0 || ev.target.closest('.vmark')) return;
+      const pg = ev.target.closest('.vpage'); if (!pg) return;
+      ev.preventDefault();
+      const r = pg.getBoundingClientRect();
+      mdrag.pg = pg; mdrag.start = { x: (ev.clientX - r.left) / r.width, y: (ev.clientY - r.top) / r.height };
+      mdrag.box = document.createElement('div'); mdrag.box.className = 'vmark drawing ' + (state.markColor || 'yellow'); pg.appendChild(mdrag.box);
+    });
+  }
+  {
+    window.addEventListener('mousemove', (ev) => {
+      const { start, box, pg } = mdrag;
+      if (!start || !pg) return;
+      const r = pg.getBoundingClientRect(), x = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)), y = Math.max(0, Math.min(1, (ev.clientY - r.top) / r.height));
+      Object.assign(box.style, { left: Math.min(x, start.x) * 100 + '%', top: Math.min(y, start.y) * 100 + '%', width: Math.abs(x - start.x) * 100 + '%', height: Math.abs(y - start.y) * 100 + '%' });
+      box.dataset.x0 = Math.min(x, start.x); box.dataset.x1 = Math.max(x, start.x); box.dataset.y0 = Math.min(y, start.y); box.dataset.y1 = Math.max(y, start.y);
+    });
+    window.addEventListener('mouseup', async () => {
+      const { start, box, pg } = mdrag;
+      if (!start || !pg) return;
+      const b = box, page = Number(pg.dataset.n); mdrag.start = null; mdrag.pg = null; mdrag.box = null;
+      const m = { fileId: vstate.fileId, page, x0: +b.dataset.x0, x1: +b.dataset.x1, y0: +b.dataset.y0, y1: +b.dataset.y1, color: state.markColor || 'yellow' };
+      b.remove();
+      if (!(m.x1 - m.x0 > 0.005 && m.y1 - m.y0 > 0.003)) return;
+      const mk = await run(() => keep.markAdd(vstate.id, m));
+      if (mk) { await refresh(); libViewBar(); drawMarks(); markEditor(mk.id); }
+    });
+  }
+  function markEditor(markId) {
+    const e = libEntry(vstate.id), k = e && (e.marks || []).find(x => x.id === markId); if (!k) return;
+    openModal(`<form class="dialog narrow" id="markForm"><div class="dh"><h2>Highlight on page ${k.page}</h2></div><div class="db">
+      ${k.text ? `<p class="s3 markq">“${esc(k.text)}”</p>` : `<p class="s3 faint small" style="margin:0">No words could be read under this highlight (it may be a scan). Your note is still searchable.</p>`}
+      <label class="f s3">Your note<textarea name="note" rows="4" maxlength="2000" placeholder="e.g. This is wrong: my income changed on 1 May">${esc(k.note)}</textarea></label>
+      <div class="s3 markcolors">${['yellow', 'green', 'pink', 'blue'].map(c => `<label><input type="radio" name="color" value="${c}" ${k.color === c ? 'checked' : ''}><span class="sw ${c}"></span></label>`).join('')}</div></div>
+      <div class="df"><button type="button" class="btn danger" id="markDel">${icon('trash')}Remove</button><span class="spacer"></span><button type="button" class="btn" data-action="close">Close</button><button class="btn primary" type="submit">Save</button></div></form>`);
+    const f = $('#markForm');
+    f.onsubmit = async (ev) => { ev.preventDefault(); state.markColor = f.elements.color.value; const ok = await run(() => keep.markUpdate(vstate.id, markId, { note: f.elements.note.value, color: f.elements.color.value })); if (ok) { closeModal(); await refresh(); libViewBar(); drawMarks(); } };
+    $('#markDel').onclick = async () => { const ok = await run(() => keep.markRemove(vstate.id, markId)); if (ok) { closeModal(); await refresh(); libViewBar(); drawMarks(); } };
+  }
   async function viewerAction(act) {
     const e = libEntry(vstate.id);
     switch (act.dataset.action) {
@@ -1343,6 +1414,9 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
       case 'libViewFile': { if (!e) return true; const i = e.files.findIndex(x => x.id === vstate.fileId) + Number(act.dataset.step); if (e.files[i]) libViewOpen(e.id, e.files[i].id); return true; }
       case 'libViewZoom': { const z = Number(act.dataset.z); const steps = [0.5, 0.67, 0.8, 1, 1.25, 1.5, 2, 3]; let i = steps.indexOf(vstate.zoom); if (i < 0) i = 3; vstate.zoom = z === 0 ? 1 : steps[Math.max(0, Math.min(steps.length - 1, i + z))]; libViewLayout(); return true; }
       case 'libViewSheet': vstate.sheet = Number(act.dataset.i); libViewBody(); return true;
+      case 'libMarkEdit': markEditor(act.dataset.mark); return true;
+      case 'libMarkMode': vstate.marking = !vstate.marking; $('#viewer').classList.toggle('marking', vstate.marking); libViewBar(); return true;
+      case 'libMarkGo': { const k = (libEntry(vstate.id).marks || []).find(x => x.id === act.dataset.mark); const pg = k && $(`#viewer .vpage[data-n="${k.page}"]`); if (pg) { $('#viewer .vbody').scrollTop = pg.offsetTop + pg.offsetHeight * k.y0 - 80; const mk = pg.querySelector(`.vmark[data-mark="${k.id}"]`); if (mk) { mk.classList.add('flash'); setTimeout(() => mk.classList.remove('flash'), 1400); } } closeMenus(); return true; }
       case 'libAttOpen': await run(() => keep.libMailAttachment(vstate.id, vstate.fileId, Number(act.dataset.i), 'open')); return true;
       case 'libAttSave': { const p = await run(() => keep.libMailAttachment(vstate.id, vstate.fileId, Number(act.dataset.i), 'save')); if (p) toast('✓ Attachment saved'); return true; }
       case 'libAttKeep': { const r = await run(() => keep.libMailAttachment(vstate.id, vstate.fileId, Number(act.dataset.i), 'data')); if (r && r.added) { toast('✓ Kept in Data, in the folder "Email attachments"', 4000); await refresh(); } else if (r && r.errors.length) toast(r.errors.join('; '), 6000); return true; }

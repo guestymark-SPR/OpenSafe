@@ -35,6 +35,26 @@ async function pdfPage(key, buffer, n, width) {
   page.cleanup();
   return canvas.toBuffer('image/png');
 }
+/** The words on a PDF page inside a box given as fractions of the page as shown (for highlights). */
+async function pdfTextIn(key, buffer, n, box) {
+  const doc = await pdfDoc(key, buffer);
+  if (n < 1 || n > doc.numPages) return '';
+  const page = await doc.getPage(n);
+  const vp = page.getViewport({ scale: 1 });
+  const tc = await page.getTextContent();
+  const [A, B, C, D, E, F] = vp.transform;
+  const out = [];
+  for (const it of tc.items) {
+    if (!it.str || !it.str.trim()) continue;
+    const [, , c, d, e, f] = it.transform, h = Math.hypot(c, d) || 10, w = it.width || h * it.str.length * 0.5;
+    // middle of the piece of text, as shown
+    const x = e + w / 2, y = f + h * 0.35;
+    const u = (A * x + C * y + E) / vp.width, v = (B * x + D * y + F) / vp.height;
+    if (u >= box.x0 && u <= box.x1 && v >= box.y0 && v <= box.y1) out.push(it.str);
+  }
+  page.cleanup();
+  return out.join(' ').replace(/\s+/g, ' ').trim();
+}
 function clear() { for (const [, v] of pdfCache) v.task.destroy().catch(() => {}); pdfCache.clear(); }
 
 // ---------- email (.eml): message, formatted version, pictures inside it, attachments ----------
@@ -185,4 +205,4 @@ async function view(name, buffer) {
   return { kind: 'none', why: 'OpenSafe can\'t show this kind of file. Use Open in another app.' };
 }
 
-module.exports = { view, pdfPage, emailAttachment, clear };
+module.exports = { pdfTextIn, view, pdfPage, emailAttachment, clear };

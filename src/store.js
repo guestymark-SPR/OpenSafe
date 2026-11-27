@@ -101,6 +101,17 @@ function cleanDate(v) {
   // must be a real day: 2026-02-31 would otherwise roll over to 3 March
   return Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s ? '' : s;
 }
+const MARK_COLORS = ['yellow', 'green', 'pink', 'blue'];
+/** A highlight: which file and page, where (fractions of the page as shown), its colour, your note and the words under it. */
+function cleanMark(m) {
+  if (!m || typeof m !== 'object') return null;
+  const f = (v) => Math.max(0, Math.min(1, Number(v)));
+  const x0 = f(Math.min(m.x0, m.x1)), x1 = f(Math.max(m.x0, m.x1)), y0 = f(Math.min(m.y0, m.y1)), y1 = f(Math.max(m.y0, m.y1));
+  if (![x0, x1, y0, y1].every(Number.isFinite) || x1 - x0 < 0.005 || y1 - y0 < 0.003) return null;
+  const page = Math.max(1, Math.min(10000, Math.floor(Number(m.page) || 1)));
+  return { id: String(m.id || '').slice(0, 80) || uid(), fileId: String(m.fileId || '').slice(0, 80), page, x0, y0, x1, y1,
+    color: MARK_COLORS.includes(m.color) ? m.color : 'yellow', note: String(m.note || '').slice(0, 2000), text: String(m.text || '').slice(0, 2000), createdAt: String(m.createdAt || '').slice(0, 40) || nowIso() };
+}
 function cleanTags(v) {
   const arr = Array.isArray(v) ? v : String(v || '').split(',');
   const seen = new Set();
@@ -515,6 +526,7 @@ class Store {
     if (existing && LIBRARY_DOC_TYPES.includes(existing.prevDocType)) e.prevDocType = existing.prevDocType;
     if (existing && existing.suggestDone) e.suggestDone = true;
     if (get('onPhone') === true) e.onPhone = true; // a copy goes in the inventory file for the phone
+    e.marks = (Array.isArray(get('marks')) ? get('marks') : []).map(cleanMark).filter(Boolean).slice(0, 500); // highlights and notes on PDF pages
     const rep = get('reply'); // a letter written in OpenSafe: what's needed to change it later
     if (rep && typeof rep === 'object') {
       e.reply = {};
@@ -551,7 +563,7 @@ class Store {
     const out = [];
     for (const e of this.libraryView(kind)) {
       const full = this._libFind(e.id).e;
-      const meta = [e.title, e.docType, e.from, e.ref, e.folder, e.caseName, e.notes, e.tags.join(' '), ...e.files.map(f => f.name)].join(' ').toLowerCase();
+      const meta = [e.title, e.docType, e.from, e.ref, e.folder, e.caseName, e.notes, ...(e.marks || []).map(m => m.note + ' ' + m.text), e.tags.join(' '), ...e.files.map(f => f.name)].join(' ').toLowerCase();
       const body = Object.values(full.text || {}).join('\n');
       const low = body.toLowerCase();
       if (!words.every(w => meta.includes(w) || low.includes(w))) continue;
@@ -602,6 +614,7 @@ class Store {
     if (i < 0) throw new Error('File not found');
     const [f] = e.files.splice(i, 1);
     delete e.text[fileId];
+    if (e.marks) e.marks = e.marks.filter(m => m.fileId !== fileId);
     try { fs.unlinkSync(this.attachmentPath(e.id, f.file)); } catch (_) { /* already gone */ }
     e.updatedAt = nowIso();
     this.save();
@@ -703,6 +716,35 @@ class Store {
     this.save();
     return n;
   }
+  // ---------- highlights and notes on PDF pages ----------
+  addMark(id, m) {
+    const { e } = this._libFind(id);
+    if (!e.files.some(f => f.id === m.fileId)) throw new Error('File not found');
+    const mk = cleanMark(Object.assign({}, m, { id: uid(), createdAt: nowIso() }));
+    if (!mk) throw new Error('That highlight is too small.');
+    e.marks = e.marks || []; e.marks.push(mk); e.updatedAt = nowIso();
+    this.save();
+    return mk;
+  }
+  updateMark(id, markId, patch) {
+    const { e } = this._libFind(id);
+    const i = (e.marks || []).findIndex(x => x.id === markId);
+    if (i < 0) throw new Error('Highlight not found');
+    const next = cleanMark(Object.assign({}, e.marks[i], { note: patch.note !== undefined ? patch.note : e.marks[i].note, color: patch.color || e.marks[i].color }));
+    e.marks[i] = next; e.updatedAt = nowIso();
+    this.save();
+    return next;
+  }
+  removeMark(id, markId) {
+    const { e } = this._libFind(id);
+    const n = (e.marks || []).length;
+    e.marks = (e.marks || []).filter(x => x.id !== markId);
+    if (e.marks.length === n) throw new Error('Highlight not found');
+    e.updatedAt = nowIso();
+    this.save();
+    return true;
+  }
+
   // ---------- letters you write ----------
   /** Your name and address for letters, and the addresses of people you've written to. */
   letterBook() {
