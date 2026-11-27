@@ -1,7 +1,7 @@
 {
   "name": "opensafe",
   "productName": "OpenSafe",
-  "version": "2.8.0",
+  "version": "2.9.0",
   "description": "Free home inventory and asset manager for Windows, with a phone link for adding items from your Android phone.",
   "main": "src/main.js",
   "author": "guestymark-SPR",
@@ -9,19 +9,21 @@
   "homepage": "https://github.com/guestymark-SPR/OpenSafe",
   "scripts": {
     "start": "electron .",
-    "test": "node --test test/store.test.js test/security.test.js test/library.test.js",
+    "test": "node --test test/store.test.js test/security.test.js test/library.test.js test/letterinfo.test.js",
     "dist:win": "electron-builder --win nsis portable --x64",
     "pack:win-zip": "electron-builder --win zip --x64",
     "release:patch": "npm version patch --no-git-tag-version && git commit -am \"Release v$(node -p \\\"require('./package.json').version\\\")\" && git push",
     "release:minor": "npm version minor --no-git-tag-version && git commit -am \"Release v$(node -p \\\"require('./package.json').version\\\")\" && git push"
   },
   "dependencies": {
+    "@kenjiuno/msgreader": "^1.29.0",
     "@tesseract.js-data/eng": "^1.0.0",
     "electron-updater": "^6.8.11",
     "mammoth": "^1.13.0",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.5.438",
     "qrcode": "^1.5.4",
+    "rtf-stream-parser": "^4.0.0",
     "tesseract.js": "^7.0.0"
   },
   "devDependencies": {

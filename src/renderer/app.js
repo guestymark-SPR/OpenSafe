@@ -637,6 +637,7 @@
       <button class="btn primary" data-action="libEdit">${icon('edit')}Edit details</button></div>
     <div class="dhead libhead"><div><div class="meta">${esc(e.kind === 'document' ? e.docType : (e.folder || 'Data'))}${e.from ? ' · ' + esc(e.from) : ''}</div><h1 style="margin:2px 0 6px">${esc(e.title)}</h1>
       <div>${e.inVault ? `<span class="pill vault">${icon('lock')}Vault</span> ` : ''}${e.actBy ? (e.actDone ? `<span class="pill good">${icon('check')}Done (was due ${ukDate(e.actBy)})</span>` : `<span class="pill ${e.actBy < today ? 'bad' : 'warn'}">${icon('calendar')}Reply or act by ${ukDate(e.actBy)}</span>`) : ''}</div></div></div>
+    ${e.suggest && Object.keys(e.suggest).length ? `<div class="sugbar">${icon('search')}<span><b>OpenSafe read this letter.</b> Suggested: ${[e.suggest.from && `from <b>${esc(e.suggest.from)}</b>`, e.suggest.docDate && `dated <b>${ukDate(e.suggest.docDate)}</b>`, e.suggest.ref && `reference <b>${esc(e.suggest.ref)}</b>`].filter(Boolean).join(', ')}.</span><span class="spacer"></span><button class="btn small primary" data-action="libSugUse">${icon('check')}Use these</button><button class="btn small ghost" data-action="libSugNo">No thanks</button></div>` : ''}
     <div class="libgrid"><div class="libleft">
       <div class="card" id="libFiles"><h2>${icon('file')}Files <span class="faint">(${e.files.length})</span></h2>
         ${e.files.length ? `<div class="rows">${e.files.map(x => { const k = fileKind(x.name); return `<div class="rowi libfile ${x.id === sel.id ? 'on' : ''}" data-libsel="${esc(x.id)}" title="Click to preview, double-click to open">${icon(k[1])}<span style="flex:1;min-width:0"><b class="ell">${esc(x.name)}</b><div class="meta">${k[0]} · ${fileSize(x.size || 0)} · ${(e.textByFile || {})[x.id] !== undefined ? '' : ''}<span data-textstate="${esc(x.id)}">${libTextState(e, x)}</span></div></span>
@@ -733,6 +734,8 @@
       case 'libCopyText': await run(() => keep.copyPlain(state.libTextCopy || ''), '✓ Copied'); return true;
       case 'libFileRemove': if (e) { const f = e.files.find(x => x.id === act.dataset.file); if (f && confirm(`Remove "${f.name}" from this ${e.kind === 'document' ? 'document' : 'entry'}?\n\nThis deletes the file from OpenSafe and can't be undone. (Use Save a copy first if you want to keep it.)`)) { await run(() => keep.libRemoveFile(e.id, f.id), 'File removed'); await refresh(); } } return true;
       case 'libBin': libBinForm(act.dataset.kind); return true;
+      case 'libSugUse': if (e) { await run(() => keep.libSuggestion(e.id, true), '✓ Details filled in. Change them any time with Edit details.'); await refresh(); } return true;
+      case 'libSugNo': if (e) { await run(() => keep.libSuggestion(e.id, false)); await refresh(); } return true;
       case 'libSelClear': state.libPick.clear(); refreshLibList(); return true;
       case 'libMoveTo': { const ids = JSON.parse(act.dataset.ids), to = { kind: act.dataset.kind }; if (act.dataset.folder !== undefined) to.folder = act.dataset.folder; await libMoveIds(ids, to, to.kind === 'document' ? 'Documents' : to.folder ? 'Data › ' + to.folder : 'Data'); return true; }
       case 'libMoveNewFolder': newFolderForm(JSON.parse(act.dataset.ids)); return true;
@@ -915,6 +918,25 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
   });
   document.addEventListener('dragend', () => setTimeout(endDrag, 50));
 
+  // ---------- one search for everything ----------
+  function viewSearch() {
+    const q = state.gq || '', r = state.gres || { items: [], library: [] };
+    if (q.length < 2) return `<div class="head"><h1>Search</h1></div><div class="card empty">Type in the search box at the top of the menu to search your items, the words in their receipts and manuals, Documents and Data.</div>`;
+    const items = r.items.map(x => Object.assign({ a: asset(x.id) }, x)).filter(x => x.a);
+    const libs = r.library.map(x => Object.assign({ e: libEntry(x.id) }, x)).filter(x => x.e);
+    const docs = libs.filter(x => x.e.kind === 'document'), data = libs.filter(x => x.e.kind === 'data');
+    const total = items.length + libs.length;
+    const mark = (t) => { let h = esc(t); for (const w of q.toLowerCase().split(/\s+/).filter(x => x.length > 1)) h = h.replace(new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), m => `<mark>${m}</mark>`); return h; };
+    const section = (title, ico, list, row, more) => list.length ? `<div class="card srch"><h2>${icon(ico)}${title} <span class="faint">(${list.length})</span><span class="spacer"></span>${more}</h2><div class="rows">${list.slice(0, 8).map(row).join('')}</div>${list.length > 8 ? `<p class="meta" style="margin:8px 0 0">${list.length - 8} more…</p>` : ''}</div>` : '';
+    return `<div class="head"><h1>Search</h1><span class="sub">${total ? `${total} result${total === 1 ? '' : 's'} for "${esc(q)}"` : `Nothing found for "${esc(q)}"`}</span></div>
+      ${!total ? `<div class="card empty">Nothing matches "<b>${esc(q)}</b>". Search looks through item details, the words in their receipts and manuals, and Documents and Data (including the words inside letters, PDFs and emails). Words still being read can't be found yet.</div>` : ''}
+      <div class="srchgrid">
+      ${section('Items', 'box', items, x => `<div class="rowi" data-open="${x.a.id}">${thumb(x.a)}<span style="flex:1;min-width:0"><b>${mark(x.a.name)}</b><div class="meta">${esc([x.a.category, x.a.location].filter(Boolean).join(' · '))}</div>${x.snippet ? `<div class="meta snippet">In ${esc(x.inDoc)}: …${mark(x.snippet)}…</div>` : ''}</span>${icon('chevron')}</div>`, `<button class="btn small" data-action="srchItems">Show in Items</button>`)}
+      ${section('Documents', 'letter', docs, x => `<div class="rowi" data-action="libOpen" data-lib="${esc(x.e.id)}">${libThumb(x.e)}<span style="flex:1;min-width:0"><b>${mark(x.e.title)}</b><div class="meta">${esc([x.e.docType, x.e.from, x.e.docDate && ukDate(x.e.docDate)].filter(Boolean).join(' · '))}</div>${x.snippet ? `<div class="meta snippet">…${mark(x.snippet)}…</div>` : ''}</span>${icon('chevron')}</div>`, `<button class="btn small" data-action="srchLib" data-page="docs">Show in Documents</button>`)}
+      ${section('Data', 'folder', data, x => `<div class="rowi" data-action="libOpen" data-lib="${esc(x.e.id)}">${libThumb(x.e)}<span style="flex:1;min-width:0"><b>${mark(x.e.title)}</b><div class="meta">${esc([x.e.folder, x.e.from].filter(Boolean).join(' · '))}</div>${x.snippet ? `<div class="meta snippet">…${mark(x.snippet)}…</div>` : ''}</span>${icon('chevron')}</div>`, `<button class="btn small" data-action="srchLib" data-page="files">Show in Data</button>`)}
+      </div>`;
+  }
+
   // ---------- reading a file inside OpenSafe ----------
   const vstate = { id: '', fileId: '', model: null, zoom: 1, sheet: 0, obs: null, pageImgs: {} };
   const VMAX = 920; // page width at 100%
@@ -1080,12 +1102,17 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     const pageKey = [state.view, state.itemId, state.libId].join('|');
     if (pageKey !== state.lastPageKey) { state.lastPageKey = pageKey; v.classList.remove('enter'); void v.offsetWidth; v.classList.add('enter'); }
     else v.classList.remove('enter');
-    const views = { dashboard: viewDashboard, items: viewItems, item: viewItem, reminders: viewReminders, phone: viewPhone, reports: viewReports, settings: viewSettings, vault: viewVault, policies: viewPolicies, bin: viewBin, trips: viewTrips, places: viewPlaces, data: viewData, docs: () => viewLibrary('docs'), files: () => viewLibrary('files'), libitem: viewLibItem };
+    const views = { dashboard: viewDashboard, items: viewItems, item: viewItem, reminders: viewReminders, phone: viewPhone, reports: viewReports, settings: viewSettings, vault: viewVault, policies: viewPolicies, bin: viewBin, trips: viewTrips, places: viewPlaces, data: viewData, docs: () => viewLibrary('docs'), files: () => viewLibrary('files'), libitem: viewLibItem, search: viewSearch };
     v.innerHTML = (views[state.view] || viewDashboard)();
     if (state.view === 'phone') { loadCapture(); loadPhone(); const d = $('#wifiDetails'); if (d) d.ontoggle = () => { state.wifiOpen = d.open; }; }
     if (state.view === 'item') wireDrop();
     if (state.view === 'docs' || state.view === 'files') wireLibrary();
     if (state.view === 'libitem') loadLibItem();
+    if (state.view === 'search') loadLibThumbs();
+    if (state.view === 'items' && state.f.q.trim().length > 1 && (!state.itemHits || state.itemHits.q !== state.f.q.trim())) {
+      const q = state.f.q.trim();
+      keep.searchAll(q).then(r => { state.itemHits = { q, ids: new Set(r.items.map(x => x.id)), why: new Map(r.items.filter(x => x.snippet).map(x => [x.id, x])) }; if (state.view === 'items' && state.f.q.trim() === q && r.items.some(x => x.snippet)) { const qi = $('#q'), pos = qi && qi.selectionStart, had = document.activeElement === qi; render(); if (had) { const n = $('#q'); n.focus(); n.setSelectionRange(pos, pos); } } }).catch(() => {});
+    }
     if (state.view === 'vault') wireVaultForm();
     if (state.view === 'reports') spendingCard();
     if (state.view === 'trips' && $('#extraForm')) $('#extraForm').onsubmit = async (e) => { e.preventDefault(); const v = e.target.text.value; if (!v.trim()) return; await run(() => keep.addTripExtra(state.tripId, v)); await refresh(); };
@@ -1166,7 +1193,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
         const d = a.details || {};
         const hay = [a.name, a.brand, a.model, a.serial, a.barcode, a.category, a.location, a.notes, a.supplier, a.tags.join(' '), a.lentTo, a.lentContact, a.soldTo, a.insurer, a.policyNumber,
           d.reg, d.vin, d.engineNo, d.boatName, d.hin, d.sso, d.mmsi, d.callSign, d.mooring].filter(Boolean).join(' ').toLowerCase();
-        if (!q.split(/\s+/).every(w => hay.includes(w))) return false;
+        if (!q.split(/\s+/).every(w => hay.includes(w)) && !(state.itemHits && state.itemHits.q === f.q.trim() && state.itemHits.ids.has(a.id))) return false;
       }
       return true;
     });
@@ -1219,7 +1246,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     const placeLink = f.location ? `<div class="meta" style="margin:-6px 0 12px">Showing items in <b>${esc(f.location)}</b> and anything inside it · <a href="#" data-action="goPlace" data-place="${esc(f.location)}">Photos, videos and label for this place</a></div>` : '';
     return head + toolbar + placeLink + selBar + `<table class="list"><thead><tr><th style="width:34px"><input type="checkbox" class="selall" title="Select all shown" ${allOn ? 'checked' : ''}></th><th style="width:60px"></th><th>Item</th><th>Category</th><th>Location</th><th>Serial no.</th><th>Bought</th><th class="r">Value now</th><th></th></tr></thead><tbody>
       ${list.map(a => `<tr data-open="${a.id}" draggable="true" class="${state.sel.has(a.id) ? 'sel' : ''}" title="Drag onto a place to move it; right-click for more"><td><input type="checkbox" class="selbox" data-id="${a.id}" ${state.sel.has(a.id) ? 'checked' : ''} aria-label="Select ${esc(a.name)}"></td><td>${thumb(a)}</td>
-        <td><div class="name">${esc(a.name)}${partsOf(a.id).length ? ` <span class="pill">Set of ${partsOf(a.id).length + 1}</span>` : ''}</div><div class="meta">${esc([a.brand, a.model].filter(Boolean).join(' '))}${a.partOf && asset(a.partOf) ? `${a.brand || a.model ? ' · ' : ''}Part of ${esc(asset(a.partOf).name)}` : ''}</div></td>
+        <td><div class="name">${esc(a.name)}${partsOf(a.id).length ? ` <span class="pill">Set of ${partsOf(a.id).length + 1}</span>` : ''}</div>${state.itemHits && state.itemHits.q === f.q.trim() && state.itemHits.why.has(a.id) ? `<div class="meta snippet">In ${esc(state.itemHits.why.get(a.id).inDoc)}: …${esc(state.itemHits.why.get(a.id).snippet)}…</div>` : ''}<div class="meta">${esc([a.brand, a.model].filter(Boolean).join(' '))}${a.partOf && asset(a.partOf) ? `${a.brand || a.model ? ' · ' : ''}Part of ${esc(asset(a.partOf).name)}` : ''}</div></td>
         <td>${esc(a.category)}</td><td>${esc(a.location)}</td><td class="mono">${esc(a.serial) || '<span class="faint">—</span>'}</td>
         <td class="nowrap">${ukDate(a.purchaseDate)}</td><td class="r nowrap">${value(a) ? money(value(a)) : '—'}</td>
         <td>${vaultPill(a)}${a.status !== 'Owned' ? `<span class="pill">${esc(a.status)}</span>` : ''}${a.source === 'phone' ? '<span class="pill acc">phone</span>' : ''}${warrantyPill(a).includes('warn') ? warrantyPill(a) : ''}</td></tr>`).join('')}
@@ -2160,6 +2187,8 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
         case 'setLF': { e.stopPropagation(); closeMenus(); state.lf[act.dataset.f] = act.dataset.v; render(); break; }
         case 'setF': { e.stopPropagation(); closeMenus(); state.f[act.dataset.f] = act.dataset.v; render(); break; }
         case 'goBin': go('bin'); break;
+        case 'srchItems': state.f.q = state.gq; state.f.status = 'all'; go('items'); break;
+        case 'srchLib': { const pg = act.dataset.page; state.lfPage = pg; state.lf = { sort: 'added', q: state.gq }; state.libHits = new Map((state.gres ? state.gres.library : []).map(x => [x.id, x.snippet])); go(pg); break; }
         case 'ctxOpen': go('item', { itemId: act.dataset.id, tab: 'overview' }); break;
         case 'ctxEdit': itemForm(asset(act.dataset.id)); break;
         case 'ctxMove': { const ids = JSON.parse(act.dataset.ids); placePicker(ids.length === 1 ? `Move ${(asset(ids[0]) || {}).name}` : `Move ${ids.length} items`, (loc) => moveItemsTo(ids, loc)); break; }
@@ -2289,15 +2318,18 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
 
   // Icons in the menu, and the search box at the top of it (searches items as you type).
   $$('[data-icon]').forEach(el => { el.outerHTML = icon(el.dataset.icon); });
+  // The search box at the top of the menu searches everything: items (and the words in their receipts and
+  // manuals), Documents and Data, as you type.
   const gs = $('#gSearch');
-  $('#gSearchForm').onsubmit = (e) => { e.preventDefault(); state.f.q = gs.value.trim(); go('items'); };
-  gs.oninput = () => {
-    if (state.view !== 'items' && gs.value.trim().length < 2) return;
-    state.f.q = gs.value.trim();
-    if (state.view !== 'items') { go('items'); }
-    else { render(); }
-    setTimeout(() => { gs.focus(); }, 0);
+  let gsTimer = null;
+  const runGlobal = () => {
+    const q = gs.value.trim();
+    state.gq = q;
+    if (q.length < 2) { if (state.view === 'search') render(); return; }
+    keep.searchAll(q).then(r => { if (state.gq !== q) return; state.gres = r; if (state.view !== 'search') go('search'); else render(); setTimeout(() => gs.focus(), 0); }).catch(() => {});
   };
+  $('#gSearchForm').onsubmit = (e) => { e.preventDefault(); clearTimeout(gsTimer); runGlobal(); };
+  gs.oninput = () => { clearTimeout(gsTimer); gsTimer = setTimeout(runGlobal, 180); };
 
   refresh();
 })();

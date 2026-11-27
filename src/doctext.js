@@ -139,6 +139,42 @@ function emailInfo(buf) {
   return { subject, from, date, attachments: r.files, text: head + '\n\n' + body };
 }
 
+// ---------- Outlook email (.msg) ----------
+function msgParse(buf) {
+  const MsgReader = require('@kenjiuno/msgreader').default;
+  const r = new MsgReader(buf);
+  const d = r.getFileData();
+  if (d.error) throw new Error(d.error);
+  let html = '';
+  if (d.compressedRtf) {
+    try {
+      const { decompressRTF } = require('@kenjiuno/decompressrtf');
+      const { deEncapsulateSync } = require('rtf-stream-parser');
+      const iconv = require('iconv-lite');
+      const res = deEncapsulateSync(Buffer.from(decompressRTF(d.compressedRtf)), { decode: iconv.decode });
+      if (res.mode === 'html') html = String(res.text);
+    } catch (_) { /* plain text only */ }
+  }
+  if (!html && d.bodyHtml) html = String(d.bodyHtml);
+  const atts = (d.attachments || []).map((a, i) => {
+    let bytes = Buffer.alloc(0);
+    try { const x = r.getAttachment(a); bytes = Buffer.from(x.content || []); } catch (_) { /* unreadable */ }
+    return { index: i, name: a.fileName || a.name || 'attachment', type: a.attachMimeTag || '', cid: (a.pidContentId || '').replace(/[<>]/g, ''), bytes, hidden: !!a.attachmentHidden };
+  });
+  const to = (d.recipients || []).filter(x => !x.recipType || x.recipType === 'to').map(x => x.name && x.email && x.name !== x.email ? `${x.name} <${x.email}>` : (x.name || x.email)).filter(Boolean).join(', ');
+  const cc = (d.recipients || []).filter(x => x.recipType === 'cc').map(x => x.name || x.email).filter(Boolean).join(', ');
+  const fromName = d.senderName || '', fromMail = d.senderSmtpAddress || d.senderEmail || '';
+  const date = d.messageDeliveryTime || d.clientSubmitTime || d.creationTime || '';
+  return { subject: d.subject || '', fromName, from: fromName && fromMail && fromName !== fromMail ? `${fromName} <${fromMail}>` : (fromName || fromMail), to, cc, date, text: d.body || '', html, attachments: atts };
+}
+function msgInfo(buf) {
+  const m = msgParse(buf);
+  const dt = m.date ? new Date(m.date) : null;
+  const date = dt && !isNaN(dt) ? dt.toISOString().slice(0, 10) : '';
+  const head = [m.subject && 'Subject: ' + m.subject, m.from && 'From: ' + m.from, m.to && 'To: ' + m.to, m.date && 'Date: ' + m.date, m.attachments.length && 'Attachments: ' + m.attachments.map(a => a.name).join(', ')].filter(Boolean).join('\n');
+  return { subject: m.subject, from: m.fromName || m.from, date, attachments: m.attachments.map(a => a.name), text: head + '\n\n' + (tidy(m.text || '') || tidy(htmlText(m.html || ''))) };
+}
+
 // ---------- PDF ----------
 // The drawing library must be the very same copy pdf.js loads (from app.asar.unpacked in the installed app),
 // or its Path2D shapes aren't recognised and pages with embedded fonts or clipping fail to draw.
@@ -210,6 +246,7 @@ async function extractText(name, buf) {
   if (ext === '.pdf') return pdfText(buf);
   if (['.docx', '.docm', '.xlsx', '.xlsm', '.pptx', '.odt', '.ods', '.odp'].includes(ext)) return officeText(buf, ext);
   if (ext === '.eml') return emailInfo(buf).text;
+  if (ext === '.msg') return msgInfo(buf).text;
   if (ext === '.html' || ext === '.htm') return htmlText(buf.toString('utf8'));
   if (ext === '.rtf') return tidy(buf.toString('latin1').replace(/\\par[d]?/g, '\n').replace(/\{\\\*[^{}]*\}|\\[a-z]+-?\d* ?|[{}]/g, ''));
   if (PLAIN.has(ext)) {
@@ -222,7 +259,7 @@ async function extractText(name, buf) {
 /** Whether extractText can read anything from this kind of file. */
 function canRead(name) {
   const ext = path.extname(name || '').toLowerCase();
-  return ext === '.pdf' || IMAGE.has(ext) || PLAIN.has(ext) || ['.docx', '.docm', '.xlsx', '.xlsm', '.pptx', '.odt', '.ods', '.odp', '.eml', '.html', '.htm', '.rtf'].includes(ext);
+  return ext === '.pdf' || IMAGE.has(ext) || PLAIN.has(ext) || ['.docx', '.docm', '.xlsx', '.xlsm', '.pptx', '.odt', '.ods', '.odp', '.eml', '.msg', '.html', '.htm', '.rtf'].includes(ext);
 }
 
-module.exports = { extractText, canRead, emailInfo, unzip, pdfText, pdfFirstPage, pdfjs, canvasModule, pdfOptions, decodeEntities, mime: { splitPart, param, qp, decodeWords, charset } };
+module.exports = { msgParse, msgInfo, extractText, canRead, emailInfo, unzip, pdfText, pdfFirstPage, pdfjs, canvasModule, pdfOptions, decodeEntities, mime: { splitPart, param, qp, decodeWords, charset } };

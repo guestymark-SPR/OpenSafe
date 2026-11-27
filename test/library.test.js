@@ -179,3 +179,62 @@ test('move between Documents and Data, into folders, and link to items', () => {
   const s2 = new Store(s.dir); s2.load();
   assert.deepStrictEqual(s2.getLibraryEntry(d.id).assetIds, [a.id]);
 });
+
+test('suggested details from a letter: never overwrite, can be used or dismissed', () => {
+  const s = tmpStore();
+  const e = s.saveLibraryEntry({ kind: 'document', title: 'Letter', from: 'Me already' });
+  const f = s.addLibraryFile(e.id, 'scan.pdf', Buffer.from('%PDF'));
+  s.setLibraryText(e.id, f.id, 'Child Maintenance Service\nDate: 14 October 2026\nOur reference: 12 3456 7890\nDear Mr Smith');
+  let v = s.getLibraryEntry(e.id);
+  assert.deepStrictEqual(v.suggest, { docDate: '2026-10-14', ref: '12 3456 7890' }, 'no suggestion for a field already filled');
+  s.useSuggestion(e.id, true);
+  v = s.getLibraryEntry(e.id);
+  assert.strictEqual(v.from, 'Me already'); assert.strictEqual(v.docDate, '2026-10-14'); assert.strictEqual(v.ref, '12 3456 7890');
+  assert.strictEqual(v.suggest, undefined);
+  // dismissed stays dismissed when more files are read
+  const e2 = s.saveLibraryEntry({ kind: 'document', title: 'Other' });
+  const f2 = s.addLibraryFile(e2.id, 'a.pdf', Buffer.from('%PDF'));
+  s.setLibraryText(e2.id, f2.id, 'Veterans UK\nYour reference: AFCS/2026/1\n3 June 2026 letter text here');
+  assert.ok(s.getLibraryEntry(e2.id).suggest);
+  s.useSuggestion(e2.id, false);
+  const f3 = s.addLibraryFile(e2.id, 'b.pdf', Buffer.from('%PDF'));
+  s.setLibraryText(e2.id, f3.id, 'Veterans UK more text 4 June 2026 and so on');
+  assert.strictEqual(s.getLibraryEntry(e2.id).suggest, undefined);
+  assert.strictEqual(s.getLibraryEntry(e2.id).from, '');
+  // Data entries get no suggestions
+  const d = s.saveLibraryEntry({ kind: 'data', title: 'x' });
+  const fd = s.addLibraryFile(d.id, 'x.txt', Buffer.from('x'));
+  s.setLibraryText(d.id, fd.id, 'Veterans UK\nDate: 1 May 2026\nOur ref: AB12345');
+  assert.strictEqual(s.getLibraryEntry(d.id).suggest, undefined);
+});
+
+test('words in item receipts are searched, kept out of the item data, and move with the vault', async () => {
+  const s = tmpStore();
+  const a = s.saveAsset({ name: 'Boiler', serial: 'WB-1' });
+  const r = s.addDocument(a.id, 'service.pdf', Buffer.from('%PDF'), 'Receipt');
+  s.saveLibraryEntry({ kind: 'document', title: 'Gas safety certificate', from: 'British Gas' });
+  assert.deepStrictEqual(s.itemDocTextQueue().map(q => q.fileId), [r.id]);
+  s.setItemDocText(a.id, r.id, 'Annual service. Gas Safe engineer 556677. Flue checked.');
+  assert.deepStrictEqual(s.itemDocTextQueue(), []);
+  let res = s.searchAll('556677');
+  assert.deepStrictEqual(res.items.map(x => x.id), [a.id]);
+  assert.strictEqual(res.items[0].inDoc, 'service.pdf');
+  assert.match(res.items[0].snippet, /engineer 556677/);
+  res = s.searchAll('gas');
+  assert.deepStrictEqual(res.items.map(x => x.id), [a.id]);
+  assert.deepStrictEqual(res.library.map(x => x.id).length, 1, 'documents found too');
+  assert.deepStrictEqual(s.searchAll('boiler flue').items.map(x => x.id), [a.id], 'words can be split between details and the receipt');
+  assert.ok(!JSON.stringify(s.viewAssets()).includes('556677'), 'words are not part of the item data');
+  // vault: the words move with the item, and are hidden while it's locked
+  await s.enableEncryption('correct horse battery');
+  await s.setupVault('4826');
+  s.moveItemToVault(a.id, true);
+  assert.ok(!('docText' in s.data && s.data.docText[r.id]), 'moved out of the normal store');
+  assert.strictEqual(s.searchAll('556677').items.length, 1);
+  s.lockVault();
+  assert.strictEqual(s.searchAll('556677').items.length, 0);
+  assert.deepStrictEqual(s.itemDocTextQueue(), []);
+  await s.unlockVault('4826');
+  s.moveItemToVault(a.id, false);
+  assert.strictEqual(s.data.docText[r.id].includes('556677'), true);
+});

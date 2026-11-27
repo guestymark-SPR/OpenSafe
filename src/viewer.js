@@ -69,6 +69,9 @@ const escHtml = (s) => String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;',
 function emailView(buf) {
   const m = parseEmail(buf);
   const h = (k) => doctext.mime.decodeWords(m.headers[k] || '').trim();
+  return emailFromParsed(m, { subject: h('subject'), from: h('from'), to: h('to'), cc: h('cc'), date: m.headers.date || '' });
+}
+function emailFromParsed(m, head) {
   let html = m.html;
   const usedCids = new Set();
   let remoteImages = 0;
@@ -90,11 +93,23 @@ function emailView(buf) {
   }
   const attachments = m.files.map((f, i) => ({ index: i, name: f.name, type: f.type, size: f.bytes.length, inline: usedCids.has(f) })).filter(a => !a.inline);
   return {
-    kind: 'email', subject: h('subject'), from: h('from'), to: h('to'), cc: h('cc'), date: m.headers.date || '',
+    kind: 'email', subject: head.subject, from: head.from, to: head.to, cc: head.cc, date: head.date,
     html, text: m.text || (html ? '' : '(This email has no text.)'), remoteImages, attachments
   };
 }
-function emailAttachment(buf, index) {
+function msgView(buf) {
+  const m = doctext.msgParse(buf);
+  const parsed = { headers: {}, html: m.html, text: m.text, files: m.attachments.map(a => ({ name: a.name, type: a.type || guessType(a.name), cid: a.cid, bytes: a.bytes })) };
+  const v = emailFromParsed(parsed, { subject: m.subject, from: m.from, to: m.to, cc: m.cc, date: m.date ? new Date(m.date).toUTCString() : '' });
+  return v;
+}
+function guessType(name) { const x = path.extname(name || '').toLowerCase(); return { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.bmp': 'image/bmp', '.webp': 'image/webp', '.pdf': 'application/pdf' }[x] || 'application/octet-stream'; }
+function emailAttachment(buf, index, name) {
+  if (/\.msg$/i.test(name || '')) {
+    const a = doctext.msgParse(buf).attachments[Number(index)];
+    if (!a) throw new Error('Attachment not found');
+    return { name: path.basename(a.name.replace(/[\\/:*?"<>|]+/g, '_')) || 'attachment', bytes: a.bytes };
+  }
   const f = parseEmail(buf).files[Number(index)];
   if (!f) throw new Error('Attachment not found');
   return { name: path.basename(f.name.replace(/[\\/:*?"<>|]+/g, '_')) || 'attachment', bytes: f.bytes };
@@ -165,7 +180,7 @@ async function view(name, buffer) {
   if (ext === '.html' || ext === '.htm') return { kind: 'html', html: buffer.toString('utf8').slice(0, MAX_HTML), note: 'Saved web page: shown without scripts or anything from the internet.' };
   if (IMAGES.has(ext)) return { kind: 'image' };
   if (TEXTISH.has(ext)) return { kind: 'text', text: await doctext.extractText(name, buffer) };
-  if (ext === '.msg') return { kind: 'none', why: 'Outlook .msg emails can\'t be shown inside OpenSafe yet. Use Open in another app to read it in Outlook. Emails saved as .eml files (for example with Gmail\'s "Download message") are shown here.' };
+  if (ext === '.msg') return msgView(buffer);
   if (['.mp4', '.mov', '.m4v', '.webm', '.avi', '.mkv', '.3gp'].includes(ext)) return { kind: 'none', why: 'Videos open in your video player.' };
   return { kind: 'none', why: 'OpenSafe can\'t show this kind of file. Use Open in another app.' };
 }

@@ -120,6 +120,8 @@ contextBridge.exposeInMainWorld('keep', {
   // paths: files on disk; blobs: [{ name, data: Uint8Array }] for files that have no path
   libAddDropped: (kind, paths, blobs, entryId) => call('lib:addDropped', kind, paths, blobs, entryId),
   libSave: (e) => call('lib:save', e),
+  searchAll: (q) => call('search:all', q),
+  libSuggestion: (id, use) => call('lib:suggestion', id, use),
   libMove: (ids, to) => call('lib:move', ids, to),
   libLink: (ids, assetId, on) => call('lib:link', ids, assetId, on),
   libGet: (id) => call('lib:get', id),

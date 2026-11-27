@@ -238,6 +238,7 @@ class Store {
     out.policies = Array.isArray(out.policies) ? out.policies.map(p => this._normalisePolicy(p, p)) : [];
     out.library = Array.isArray(out.library) ? out.library.filter(e => e && e.id).map(e => Object.assign(this._normaliseLibrary(e, e), { updatedAt: e.updatedAt || nowIso() })) : [];
     out.libBin = Array.isArray(out.libBin) ? out.libBin.filter(b => b && b.entry && b.entry.id) : [];
+    out.docText = out.docText && typeof out.docText === 'object' && !Array.isArray(out.docText) ? out.docText : {};
     out.version = DATA_VERSION;
     return out;
   }
@@ -245,7 +246,7 @@ class Store {
   save() {
     if (!this.data) throw new Error('OpenSafe is locked.');
     if (this.vault && this.keys && this.keys[sec.KEY_VAULT] && this.data.vault) {
-      const vjson = Buffer.from(JSON.stringify({ assets: this.vault.assets, fileMeta: this.vault.fileMeta, bin: this.vault.bin || [], library: this.vault.library || [], libBin: this.vault.libBin || [] }));
+      const vjson = Buffer.from(JSON.stringify({ assets: this.vault.assets, fileMeta: this.vault.fileMeta, bin: this.vault.bin || [], library: this.vault.library || [], libBin: this.vault.libBin || [], docText: this.vault.docText || {} }));
       this.data.vault.blob = sec.seal(this.keys[sec.KEY_VAULT], sec.KEY_VAULT, vjson).toString('base64');
     }
     const json = Buffer.from(JSON.stringify(this.data, null, 2));
@@ -500,6 +501,11 @@ class Store {
     e.tags = cleanTags(get('tags'));
     e.assetIds = (Array.isArray(get('assetIds')) ? get('assetIds') : []).map(x => cleanString(x, 80)).filter(Boolean).slice(0, 200);
     if (existing && LIBRARY_DOC_TYPES.includes(existing.prevDocType)) e.prevDocType = existing.prevDocType;
+    if (existing && existing.suggestDone) e.suggestDone = true;
+    if (existing && existing.suggest && typeof existing.suggest === 'object') { // drop suggestions for details now filled in
+      const sg = {}; for (const k of ['from', 'docDate', 'ref']) if (existing.suggest[k] && !e[k]) sg[k] = String(existing.suggest[k]).slice(0, 200);
+      if (Object.keys(sg).length) e.suggest = sg;
+    }
     return e;
   }
   _libLists() { return { normal: this.data.library, vault: this.vault ? (this.vault.library = this.vault.library || []) : null }; }
@@ -588,8 +594,27 @@ class Store {
     try { found = this._libFind(id); } catch (_) { return false; } // deleted or vault locked meanwhile
     if (!found.e.files.some(f => f.id === fileId)) return false;
     found.e.text[fileId] = String(text || '').replace(/\u0000/g, '').slice(0, 300000);
+    this._suggestDetails(found.e);
     this.save();
     return true;
+  }
+  /** For a document missing its sender, date or reference, suggest them from its words (never overwrites). */
+  _suggestDetails(e) {
+    if (e.kind !== 'document' || e.suggestDone) return;
+    const want = ['from', 'docDate', 'ref'].filter(k => !e[k]);
+    if (!want.length) { delete e.suggest; return; }
+    const sug = require('./letterinfo').suggest(Object.values(e.text || {}).join('\n\n'));
+    const out = {};
+    for (const k of want) if (sug[k]) out[k] = sug[k];
+    if (Object.keys(out).length) e.suggest = out; else delete e.suggest;
+  }
+  /** Use the suggested details (use = true), or dismiss them. */
+  useSuggestion(id, use) {
+    const { e } = this._libFind(id);
+    if (use && e.suggest) for (const [k, v] of Object.entries(e.suggest)) if (!e[k]) e[k] = k === 'docDate' ? cleanDate(v) : cleanString(v, 200);
+    delete e.suggest; e.suggestDone = true; e.updatedAt = nowIso();
+    this.save();
+    return e;
   }
   /** Files whose text hasn't been read yet (for the background reader). Vault entries only while it's open. */
   libraryTextQueue() {
@@ -675,6 +700,51 @@ class Store {
   }
   /** Folders used in Data, for suggestions. */
   libraryFolders() { const s = new Set(); for (const e of this.libraryView('data')) if (e.folder) s.add(e.folder); return [...s].sort((a, b) => a.localeCompare(b)); }
+
+  // ---------- words in item receipts, manuals and other documents (for search) ----------
+  // Kept apart from the items: data.docText (normal) and the vault's docText (vault items and vault files).
+  _docTextMap(asset, rec) {
+    if (this.isVaultAsset(asset) || (rec && rec.vault)) { if (!this.vault) return null; return (this.vault.docText = this.vault.docText || {}); }
+    return (this.data.docText = this.data.docText || {});
+  }
+  itemDocTextQueue() {
+    const out = [];
+    for (const a of this.allAssets()) for (const r of a.documents || []) {
+      const map = this._docTextMap(a, r);
+      if (map && !(r.id in map)) out.push({ assetId: a.id, fileId: r.id, file: r.file, name: (r.vault && this.vault && this.vault.fileMeta[r.id] && this.vault.fileMeta[r.id].name) || r.name });
+    }
+    return out;
+  }
+  setItemDocText(assetId, fileId, text) {
+    const a = this.getAsset(assetId), r = a && a.documents.find(x => x.id === fileId);
+    if (!r) return false;
+    const map = this._docTextMap(a, r);
+    if (!map) return false;
+    map[fileId] = String(text || '').replace(/\u0000/g, '').slice(0, 300000);
+    this.save();
+    return true;
+  }
+  /** One search across items (details and the words in their documents), Documents and Data. */
+  searchAll(q) {
+    const words = String(q || '').toLowerCase().split(/\s+/).filter(Boolean).slice(0, 10);
+    if (!words.length) return { items: [], library: [] };
+    const snip = (body, w) => { const low = body.toLowerCase(), i = low.indexOf(w); return i < 0 ? '' : body.slice(Math.max(0, i - 60), i + w.length + 80).replace(/\s+/g, ' ').trim(); };
+    const items = [];
+    for (const a of this.allAssets()) {
+      const d = a.details || {};
+      const meta = [a.name, a.brand, a.model, a.serial, a.barcode, a.category, a.location, a.notes, a.supplier, (a.tags || []).join(' '), a.lentTo, a.soldTo, a.insurer, a.policyNumber, a.owner,
+        d.reg, d.vin, d.engineNo, d.boatName, d.hin, d.mmsi, d.callSign, ...a.documents.map(r => r.vault ? '' : r.name)].filter(Boolean).join(' ').toLowerCase();
+      const docs = a.documents.map(r => { const m = this._docTextMap(a, r); return { r, text: (m && m[r.id]) || '' }; }).filter(x => x.text);
+      const body = docs.map(x => x.text).join('\n').toLowerCase();
+      if (!words.every(w => meta.includes(w) || body.includes(w))) continue;
+      const w = words.find(x => !meta.includes(x) && body.includes(x));
+      let snippet = '', inDoc = '';
+      if (w) { const hit = docs.find(x => x.text.toLowerCase().includes(w)); snippet = snip(hit.text, w); inDoc = hit.r.vault ? 'Vault file' : hit.r.name; }
+      items.push({ id: a.id, snippet, inDoc });
+    }
+    const library = [...this.librarySearch('document', q), ...this.librarySearch('data', q)];
+    return { items, library };
+  }
 
   // ---------- date bought, suggested from when the photos were taken ----------
   /** Read the photo date of up to `limit` older photos that haven't been checked yet. Returns how many were checked. */
@@ -1735,6 +1805,7 @@ class Store {
     v.bin = Array.isArray(v.bin) ? v.bin.filter(b => b && b.asset && b.asset.id).map(b => ({ asset: this._normaliseAsset(b.asset, b.asset, true), deletedAt: b.deletedAt || nowIso() })) : [];
     v.library = Array.isArray(v.library) ? v.library.filter(e => e && e.id).map(e => Object.assign(this._normaliseLibrary(e, e), { updatedAt: e.updatedAt || nowIso() })) : [];
     v.libBin = Array.isArray(v.libBin) ? v.libBin.filter(b => b && b.entry && b.entry.id) : [];
+    v.docText = v.docText && typeof v.docText === 'object' ? v.docText : {};
     // forget names of vault files that no longer exist (items in the bin still count)
     const live = new Set();
     for (const a of [...this.data.assets, ...(this.data.bin || []).map(b => b.asset)]) for (const r of [...a.photos, ...a.documents]) if (r.vault) live.add(r.id);
@@ -1818,6 +1889,12 @@ class Store {
     this._atomicWrite(p, sec.seal(this.keys[keyId], keyId, plain));
   }
 
+  _moveDocText(ids, toVault) {
+    if (!this.vault) return;
+    const from = toVault ? (this.data.docText = this.data.docText || {}) : (this.vault.docText = this.vault.docText || {});
+    const to = toVault ? (this.vault.docText = this.vault.docText || {}) : (this.data.docText = this.data.docText || {});
+    for (const id of ids) if (id in from) { to[id] = from[id]; delete from[id]; }
+  }
   /** Move a whole item into the vault (toVault = true) or back out. */
   moveItemToVault(id, toVault) {
     if (!this.vault) throw Object.assign(new Error('Unlock the vault first.'), { code: 'VAULT_LOCKED' });
@@ -1829,6 +1906,7 @@ class Store {
         if (r.vault) { r.name = (this.vault.fileMeta[r.id] && this.vault.fileMeta[r.id].name) || r.name; delete r.vault; delete this.vault.fileMeta[r.id]; }
         this._reseal(id, r.file, sec.KEY_VAULT);
       }
+      this._moveDocText(normal.documents.map(r => r.id), true);
       this.data.assets.splice(this.data.assets.indexOf(normal), 1);
       this.vault.assets.push(normal);
       this.save();
@@ -1836,6 +1914,7 @@ class Store {
     }
     if (!inVault) { if (normal) return normal; throw new Error('Item not found'); }
     for (const r of [...inVault.photos, ...inVault.documents]) this._reseal(id, r.file, sec.KEY_MASTER);
+    this._moveDocText(inVault.documents.map(r => r.id), false);
     this.vault.assets.splice(this.vault.assets.indexOf(inVault), 1);
     this.data.assets.push(inVault);
     this.save();
@@ -1853,10 +1932,12 @@ class Store {
       this._reseal(assetId, r.file, sec.KEY_VAULT);
       this.vault.fileMeta[r.id] = { name: r.name };
       r.name = 'Vault file'; r.vault = true;
+      this._moveDocText([r.id], true);
     } else if (!toVault && r.vault) {
       this._reseal(assetId, r.file, sec.KEY_MASTER);
       r.name = (this.vault.fileMeta[r.id] && this.vault.fileMeta[r.id].name) || 'file';
       delete r.vault; delete this.vault.fileMeta[r.id];
+      this._moveDocText([r.id], false);
     }
     asset.updatedAt = nowIso();
     this.save();

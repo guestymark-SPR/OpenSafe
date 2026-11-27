@@ -237,6 +237,7 @@ async function importFromPath(file) {
     catch (_) { throw new Error('This file isn\'t an OpenSafe export, or it was damaged while being copied.'); }
     res = store.importCapture(parsed);
     res.docs = await importPhoneDocuments(parsed);
+    readSoon();
   } catch (e) {
     if (win) dialog.showMessageBox(win, { type: 'error', title: 'Import', message: 'Couldn\'t import that file', detail: e.message });
     throw e;
@@ -270,14 +271,26 @@ function libChanged() { if (win && !win.isDestroyed()) win.webContents.send('lib
 
 // Read the text inside new files, one at a time in the background, so they can be searched.
 let libReading = false;
+const itemTextFailed = new Set(); // item documents that couldn't be stored (e.g. deleted while reading)
 async function readLibraryText() {
   if (libReading) return;
   libReading = true;
   try {
     for (let guard = 0; guard < 5000; guard++) {
       if (!store || store.isLocked()) break;
-      const next = store.libraryTextQueue()[0];
-      if (!next) break;
+      let next = store.libraryTextQueue()[0];
+      const item = !next && store.itemDocTextQueue().find(q => !itemTextFailed.has(q.fileId));
+      if (!next && !item) break;
+      if (item) { // a receipt, manual or other document on an item
+        let text = '';
+        if (doctext.canRead(item.name)) {
+          try { text = await Promise.race([doctext.extractText(item.name, store.readAttachment(item.assetId, item.file)), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 10 * 60 * 1000))]); }
+          catch (_) { text = ''; }
+        }
+        if (!store || store.isLocked()) break;
+        if (!store.setItemDocText(item.assetId, item.fileId, text)) itemTextFailed.add(item.fileId);
+        continue;
+      }
       let text = '';
       if (doctext.canRead(next.name)) {
         try {
@@ -313,6 +326,7 @@ async function addLibraryBuffers(kind, files, entryId, fields) {
   const detailsFor = (f) => {
     const base = { title: f.name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ').slice(0, 200) };
     if (/\.eml$/i.test(f.name)) { try { const i = doctext.emailInfo(f.buf); return { title: i.subject || base.title, from: i.from, docDate: i.date, folder: 'Emails' }; } catch (_) { /* use the name */ } }
+    if (/\.msg$/i.test(f.name)) { try { const i = doctext.msgInfo(f.buf); return { title: i.subject || base.title, from: i.from, docDate: i.date, folder: 'Emails' }; } catch (_) { /* use the name */ } }
     return base;
   };
   if (entryId) {
@@ -391,6 +405,7 @@ function snapshot() {
   data.bin = store.binView();
   delete data.settings.phoneToken;
   data.assets = store.viewAssets();
+  delete data.docText;
   data.library = store.libraryView();
   data.libBin = store.libraryBinView();
   return {
@@ -519,7 +534,9 @@ function registerIpc() {
   });
   h('lib:move', (ids, to) => libNote(store.moveLibrary(Array.isArray(ids) ? ids.map(String) : [String(ids)], to || {})));
   h('lib:link', (ids, assetId, on) => libNote(store.linkLibrary(Array.isArray(ids) ? ids.map(String) : [String(ids)], String(assetId), on !== false)));
+  h('search:all', (q) => store.searchAll(String(q || '').slice(0, 200)));
   h('lib:save', (e) => libNote(store.saveLibraryEntry(e || {})));
+  h('lib:suggestion', (id, use) => libNote(store.useSuggestion(String(id), !!use)));
   h('lib:get', (id) => store.getLibraryEntry(String(id)));
   h('lib:text', (id, fileId) => store.libraryText(String(id), String(fileId)));
   h('lib:search', (kind, q) => store.librarySearch(kind === 'data' ? 'data' : 'document', String(q || '').slice(0, 200)));
@@ -588,8 +605,8 @@ function registerIpc() {
     return 'data:image/png;base64,' + png.toString('base64');
   });
   h('lib:mailAttachment', async (id, fileId, index, how) => {
-    const { buffer } = store.readLibraryFile(String(id), String(fileId));
-    const a = viewer.emailAttachment(buffer, index);
+    const { name, buffer } = store.readLibraryFile(String(id), String(fileId));
+    const a = viewer.emailAttachment(buffer, index, name);
     if (how === 'open') {
       const dir = path.join(OPEN_DIR, crypto.randomBytes(6).toString('hex'));
       fs.mkdirSync(dir, { recursive: true });
@@ -750,11 +767,11 @@ function registerIpc() {
       : [{ name: 'Documents and videos', extensions: ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'txt', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'mp4', 'mov', 'm4v', 'webm', 'avi', 'mkv', '3gp'] }];
     const r = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'], filters });
     if (r.canceled) return { added: 0, errors: [] };
-    return addFilesFromPaths(assetId, kind, docType, r.filePaths);
+    const res = addFilesFromPaths(assetId, kind, docType, r.filePaths); readSoon(); return res;
   });
   h('attach:addPaths', (assetId, kind, docType, paths) => {
     if (!Array.isArray(paths)) throw new Error('No files');
-    return addFilesFromPaths(assetId, kind, docType, paths.slice(0, 50).map(String));
+    const res = addFilesFromPaths(assetId, kind, docType, paths.slice(0, 50).map(String)); readSoon(); return res;
   });
   h('place:pick', async (place) => {
     const r = await dialog.showOpenDialog(win, { title: `Photos and videos of ${place}`, properties: ['openFile', 'multiSelections'], filters: [{ name: 'Photos and videos', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'mp4', 'mov', 'm4v', 'webm', 'avi', 'mkv', '3gp'] }] });

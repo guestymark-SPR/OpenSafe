@@ -18,7 +18,7 @@ The menu on the left is grouped by job:
 
 **+ New** at the bottom of the menu adds an item, a document, Data files, a packing list or an insurance policy from any page.
 
-The search box at the top of the menu searches all your items from any page. Filters on Items, Documents and Data are drop-down chips (**Category ▾**, **Place ▾**, **Status ▾**, **Sort ▾**); **×** on a chip clears it. Less-used page actions (duplicates, deleted items, import and export, printing) are under **More ▾**.
+The search box at the top of the menu (**Search everything…**) searches items, Documents and Data from any page, including the words inside letters, emails and the receipts and manuals attached to items. Results are grouped, with the matching words highlighted; **Show in Items**, **Show in Documents** or **Show in Data** carries the search across. Filters on Items, Documents and Data are drop-down chips (**Category ▾**, **Place ▾**, **Status ▾**, **Sort ▾**); **×** on a chip clears it. Less-used page actions (duplicates, deleted items, import and export, printing) are under **More ▾**.
 
 **Right-click** an item, a document or Data entry, a file or a place for the things you can do with it (open, edit, move, link, duplicate, print a label, delete).
 
@@ -43,7 +43,7 @@ On an item's page, **Edit** and **Log service** are always shown; less-used acti
 - **Reminders:** warranty end dates and next-due service dates, looking ahead a number of days you choose, plus a Windows notification at start-up for anything due within 7 days.
 - **Home page:** total value, amount paid, insured value, value by category, what's coming up, and gaps to fill (no serial number, no receipt, no insurer, no photo).
 - **Change many items at once:** tick items in the list and choose **Change…** to set their location, category, status (with who has them or who bought them) or insurance policy in one go.
-- **Search:** finds items by name, brand, model, serial number, barcode, registration, VIN, hull ID, who has it (name or phone/email), insurer, policy number and notes.
+- **Search:** finds items by name, brand, model, serial number, barcode, registration, VIN, hull ID, who has it (name or phone/email), insurer, policy number and notes, and by the words inside the receipts, invoices and manuals attached to them (the row shows *In file: …* with the words found).
 - **Rooms within locations:** write a location as a path, such as *Home / Garage / Shelf 2*. Choosing *Home / Garage* in Items includes everything on its shelves, and **Places** shows a count and value for each place. The phone's stock check works the same way.
 - **Item sets:** on an item's page, **Add parts…** groups the things that go with it (a drill's batteries and charger, a boat's tender and outboard). Each part keeps its own details; the set shows its total value, and a claim pack for the main item includes its parts.
 - **Value over time:** each change to an item's value is recorded with the date, and you can add valuations (for example from a jeweller). In **Settings → Value drop per year** you can set a percentage per category; items with no value entered then get an estimate from the price paid and how long you've had them. Estimates are used on the Home page and item pages, not in claim packs or reports.
@@ -84,7 +84,7 @@ On an item's page, **Edit** and **Log service** are always shown; less-used acti
 Two places for files that aren't about one item.
 
 - **Documents** is for important letters and papers: bills, bank and pension letters, medical and legal letters, certificates. Each document has a title, type, who it's from, the date on it, a reference, notes and tags, and any number of files (for example each page).
-- **Data** is for anything else you want kept safe: saved emails (.eml or .msg), PDFs, Word and Excel files, photos and so on. Each file becomes its own entry, which you can put in a folder. An .eml email gets its subject, sender and date filled in, and its message is shown on its page.
+- **Data** is for anything else you want kept safe: saved emails (.eml or .msg), PDFs, Word and Excel files, photos and so on. Each file becomes its own entry, which you can put in a folder. An .eml or Outlook .msg email gets its subject, sender and date filled in, and its message is shown on its page.
 
 Adding: **Add document…** or **Add files…**, or drag files anywhere onto the Documents or Data page (or onto a document to add more pages). In Documents, all the files you choose become one document, and OpenSafe asks for its details. Programs and scripts (.exe, .bat, .js and so on) can't be stored, because opening one could run it. Each file can be up to 500 MB.
 
@@ -94,18 +94,20 @@ Adding: **Add document…** or **Add files…**, or drag files anywhere onto the
 - PDFs (and scanned PDFs with no text, by reading the page picture);
 - photos and scans of pages (JPG, PNG, WebP, BMP);
 - Word (.docx), Excel (.xlsx), PowerPoint (.pptx) and OpenDocument files;
-- emails (.eml), web pages, RTF and plain text.
+- emails (.eml and Outlook .msg), web pages, RTF and plain text.
 
-It can't read Outlook .msg files, old .doc/.xls files, handwriting or videos; those are stored but only their details can be searched. Reading is automatic, so a poor photo can give mistakes. **Show the words found** on a file shows what was read.
+It can't read old .doc/.xls files, handwriting or videos; those are stored but only their details can be searched. Reading is automatic, so a poor photo can give mistakes. **Show the words found** on a file shows what was read.
 
 **Reading files inside OpenSafe:** click a file to show it in the preview box, and double-click it (or click **View**) to read it without leaving OpenSafe:
 - **PDFs:** every page, with zoom;
-- **emails (.eml):** the formatted message with its pictures, who it's from and to, and its attachments (open, save a copy, or **Keep in Data**). Pictures from the internet are never loaded, because they can tell the sender you opened the email. Links ask before opening in your browser;
+- **emails (.eml and Outlook .msg):** the formatted message with its pictures, who it's from and to, and its attachments (open, save a copy, or **Keep in Data**). Pictures from the internet are never loaded, because they can tell the sender you opened the email. Links ask before opening in your browser;
 - **Word (.docx):** headings, lists, tables and pictures, without the exact page layout;
 - **Excel (.xlsx):** each sheet as a table (first 1,000 rows);
 - **photos**, and the text of other readable files.
 
-Emails, Word files and saved web pages are shown with scripts switched off. Use **Open in another app** to edit, print or see the exact layout. Outlook .msg emails and old .doc files can't be shown inside OpenSafe yet; they open in Outlook or Word.
+Emails, Word files and saved web pages are shown with scripts switched off. Use **Open in another app** to edit, print or see the exact layout. Old .doc files can't be shown inside OpenSafe yet; they open in Word.
+
+**Details filled in for you:** after reading a letter, OpenSafe looks for who it's from, the date on it and a reference number, and offers them in a bar at the top of the document (**Use these** or **No thanks**). It only offers details for empty boxes, never changes anything without you, and can be wrong, so check them.
 
 **Reply or act by:** give a letter a date to reply by and it shows in **Reminders** until you tick **Done**.
 
@@ -254,6 +256,7 @@ src/report.js       Insurance/inventory PDF layout
 src/doctext.js      Reads the words in PDFs, Office files, emails and pictures (for Documents and Data search)
 src/phonedocs.js    Turns scanned documents from the phone into PDFs
 src/viewer.js       Shows PDFs, emails, Word and Excel files inside OpenSafe
+src/letterinfo.js   Suggests who a letter is from, its date and reference
 src/renderer/       Desktop UI (plain HTML/CSS/JS)
 src/phone/          Phone page for the Wi-Fi link
 mobile/             OpenSafe Capture phone/tablet app (published to GitHub Pages)
@@ -262,4 +265,4 @@ test/               Unit tests and a screenshot smoke test
 
 MIT licence.
 
-OpenSafe uses [pdf.js](https://github.com/mozilla/pdf.js) (Mozilla, Apache-2.0) to read PDFs, [@napi-rs/canvas](https://github.com/Brooooooklyn/canvas) (MIT) to draw scanned PDF pages for reading, [Tesseract.js](https://github.com/naptha/tesseract.js) (Apache-2.0) to read text in pictures, [pdf-lib](https://github.com/Hopding/pdf-lib) (MIT) to make PDFs, and [mammoth](https://github.com/mwilliamson/mammoth.js) (BSD-2-Clause) to show Word files.
+OpenSafe uses [pdf.js](https://github.com/mozilla/pdf.js) (Mozilla, Apache-2.0) to read PDFs, [@napi-rs/canvas](https://github.com/Brooooooklyn/canvas) (MIT) to draw scanned PDF pages for reading, [Tesseract.js](https://github.com/naptha/tesseract.js) (Apache-2.0) to read text in pictures, [pdf-lib](https://github.com/Hopding/pdf-lib) (MIT) to make PDFs, [mammoth](https://github.com/mwilliamson/mammoth.js) (BSD-2-Clause) to show Word files, and [@kenjiuno/msgreader](https://github.com/HiraokaHyperTools/msgreader) (Apache-2.0), [@kenjiuno/decompressrtf](https://github.com/HiraokaHyperTools/DeCompressRTF) (BSD-2-Clause), [rtf-stream-parser](https://github.com/mazira/rtf-stream-parser) (MIT) and [iconv-lite](https://github.com/ashtuchkin/iconv-lite) (MIT) to read Outlook .msg emails.
