@@ -129,6 +129,8 @@ Emails, Word files and saved web pages are shown with scripts switched off. Use 
 
 **Filters:** besides Type (or Folder) and Sort, Documents and Data can be filtered by **From / to**, **Tag**, **Case** and **Sent** (sent by me, or waiting for a reply). Each filter appears once there's something to choose.
 
+**Add a folder:** in Documents or Data, **Add a folder…** (or drag a folder in) adds every file in it and in the folders inside it, each as its own entry, with the folder names kept. Your files stay where they are. Files already in OpenSafe, and the same file twice in the folder, are left out; Windows' hidden files (Thumbs.db, desktop.ini, Office's ~$ files) are skipped. Up to 1,000 files at a time.
+
 **Watch a folder:** **Import & backup → Watch a folder** takes anything saved into a folder you choose (your scanner's folder, or one you save emails and downloads into) and adds it to Documents (each file its own document) or Data, once the file has finished saving. Each file is then moved into an **Added to OpenSafe** folder inside it; a file that's already kept is just moved. Temporary files (such as unfinished downloads) are left alone, and while OpenSafe is locked or closed, files wait. The folder is set per PC.
 
 **Items from order emails:** open an order confirmation email (.eml or .msg) in Data or Documents, then **More → Make items from this order…**. OpenSafe reads the shop, order number, date and the things bought with their prices; check each line (shops lay their emails out differently), choose a category and place, and each ticked line becomes an item with the email saved on it as a PDF receipt and linked back to the email.
@@ -139,6 +141,8 @@ Emails, Word files and saved web pages are shown with scripts switched off. Use 
 
 **Bills & budget:** a page in the sidebar for money in and out.
 - **Import bank CSV…**: choose your bank from the list (Starling, Nationwide, NatWest, Monzo, Barclays, or Other bank), then the CSV file you downloaded from it. You see the date range and the first rows before anything is added. Each bank's layout is checked by its column headings: if the file doesn't match (the bank changed its export, or you picked the wrong bank), nothing is guessed. You choose which column is the date, description and amount, and OpenSafe remembers that for next time. Dates are read day first (01/08/2026 is 1 August). Transactions already imported are skipped, so overlapping statements are fine, and **More → Imports** takes an import back.
+- **PDF statements** work too, including scanned ones (read with text recognition). OpenSafe finds the table by its headings (Date, Description, Paid out / Paid in or Amount, Balance) and where they sit on the page, copes with the date printed once per day, descriptions over two lines and dates without a year (taken from the statement date), and **checks every row against the running balance** printed on the statement: the preview says how many rows add up, and lists any that don't, so a misread figure can't slip in unnoticed. A statement without a running balance can't be checked, and the preview says so. A PDF with a password asks for it; the password isn't saved. Because a PDF's descriptions differ from the same bank's CSV, a PDF covering months you've already imported is matched on date and amount, so nothing is added twice.
+- **Several statements at once**: choose several files, or **Choose a folder…** to read every CSV and PDF in it (and folders inside it). Each file is checked and imported separately, so one can be taken back on its own.
 - The bank layouts come from accounting tools and exports people have shared, not from the banks, which don't publish them. The heading check is there so a change at the bank can't put wrong figures in.
 - Account numbers are never kept: account and sort-code columns aren't read, and long numbers in descriptions are shortened to their last four digits.
 - **Categories**: choose one for a transaction and OpenSafe offers to do the same for every payment like it, now and in future imports. Set monthly limits under **More → Categories and monthly limits**. **This month** shows money in, money out, what's left and each category against its limit. Transfers to savings or between your accounts aren't counted.
@@ -344,6 +348,7 @@ src/orderinfo.js    Reads order confirmation emails
 src/summary.js      Monday summary wording
 src/kinpack.js      "If something happens to me" locked file
 src/bankcsv.js      Reads bank CSV exports
+src/bankpdf.js      Reads bank statement PDFs, checked against the running balance
 src/budget.js       Bills & budget sums
 src/bundle.js       Bundle PDF: chosen documents in date order with a contents page and page numbers
 src/renderer/       Desktop UI (plain HTML/CSS/JS)

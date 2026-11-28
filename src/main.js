@@ -445,6 +445,7 @@ const { summaryText } = require('./summary');
 const orderinfo = require('./orderinfo')
 const kinpack = require('./kinpack')
 const bankcsv = require('./bankcsv')
+const bankpdf = require('./bankpdf')
 const budgetCalc = require('./budget');
 const { Sync } = require('./sync');
 /** Turn a page of HTML into an A4 PDF, with scripts off and nothing loaded from the internet. */
@@ -520,7 +521,7 @@ async function addLibraryPaths(kind, paths, entryId, fields, opts) {
   res.errors.unshift(...errors);
   return res;
 }
-async function addLibraryBuffers(kind, files, entryId, fields, { askDuplicates = false } = {}) {
+async function addLibraryBuffers(kind, files, entryId, fields, { askDuplicates = false, each = false } = {}) {
   const res = { added: 0, ids: [], errors: [], skipped: [] };
   if (askDuplicates && files.length) {
     // the same file already kept? (exact same bytes)
@@ -544,7 +545,7 @@ async function addLibraryBuffers(kind, files, entryId, fields, { askDuplicates =
   if (entryId) {
     for (const f of files) { try { store.addLibraryFile(entryId, f.name, f.buf); res.added++; } catch (e) { res.errors.push(e.message); } }
     if (res.added) res.ids.push(entryId);
-  } else if (kind === 'document') {
+  } else if (kind === 'document' && !each) {
     if (files.length) {
       const e = store.saveLibraryEntry(Object.assign({ kind: 'document' }, detailsFor(files[0]), { folder: '' }, fields || {}));
       for (const f of files) { try { store.addLibraryFile(e.id, f.name, f.buf); res.added++; } catch (err) { res.errors.push(err.message); } }
@@ -554,7 +555,7 @@ async function addLibraryBuffers(kind, files, entryId, fields, { askDuplicates =
     for (const f of files) {
       let e;
       try {
-        e = store.saveLibraryEntry(Object.assign({ kind: 'data' }, detailsFor(f), fields || {}));
+        e = store.saveLibraryEntry(Object.assign({ kind: kind === 'document' ? 'document' : 'data' }, detailsFor(f), fields || {}, f.fields || {}));
         store.addLibraryFile(e.id, f.name, f.buf); res.added++; res.ids.push(e.id);
       } catch (err) {
         res.errors.push(err.message);
@@ -563,6 +564,57 @@ async function addLibraryBuffers(kind, files, entryId, fields, { askDuplicates =
     }
   }
   libChanged(); readSoon();
+  return res;
+}
+
+// ---- adding a whole folder: every file in it (and the folders inside), each as its own entry; the files stay where they are ----
+const SKIP_FILE = /^(\.|~\$)|^(thumbs\.db|desktop\.ini|\.ds_store|icon\r)$/i;
+const FOLDER_MAX = 1000;
+function listFolderFiles(dir) {
+  const out = []; let more = false;
+  const walk = (d, rel, depth) => {
+    let ents; try { ents = fs.readdirSync(d, { withFileTypes: true }); } catch (_) { return; }
+    for (const n of ents.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (SKIP_FILE.test(n.name)) continue;
+      const p = path.join(d, n.name);
+      if (n.isDirectory()) { if (depth < 6 && path.resolve(p) !== path.resolve(store.dir)) walk(p, rel ? rel + ' / ' + n.name : n.name, depth + 1); }
+      else if (n.isFile()) { if (out.length >= FOLDER_MAX) { more = true; return; } out.push({ path: p, rel }); }
+    }
+  };
+  walk(dir, '', 0);
+  return { files: out, more };
+}
+async function addLibraryFolder(kind, dir) {
+  const top = path.basename(dir);
+  const { files, more } = listFolderFiles(dir);
+  const res = { added: 0, ids: [], errors: [], skipped: [], folder: top, found: files.length, more };
+  if (!files.length) { res.errors.push(`${top}: there are no files in this folder`); return res; }
+  // fingerprints first, so "already in OpenSafe" is asked once for the whole folder
+  const ok = [];
+  for (const f of files) {
+    try { const st = fs.statSync(f.path); if (st.size > LIB_MAX) throw new Error('over 500 MB'); if (!st.size) throw new Error('empty'); f.sha = crypto.createHash('sha256').update(fs.readFileSync(f.path)).digest('hex'); ok.push(f); }
+    catch (e) { res.errors.push(`${path.basename(f.path)}: ${e.message}`); }
+  }
+  const found = store.findLibraryShas(ok.map(f => f.sha));
+  let todo = ok;
+  const dups = ok.map((f, i) => found[i] ? { f, at: found[i] } : null).filter(Boolean);
+  // the same file twice inside the folder counts once
+  const seen = new Set(); todo = todo.filter(f => (seen.has(f.sha) ? (res.skipped.push({ name: path.basename(f.path), title: 'the same file elsewhere in this folder' }), false) : (seen.add(f.sha), true)));
+  if (dups.length && win && !win.isDestroyed()) {
+    const c = await dialog.showMessageBox(win, { type: 'question', title: 'Already in OpenSafe', noLink: true, defaultId: 0, cancelId: 0,
+      buttons: [dups.length === todo.length ? 'Don\'t add' : 'Skip those', 'Add anyway'],
+      message: `${dups.length} of the ${ok.length} files in this folder ${dups.length === 1 ? 'is' : 'are'} already in OpenSafe.`,
+      detail: dups.slice(0, 12).map(d => `${path.basename(d.f.path)} — already in ${d.at.kind === 'data' ? 'Data' : 'Documents'}: "${d.at.title}"`).join('\n') + (dups.length > 12 ? `\n…and ${dups.length - 12} more` : '') });
+    if (c.response === 0) { const skip = new Set(dups.map(d => d.f)); res.skipped.push(...dups.map(d => ({ name: path.basename(d.f.path), id: d.at.id, title: d.at.title }))); todo = todo.filter(f => !skip.has(f)); }
+  }
+  // then in small batches, so a big folder doesn't fill the memory
+  for (let i = 0; i < todo.length; i += 20) {
+    const batch = [];
+    for (const f of todo.slice(i, i + 20)) { try { batch.push({ name: path.basename(f.path), buf: fs.readFileSync(f.path), fields: { folder: (f.rel ? top + ' / ' + f.rel : top).slice(0, 120) } }); } catch (e) { res.errors.push(`${path.basename(f.path)}: ${e.message}`); } }
+    const r = await addLibraryBuffers(kind, batch, '', undefined, { each: true });
+    res.added += r.added; res.ids.push(...r.ids); res.errors.push(...r.errors);
+  }
+  if (more) res.errors.push(`Only the first ${FOLDER_MAX} files were added: add the rest folder by folder.`);
   return res;
 }
 
@@ -733,15 +785,20 @@ function registerIpc() {
     if (r.canceled) return { added: 0, ids: [], errors: [] };
     return addLibraryPaths(kind === 'data' ? 'data' : 'document', r.filePaths.slice(0, 200), entryId ? String(entryId) : '', undefined, { askDuplicates: true });
   });
+  h('lib:pickFolder', async (kind) => {
+    const r = await dialog.showOpenDialog(win, { title: kind === 'data' ? 'Choose a folder to add to Data' : 'Choose a folder of documents to add', properties: ['openDirectory'] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    return addLibraryFolder(kind === 'data' ? 'data' : 'document', r.filePaths[0]);
+  });
   h('lib:addPaths', (kind, paths, entryId) => {
     if (!Array.isArray(paths)) throw new Error('No files');
     return addLibraryPaths(kind === 'data' ? 'data' : 'document', paths.slice(0, 200).map(String), entryId ? String(entryId) : '', undefined, { askDuplicates: true });
   });
   h('lib:addDropped', async (kind, paths, blobs, entryId) => {
     const k = kind === 'data' ? 'data' : 'document', id = entryId ? String(entryId) : '';
-    const files = [], errors = [];
+    const files = [], errors = [], folders = [];
     for (const p of (Array.isArray(paths) ? paths : []).slice(0, 200).map(String)) {
-      try { const st = fs.statSync(p); if (!st.isFile()) { errors.push(`${path.basename(p)}: folders can't be added, only files`); continue; } if (st.size > LIB_MAX) throw new Error('over 500 MB'); files.push({ name: path.basename(p), buf: fs.readFileSync(p) }); }
+      try { const st = fs.statSync(p); if (st.isDirectory()) { if (!id) folders.push(p); else errors.push(`${path.basename(p)}: a folder can't be added to one entry; drop it on the list instead`); continue; } if (!st.isFile()) continue; if (st.size > LIB_MAX) throw new Error('over 500 MB'); files.push({ name: path.basename(p), buf: fs.readFileSync(p) }); }
       catch (e) { errors.push(`${path.basename(p)}: ${e.message}`); }
     }
     for (const b of (Array.isArray(blobs) ? blobs : []).slice(0, 200)) {
@@ -750,7 +807,8 @@ function registerIpc() {
       if (!buf.length) { errors.push(`${name}: empty`); continue; }
       files.push({ name, buf });
     }
-    const res = await addLibraryBuffers(k, files, id, undefined, { askDuplicates: true });
+    const res = files.length ? await addLibraryBuffers(k, files, id, undefined, { askDuplicates: true }) : { added: 0, ids: [], errors: [], skipped: [] };
+    for (const d of folders) { const r = await addLibraryFolder(k, d); res.added += r.added; res.ids.push(...r.ids); res.errors.push(...r.errors); res.skipped.push(...r.skipped); }
     res.errors.unshift(...errors);
     return res;
   });
@@ -957,33 +1015,97 @@ function registerIpc() {
   const bankResult = (token, r) => Object.assign({ token, name: bankFiles.get(token).name }, r, { transactions: undefined, count: r.transactions ? r.transactions.length : 0,
     preview: (r.transactions || []).slice(0, 8), total: (r.transactions || []).reduce((t, x) => t + x.amount, 0),
     from: r.transactions && r.transactions.length ? r.transactions.reduce((m, x) => x.date < m ? x.date : m, '9999') : '', to: r.transactions && r.transactions.length ? r.transactions.reduce((m, x) => x.date > m ? x.date : m, '') : '',
-    already: r.transactions ? (() => { const have = new Set(store.budget().transactions.map(t => t.key)); return r.transactions.filter(t => have.has(t.key)).length; })() : 0 });
+    already: r.transactions ? store.alreadyImported(r.transactions, { loose: !!r.fromPdf }).length : 0 });
   h('budget:banks', () => bankcsv.BANKS.map(b => ({ id: b.id, name: b.name, how: b.how })));
-  h('budget:read', async (bankId) => {
-    const pick = await dialog.showOpenDialog(win, { title: 'Choose the CSV file from your bank', properties: ['openFile'], filters: [{ name: 'CSV file', extensions: ['csv', 'txt'] }, { name: 'All files', extensions: ['*'] }] });
-    if (pick.canceled || !pick.filePaths[0]) return null;
-    const file = pick.filePaths[0];
-    if (fs.statSync(file).size > 20 * 1024 * 1024) throw new Error('That file is over 20 MB, which is too big for a bank statement CSV. Choose a shorter date range.');
-    const buf = fs.readFileSync(file);
+  // statements: one file (CSV or PDF), several files, or every statement in a folder
+  const STATEMENT = /\.(csv|txt|pdf)$/i;
+  const listStatements = (dir) => {
+    const out = [];
+    const walk = (d, depth) => { for (const n of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, n.name); if (n.isDirectory() && depth < 3 && !n.name.startsWith('.')) walk(p, depth + 1); else if (n.isFile() && STATEMENT.test(n.name) && !n.name.startsWith('~$')) out.push(p); } };
+    walk(dir, 0);
+    return out.sort().slice(0, 120);
+  };
+  const readPart = async (part, bank, password) => {
+    if (!part.isPdf) { part.result = bankcsv.read(part.buf, bank, store.budget().maps[bank]); return; }
+    try { part.result = await bankpdf.read(part.buf, bank, { password: password || part.password }); part.needPassword = false; if (password) part.password = password; }
+    catch (e) { if (e.needPassword) { part.needPassword = true; part.result = { ok: false, reason: password ? 'The password didn\'t open it.' : 'It has a password.' }; } else part.result = { ok: false, reason: 'Couldn\'t be read: ' + e.message }; }
+  };
+  const multiResult = (token) => {
+    const f = bankFiles.get(token);
+    const parts = f.parts.map(pt => { const r = pt.result || {}; const tx = r.transactions || [];
+      return { name: pt.name, ok: !!r.ok, reason: r.ok ? '' : (r.needsMap ? 'Its columns need choosing: import this file on its own' : r.reason || ''), needPassword: !!pt.needPassword, count: tx.length,
+        already: tx.length ? store.alreadyImported(tx, { loose: !!r.fromPdf }).length : 0, from: tx.reduce((m, x) => x.date < m ? x.date : m, '9999'), to: tx.reduce((m, x) => x.date > m ? x.date : m, ''),
+        problems: r.problems || [], problemCount: r.problemCount || 0, check: r.check || null, fromPdf: !!r.fromPdf, scanned: !!r.scanned }; });
+    const all = f.parts.filter(pt => pt.result && pt.result.ok).flatMap(pt => pt.result.transactions);
+    return { token, multi: true, ok: parts.some(x => x.ok), parts, needPassword: parts.some(x => x.needPassword), count: all.length, already: parts.reduce((t, x) => t + x.already, 0),
+      preview: all.slice().sort((a, b) => a.date.localeCompare(b.date)).slice(0, 8), from: all.length ? all.reduce((m, x) => x.date < m ? x.date : m, '9999') : '', to: all.reduce((m, x) => x.date > m ? x.date : m, ''),
+      problemCount: parts.reduce((t, x) => t + x.problemCount, 0), name: parts.length + ' files' };
+  };
+  const singleResult = (token) => {
+    const f = bankFiles.get(token), pt = f.parts[0];
+    if (pt.needPassword) return { token, name: pt.name, needPassword: true, wrongPassword: !!pt.password || pt.result.reason.startsWith('The password') };
+    return Object.assign(bankResult(token, pt.result), { scanned: !!pt.result.scanned });
+  };
+  h('budget:read', async (bankId, mode) => {
+    let files;
+    if (mode === 'folder') {
+      const pick = await dialog.showOpenDialog(win, { title: 'Choose the folder with your statements', properties: ['openDirectory'] });
+      if (pick.canceled || !pick.filePaths[0]) return null;
+      files = listStatements(pick.filePaths[0]);
+      if (!files.length) throw new Error('There are no CSV or PDF files in that folder (or the 3 levels of folders inside it).');
+    } else {
+      const pick = await dialog.showOpenDialog(win, { title: 'Choose the statements from your bank', properties: ['openFile', 'multiSelections'], filters: [{ name: 'CSV or PDF statements', extensions: ['csv', 'txt', 'pdf'] }, { name: 'All files', extensions: ['*'] }] });
+      if (pick.canceled || !pick.filePaths.length) return null;
+      files = pick.filePaths.slice(0, 120);
+    }
+    const parts = [];
+    for (const file of files) {
+      const isPdf = /\.pdf$/i.test(file), size = fs.statSync(file).size;
+      if (size > (isPdf ? 40 : 20) * 1024 * 1024) { parts.push({ name: path.basename(file), isPdf, result: { ok: false, reason: `Over ${isPdf ? 40 : 20} MB, too big for a statement` } }); continue; }
+      parts.push({ name: path.basename(file), isPdf, buf: fs.readFileSync(file) });
+    }
     const token = crypto.randomBytes(8).toString('hex');
-    bankFiles.clear(); bankFiles.set(token, { bank: String(bankId), buf, name: path.basename(file) });
-    return bankResult(token, bankcsv.read(buf, String(bankId), store.budget().maps[String(bankId)]));
+    bankFiles.clear(); bankFiles.set(token, { bank: String(bankId), parts, multi: parts.length > 1 });
+    for (const pt of parts) if (pt.buf) await readPart(pt, String(bankId));
+    if (parts.length > 1) return multiResult(token);
+    const f = bankFiles.get(token); f.buf = parts[0].buf; f.name = parts[0].name;
+    return singleResult(token);
+  });
+  // the password is used for these files only and never saved
+  h('budget:pdfPassword', async (token, password) => {
+    const f = bankFiles.get(token); if (!f) throw new Error('Choose the file again.');
+    for (const pt of f.parts) if (pt.needPassword) await readPart(pt, f.bank, String(password || ''));
+    return f.multi ? multiResult(token) : singleResult(token);
   });
   h('budget:remap', (token, map) => {
     const f = bankFiles.get(token); if (!f) throw new Error('Choose the file again.');
+    if (f.multi || f.parts[0].isPdf) throw new Error('Choosing columns works for one CSV file at a time.');
     f.map = map;
     return bankResult(token, bankcsv.readWithMap(f.buf, f.bank, map));
   });
   h('budget:import', (token, account) => {
     const f = bankFiles.get(token); if (!f) throw new Error('Choose the file again.');
-    const r = f.map ? bankcsv.readWithMap(f.buf, f.bank, f.map) : bankcsv.read(f.buf, f.bank, store.budget().maps[f.bank]);
-    if (!r.ok) throw new Error(r.reason || 'The file couldn\'t be read.');
-    if (f.map) store.saveBankMap(f.bank, r.headings, r.map);
-    const res = store.importTransactions(r.transactions, { bank: f.bank, account: account || (bankcsv.BANKS.find(b => b.id === f.bank) || {}).name });
+    const acct = account || (bankcsv.BANKS.find(b => b.id === f.bank) || {}).name;
+    let res;
+    if (f.multi) { // each file is its own import, so one can be taken back on its own
+      res = { added: 0, duplicates: 0, categorised: 0, matched: 0, priceChanges: [], importIds: [], toGoals: 0 };
+      const parts = f.parts.filter(pt => pt.result && pt.result.ok).sort((a, b) => (a.result.transactions[0] || {}).date > (b.result.transactions[0] || {}).date ? 1 : -1);
+      for (const pt of parts) { const x = store.importTransactions(pt.result.transactions, { bank: f.bank, account: acct, loose: !!pt.result.fromPdf, file: pt.name });
+        for (const k of ['added', 'duplicates', 'categorised', 'matched', 'toGoals']) res[k] += x[k] || 0; res.priceChanges.push(...x.priceChanges); res.importIds.push(x.importId); }
+      res.importId = res.importIds[res.importIds.length - 1];
+      res.files = parts.length;
+    } else {
+      const pt = f.parts[0];
+      const r = pt.isPdf ? pt.result : f.map ? bankcsv.readWithMap(f.buf, f.bank, f.map) : bankcsv.read(f.buf, f.bank, store.budget().maps[f.bank]);
+      if (!r || !r.ok) throw new Error((r && r.reason) || 'The file couldn\'t be read.');
+      if (f.map) store.saveBankMap(f.bank, r.headings, r.map);
+      res = store.importTransactions(r.transactions, { bank: f.bank, account: acct, loose: !!r.fromPdf, file: pt.name });
+      res.importIds = [res.importId];
+    }
     bankFiles.delete(token);
     notifyChanged();
-    const now = budgetNow(), added = new Set(store.budget().transactions.filter(t => t.importId === res.importId).map(t => t.id));
-    return Object.assign(res, { skipped: r.skipped, problems: r.problemCount, unusual: now.alerts.unusual.filter(u => added.has(u.id)), short: now.alerts.short });
+    const ids = new Set(res.importIds), now = budgetNow(), added = new Set(store.budget().transactions.filter(t => ids.has(t.importId)).map(t => t.id));
+    return Object.assign(res, { unusual: now.alerts.unusual.filter(u => added.has(u.id)), short: now.alerts.short });
   });
   h('budget:undo', (id) => { const n = store.undoImport(id); notifyChanged(); return n; });
   h('budget:categories', (list) => { const r = store.saveBudgetCategories(list); notifyChanged(); return r; });

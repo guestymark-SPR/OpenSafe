@@ -894,8 +894,9 @@ class Store {
     return f.sha;
   }
   /** Where a file with these exact bytes is already kept (documents and data; vault only while open). */
-  findLibraryFiles(buffers) {
-    const want = buffers.map(b => crypto.createHash('sha256').update(b).digest('hex'));
+  findLibraryFiles(buffers) { return this.findLibraryShas(buffers.map(b => crypto.createHash('sha256').update(b).digest('hex'))); }
+  /** The same, from SHA-256 fingerprints (so a whole folder can be checked without holding every file at once). */
+  findLibraryShas(want) {
     const found = want.map(() => null);
     this._shaChanged = false;
     for (const e of this._allLibrary()) for (const f of e.files) {
@@ -1782,11 +1783,12 @@ class Store {
    * Add transactions from a bank file. Ones already imported (same bank, date, amount, description, and position among identical ones) are skipped.
    * New ones are put in a category by your rules, matched to your regular bills and income, and price changes are noted.
    */
-  importTransactions(txs, { bank, account } = {}) {
+  importTransactions(txs, { bank, account, loose, file } = {}) {
     const B = require('./budget');
     const b = this.budget();
     const have = new Set(b.transactions.map(t => t.key));
-    const imp = { id: uid(), at: nowIso(), bank: cleanString(bank, 20), account: cleanString(account, 60), added: 0 };
+    if (loose) { const dup = new Set(this.alreadyImported(txs, { loose: true }).map(t => t.key)); txs = (txs || []).filter(t => { if (dup.has(t.key)) { have.add(t.key); } return true; }); }
+    const imp = { id: uid(), at: nowIso(), bank: cleanString(bank, 20), account: cleanString(account, 60), file: cleanString(file, 120), added: 0 };
     const res = { added: 0, duplicates: 0, categorised: 0, matched: 0, priceChanges: [], importId: imp.id };
     const fresh = [];
     for (const t of (Array.isArray(txs) ? txs : []).slice(0, 20000)) {
@@ -1829,6 +1831,22 @@ class Store {
     b.imports = b.imports.slice(-200);
     this.save();
     return res;
+  }
+  /**
+   * Which of these are already in: the same key, or with `loose` (a PDF statement, whose descriptions differ
+   * from the CSV's) the same date and amount, matched one for one so two equal payments on a day both count.
+   */
+  alreadyImported(txs, { loose } = {}) {
+    const b = this.budget();
+    const keys = new Set(b.transactions.map(t => t.key));
+    const pool = {};
+    if (loose) for (const t of b.transactions) { const k = t.date + '|' + t.amount; pool[k] = (pool[k] || 0) + 1; }
+    const out = [];
+    for (const t of txs || []) {
+      if (keys.has(t.key)) { out.push(t); continue; }
+      if (loose) { const k = t.date + '|' + Math.round(t.amount); if (pool[k] > 0) { pool[k]--; out.push(t); } }
+    }
+    return out;
   }
   /** Take back an import: removes the transactions it added. */
   undoImport(importId) {

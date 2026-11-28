@@ -121,6 +121,7 @@ contextBridge.exposeInMainWorld('keep', {
   openGuide: () => call('help:guide'),
   onLibrary: (fn) => ipcRenderer.on('lib:changed', () => fn()),
   libPick: (kind, entryId) => call('lib:pick', kind, entryId),
+  libPickFolder: (kind) => call('lib:pickFolder', kind),
   // Where each dropped file is on disk ('' for files some apps, such as Outlook, drop without a path).
   filePaths: (files) => Array.from(files || []).map(f => { try { return webUtils.getPathForFile(f) || ''; } catch (_) { return ''; } }),
   // paths: files on disk; blobs: [{ name, data: Uint8Array }] for files that have no path
@@ -137,7 +138,8 @@ contextBridge.exposeInMainWorld('keep', {
   orderMake: (id, p) => call('order:make', id, p),
   kinInfo: () => call('kin:info'),
   budgetBanks: () => call('budget:banks'),
-  budgetRead: (bank) => call('budget:read', bank),
+  budgetRead: (bank, mode) => call('budget:read', bank, mode),
+  budgetPdfPassword: (token, pw) => call('budget:pdfPassword', token, pw),
   budgetRemap: (token, map) => call('budget:remap', token, map),
   budgetImport: (token, account) => call('budget:import', token, account),
   budgetUndo: (id) => call('budget:undo', id),

@@ -72,6 +72,10 @@ const F = path.join(__dirname, 'fixtures', 'library');
     const br = bc.read(Buffer.from('"Date","Transaction type","Description","Paid out","Paid in","Balance"\n"21 Nov 2026","Visa","SHOP","\xa310.00","","\xa390.00"\n', 'latin1'), 'nationwide');
     if (!br.ok || br.transactions[0].amount !== -1000) throw new Error('bank CSV not read: ' + br.reason);
     require(path.join(R, 'app.asar', 'src', 'budget.js'));
+    const bpdf = require(path.join(R, 'app.asar', 'src', 'bankpdf.js'));
+    const sr = await bpdf.read(fs.readFileSync(path.join(__dirname, 'fixtures', 'statements', 'two-columns.pdf')), 'x');
+    if (!sr.ok || sr.check.matched !== 14) throw new Error('statement PDF not read: ' + (sr.reason || JSON.stringify(sr.check)));
+    console.log('ok   statement pdf read');
     console.log('ok   family pack and orders'); console.log('ok   bank csv read');
   } catch (e) { bad++; console.log('FAIL family pack/orders', e.message); }
   viewer.clear(); await require(path.join(R, 'app.asar', 'src', 'ocr.js')).stop();

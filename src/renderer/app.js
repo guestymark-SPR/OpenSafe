@@ -623,6 +623,7 @@
     const vaultLocked = state.snap.security.vault.exists && !state.snap.security.vault.unlocked;
     const head = `<div class="head"><h1>${L.title}</h1><span class="sub">${all.length} ${all.length === 1 ? L.one : L.many}</span><span class="spacer"></span>
       ${binN ? `<button class="btn" data-action="libBin" data-kind="${kind}">${icon('trash')}Deleted (${binN})</button>` : ''}
+      <button class="btn" data-action="libAddFolder" data-kind="${kind}" title="Add every file in a folder (and the folders inside it), each as its own ${kind === 'data' ? 'entry' : 'document'}">${icon('folder')}Add a folder…</button>
       <button class="btn primary" data-action="libAdd" data-kind="${kind}">${icon('plus')}${L.add}</button></div>`;
     const intro = kind === 'document'
       ? `<p class="lead">Keep an electronic copy of important letters and papers: bills, bank and pension letters, medical and legal letters, certificates. OpenSafe reads the words in them so you can search, and you can set a "reply by" date to get a reminder.</p>`
@@ -1092,7 +1093,7 @@
     }).join('');
     const unc = s.by[''] || 0;
     return `${!b.transactions.length ? `<div class="card" style="max-width:720px"><h2>Start with a statement</h2><p class="muted">Download your transactions as a CSV file from your bank, then use <b>Import bank CSV…</b> and choose your bank from the list. Nothing is sent anywhere: the file is read on this PC. Account numbers are never kept.</p>
-        <p class="muted" style="margin-bottom:0">You can also add your regular bills and income under <b>Bills &amp; income</b> first, to see what's coming up.</p></div>` : ''}
+        <p class="muted">PDF statements work too, including scanned ones: each row is checked against the statement's running balance. You can choose several files at once, or a whole folder.</p><p class="muted" style="margin-bottom:0">You can also add your regular bills and income under <b>Bills &amp; income</b> first, to see what's coming up.</p></div>` : ''}
       ${alertsHtml()}
       <div class="tiles bstats"><div class="card tile"><div class="lbl">Money in</div><div class="num">${gbp(s.income)}</div>${incomePlan ? `<div class="faint small">Regular income about ${gbp(incomePlan)} a month</div>` : ''}</div>
         <div class="card tile"><div class="lbl">Money out</div><div class="num">${gbp(s.spend)}</div>${billsPlan ? `<div class="faint small">Regular bills about ${gbp(billsPlan)} a month</div>` : ''}</div>
@@ -1487,6 +1488,12 @@
         closeModal(); await refresh(); toast('✓ Saved'); } catch (ex) { $('#regErr').textContent = ex.message; }
     };
   }
+  function multiTable(r) {
+    return `<table class="list small" style="margin-top:8px"><thead><tr><th>File</th><th class="num">Transactions</th><th>Dates</th><th>Check</th></tr></thead><tbody>${r.parts.map(p => `<tr><td>${esc(p.name)}</td>
+      <td class="num">${p.ok ? p.count + (p.already ? ` <span class="faint">(${p.already} already in)</span>` : '') : ''}</td><td class="meta nowrap">${p.ok && p.count ? `${ukDate(p.from)} – ${ukDate(p.to)}` : ''}</td>
+      <td>${!p.ok ? `<span class="err">${esc(p.needPassword ? 'Needs the password' : p.reason)}</span>` : p.fromPdf ? (p.check && p.check.checked ? (p.check.matched === p.check.checked ? `<span style="color:var(--good)">${icon('check')} adds up</span>` : `<span class="err">${p.check.checked - p.check.matched} rows don't add up</span>`) : '<span class="warn">no balance to check</span>') : 'CSV'}
+        ${p.problemCount ? `<div class="err small">${p.problems.slice(0, 3).map(esc).join('<br>')}</div>` : ''}</td></tr>`).join('')}</tbody></table>`;
+  }
   async function bankImportForm() {
     const banks = await run(() => keep.budgetBanks());
     const last = state.bBank || (bdata().imports.slice(-1)[0] || {}).bank || '';
@@ -1495,13 +1502,28 @@
       <p class="s3 muted small" id="bkHow" style="margin:0"></p>
       <label class="f s3">Account name<input name="account" maxlength="60" placeholder="For example: Starling current account (optional, to tell accounts apart)"></label>
       <div class="s3" id="bkOut"></div><div class="err s3" id="bkErr"></div></div>
-      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button type="button" class="btn" id="bkPick">${icon('folder')}Choose the CSV file…</button><button class="btn primary" type="submit" id="bkGo" disabled>Import</button></div></form>`);
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button type="button" class="btn" id="bkPick">${icon('file')}Choose files…</button><button type="button" class="btn" id="bkFolder">${icon('folder')}Choose a folder…</button><button class="btn primary" type="submit" id="bkGo" disabled>Import</button></div></form>`);
     const f = $('#bkForm'); let cur = null;
     const how = () => { const x = banks.find(y => y.id === $('#bkBank').value); $('#bkHow').textContent = x ? x.how : ''; if (x && !f.elements.account.value) f.elements.account.placeholder = x.name + ' (optional, to tell accounts apart)'; };
     $('#bkBank').onchange = () => { how(); cur = null; $('#bkOut').innerHTML = ''; $('#bkGo').disabled = true; };
     how();
+    const checkLine = (c) => !c ? '' : c.checked ? (c.matched === c.checked ? `<span style="color:var(--good)">${icon('check')} Checked against the printed balance on ${c.checked} of ${c.rows} rows: all add up.</span>` : `<span style="color:var(--bad)">${icon('alert')} ${c.checked - c.matched} of ${c.checked} rows don't add up to the printed balance (listed below).</span>`) : `<span class="warn">${icon('alert')} This statement has no running balance, so the amounts couldn't be checked. Compare them with the PDF.</span>`;
     const show = (r) => {
       cur = r; $('#bkErr').textContent = '';
+      if (r.needPassword) {
+        $('#bkOut').innerHTML = `<div class="note" style="margin-bottom:8px">${r.wrongPassword ? 'That password didn\'t open it. ' : ''}${r.multi ? 'Some of these PDFs have' : 'This PDF has'} a password (often your date of birth or part of your account details: your bank\'s letter will say). It's used to read ${r.multi ? 'them' : 'it'} now and isn't saved.</div>
+          <div style="display:flex;gap:8px"><input type="password" id="bkPw" autocomplete="off" placeholder="PDF password" style="max-width:260px"><button type="button" class="btn" id="bkPwGo">Open</button></div>${r.multi ? '<div id="bkMulti"></div>' : ''}`;
+        $('#bkPwGo').onclick = async () => { try { show(await keep.budgetPdfPassword(r.token, $('#bkPw').value)); } catch (ex) { $('#bkErr').textContent = ex.message; } };
+        $('#bkPw').onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); $('#bkPwGo').click(); } };
+        if (r.multi) { $('#bkMulti').innerHTML = multiTable(r); }
+        $('#bkGo').disabled = true; return;
+      }
+      if (r.multi) {
+        $('#bkOut').innerHTML = `<div class="card" style="margin:0"><b>${r.count.toLocaleString('en-GB')} transactions</b> from ${r.parts.filter(x => x.ok).length} of ${r.parts.length} files${r.count ? `, ${ukDate(r.from)} to ${ukDate(r.to)}` : ''}.${r.already ? `<br>${r.already} are already in OpenSafe and won't be added twice.` : ''}
+          ${multiTable(r)}<div class="faint small" style="margin-top:6px">Each file is imported separately, so you can take one back under More → Imports.</div></div>`;
+        $('#bkGo').disabled = !r.ok || r.count - r.already <= 0; return;
+      }
+      if (!r.ok && r.fromPdf) { $('#bkOut').innerHTML = `<div class="note">${esc(r.reason || 'Nothing could be read from this PDF.')}</div>`; $('#bkGo').disabled = true; return; }
       if (!r.ok) {
         const cols = r.headings.map((h, i) => h == null ? '' : `<option value="${i}">${esc(h || 'Column ' + (i + 1))}</option>`).join('');
         const sel = (f2, label, req) => `<label class="f">${label}${req ? '' : ' <span class="faint">(if there is one)</span>'}<select data-map="${f2}"><option value="">—</option>${cols}</select></label>`;
@@ -1525,22 +1547,26 @@
       $('#bkOut').innerHTML = `<div class="card" style="background:var(--surface2,transparent);margin:0"><b>${r.count.toLocaleString('en-GB')} transaction${r.count === 1 ? '' : 's'}</b> from ${ukDate(r.from)} to ${ukDate(r.to)} in <span class="mono">${esc(r.name)}</span>.
         ${r.already ? `<br>${r.already} of them ${r.already === 1 ? 'is' : 'are'} already in OpenSafe and won't be added twice.` : ''}${r.skipped ? `<br><span class="faint">${r.skipped} row${r.skipped === 1 ? '' : 's'} left out (balance lines${r.problemCount ? ', or rows whose date or amount couldn\'t be read' : ''}).</span>` : ''}
         ${r.problemCount ? `<div class="err" style="margin-top:6px">${r.problems.map(esc).join('<br>')}</div>` : ''}
+        ${r.fromPdf ? `<div style="margin-top:6px">${checkLine(r.check)}${r.scanned ? '<br><span class="faint small">This is a scanned statement, read with text recognition.</span>' : ''}</div>` : ''}
         <div class="faint small" style="margin-top:8px">Check these look right: money out should be minus.</div>
         <table class="list small" style="margin-top:4px"><tbody>${r.preview.map(t => `<tr><td class="nowrap">${ukDate(t.date)}</td><td>${esc(t.description)}</td><td class="num nowrap">${gbp(t.amount, true)}</td></tr>`).join('')}</tbody></table></div>`;
       $('#bkGo').disabled = r.count - r.already <= 0;
     };
-    $('#bkPick').onclick = async () => {
+    const pick = async (mode) => {
       const bank = $('#bkBank').value; if (!bank) { $('#bkErr').textContent = 'Choose your bank first.'; return; }
       state.bBank = bank;
-      try { const r = await keep.budgetRead(bank); if (r) show(r); } catch (ex) { $('#bkErr').textContent = ex.message; }
+      $('#bkOut').innerHTML = '<div class="muted">Reading…</div>';
+      try { const r = await keep.budgetRead(bank, mode); if (r) show(r); else $('#bkOut').innerHTML = ''; } catch (ex) { $('#bkOut').innerHTML = ''; $('#bkErr').textContent = ex.message; }
     };
+    $('#bkPick').onclick = () => pick('files');
+    $('#bkFolder').onclick = () => pick('folder');
     f.onsubmit = async (ev) => {
       ev.preventDefault(); if (!cur || !cur.ok) return;
       busy(f, true, 'Importing…');
       try {
         const r = await keep.budgetImport(cur.token, f.elements.account.value.trim());
         closeModal(); state.btab = 'tx'; await refresh(); state.bm = cur.to ? keyFor(cur.to) : nowKey(); render();
-        openModal(`<div class="dialog narrow"><div class="dh"><h2>Imported</h2></div><div class="db"><p class="s3" style="margin:0">${r.added} transaction${r.added === 1 ? '' : 's'} added${r.duplicates ? `, ${r.duplicates} already here` : ''}. ${r.categorised} put in a category${r.matched ? `, ${r.matched} matched to your regular bills and income` : ''}.</p>
+        openModal(`<div class="dialog narrow"><div class="dh"><h2>Imported</h2></div><div class="db"><p class="s3" style="margin:0">${r.added} transaction${r.added === 1 ? '' : 's'} added${r.files ? ` from ${r.files} files` : ''}${r.duplicates ? `, ${r.duplicates} already here` : ''}. ${r.categorised} put in a category${r.matched ? `, ${r.matched} matched to your regular bills and income` : ''}.</p>
           ${r.short ? `<div class="s3 err"><b>Your balance could run short on ${ukDate(r.short.date)}.</b> See Coming up.</div>` : ''}
           ${(r.unusual || []).length ? `<div class="s3"><b>Unusual payments to check:</b><br>${r.unusual.map(u => `${esc(u.description)} ${gbp(-u.amount)} on ${ukDate(u.date)} (usually about ${gbp(u.usual)})`).join('<br>')}</div>` : ''}
           ${r.priceChanges.length ? `<div class="s3"><b>Price changes:</b><br>${r.priceChanges.map(c => `${esc(c.name)}: ${gbp(c.from)} → <b>${gbp(c.to)}</b> (${ukDate(c.date)})`).join('<br>')}</div>` : ''}
@@ -1618,7 +1644,7 @@
   function budgetImportsForm() {
     const b = bdata();
     openModal(`<div class="dialog"><div class="dh"><h2>Imports</h2></div><div class="db"><p class="s3 muted" style="margin:0">Imported the wrong file, or chose the wrong bank? Take it back: every transaction it added is removed.</p>
-      <div class="s3">${b.imports.length ? `<table class="list"><tbody>${b.imports.slice().reverse().map(i => `<tr><td>${ukDate(i.at)}</td><td>${esc(i.account || i.bank)}</td><td>${i.added} added</td><td style="text-align:right"><button class="btn small danger" data-action="bUndo" data-id="${esc(i.id)}">Take back</button></td></tr>`).join('')}</tbody></table>` : '<p class="muted">Nothing imported yet.</p>'}</div></div>
+      <div class="s3">${b.imports.length ? `<table class="list"><tbody>${b.imports.slice().reverse().map(i => `<tr><td>${ukDate(i.at)}</td><td>${esc(i.account || i.bank)}${i.file ? `<div class="meta faint">${esc(i.file)}</div>` : ""}</td><td>${i.added} added</td><td style="text-align:right"><button class="btn small danger" data-action="bUndo" data-id="${esc(i.id)}">Take back</button></td></tr>`).join('')}</tbody></table>` : '<p class="muted">Nothing imported yet.</p>'}</div></div>
       <div class="df"><button class="btn primary" data-action="close">Done</button></div></div>`);
   }
   function wireBudget() {
@@ -1848,6 +1874,7 @@
   async function libAction(act) {
     const e = state.libId && libEntry(state.libId);
     switch (act.dataset.action) {
+      case 'libAddFolder': { const kind = act.dataset.kind; toast('Adding the folder: a big one can take a minute…', 4000); const r = await run(() => keep.libPickFolder(kind)); if (!r) return true; await libAfterAdd(r, kind, ''); if (r.found) toast(`✓ ${r.added} of ${r.found} file${r.found === 1 ? '' : 's'} added from "${r.folder}"${r.skipped.length ? `; ${r.skipped.length} left out as duplicates` : ''}`, 6000); return true; }
       case 'libAdd': { const kind = act.dataset.kind; const r = await run(() => keep.libPick(kind, '')); await libAfterAdd(r, kind, ''); return true; }
       case 'libAddMore': { if (!e) return true; const r = await run(() => keep.libPick(e.kind, e.id)); await libAfterAdd(r, e.kind, e.id); return true; }
       case 'libOpen': go('libitem', { libId: act.dataset.lib }); return true;
@@ -2084,6 +2111,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
   // ---------- one search for everything ----------
   // ---------- Help and What's new ----------
   const NEWS = [
+    ['2.25.0', 'PDF statements and whole folders', ['<b>PDF bank statements</b>, including scanned ones: every row is checked against the statement\'s running balance before it\'s added.', 'Import <b>several statements or a whole folder</b> at once; months already imported (from a CSV or PDF) aren\'t added twice.', '<b>Add a folder…</b> in Documents and Data adds every file in it, each as its own entry. You can also drag a folder in.']],
     ['2.24.0', 'Ways to save', ['A new <b>Ways to save</b> tab in Bills &amp; budget: possible double charges, bank charges, small spending that adds up, categories creeping up, and bills and subscriptions to review, each with what it\'s worth a year.', 'Cancel a subscription and the saving is counted in <b>Savings you\'ve made</b>; turn what you\'d save into a savings goal in one click.']],
     ['2.23.0', 'Net worth, debts and charts', ['<b>Net worth &amp; debts</b>: everything you have minus what you owe, over time, and when each debt will be paid off (with extra payments, highest interest or smallest first).', '<b>Worth a look</b>: categories near or over their limit, unusual payments and price rises, also in the Monday summary.', '<b>Charts</b> of money in and out, spending by category and your expected balance; <b>split</b> a transaction across categories; or budget with <b>one amount</b> for everyday spending.']],
     ['2.22.0', 'Know what\'s coming', ['<b>Run-short warning</b>: from your latest statement\'s balance, your bills, income and everyday spending, Bills &amp; budget shows your balance for the next six weeks and warns you if it could drop too low.', '<b>Found in your statements</b>: regular payments OpenSafe spots that aren\'t bills yet, to add in one go, and a <b>Subscriptions</b> list with yearly costs.', '<b>Payday to payday</b> months, <b>carry-over</b> for categories, <b>yearly bills</b> with what to put aside, and a reminder <b>four weeks before</b> a contract ends.']],
@@ -2133,6 +2161,8 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     ['networth', 2, 'Net worth and debts', 'Bills &amp; budget → Net worth &amp; debts. Add a pension or savings and a debt with its interest rate. Check the paid-off date against your card statement\'s own estimate if it shows one.'],
     ['split', 3, 'Split a transaction', 'Transactions → the ⋔ button by a category. Split a shop into two categories; This month should count each part in its own category.'],
     ['save', 1, 'Ways to save', 'Bills &amp; budget → Ways to save, after importing a few months of statements. Check each finding against your statement: a "double charge" may be two real purchases, and a "fee" may not be one (press It\'s fine or Not a charge).'],
+    ['pdfstatement', 1, 'PDF bank statements', 'Bills &amp; budget → Import bank CSV… → Choose files… and pick a PDF statement from Starling, Nationwide or NatWest. The preview should say every row adds up to the printed balance. If it can\'t find the table, or rows don\'t add up, tell me which bank: the reader can be taught its layout.'],
+    ['addfolder', 2, 'Add a folder', 'Documents → Add a folder… and choose a folder with a few files and a folder inside it. Each file should become its own document, filed under the folder\'s name.'],
     ['kinpack', 1, 'If something happens to me', 'Import & backup → <b>Make the pack…</b>. Tick a document, set a passphrase, save. Double-click the saved file: it should open in your browser, refuse a wrong passphrase, and show everything with the right one. Try opening a document from it, and try it on your phone too.'],
     ['twopc', 3, 'Two PCs (only if you have a second PC)', 'Choose the same OneDrive folder on both under Import & backup → Two PCs. Add an item on one; once OneDrive has copied it (usually a few minutes), it should appear on the other.']
   ];
