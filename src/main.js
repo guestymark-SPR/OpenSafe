@@ -392,7 +392,8 @@ const { FolderWatch } = require('./watcher');
 const { summaryText } = require('./summary');
 const orderinfo = require('./orderinfo')
 const kinpack = require('./kinpack')
-const bankcsv = require('./bankcsv');
+const bankcsv = require('./bankcsv')
+const budgetCalc = require('./budget');
 const { Sync } = require('./sync');
 /** Turn a page of HTML into an A4 PDF, with scripts off and nothing loaded from the internet. */
 async function renderHtmlToPdf(html) {
@@ -573,6 +574,12 @@ function snapshot() {
   const watch = watcher ? watcher.status() : null;
   data.libReplies = store.replyStatus();
   data.complaints = store.complaints();
+  { // Bills & budget sums, worked out here so the window and the tests use the same ones
+    const b = store.budget(), d = new Date(), today = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())).toISOString().slice(0, 10);
+    const months = new Set(b.transactions.map(t => t.date.slice(0, 7))); months.add(today.slice(0, 7));
+    data.budgetCalc = { today, plan: budgetCalc.plan(b, today), goals: Object.fromEntries(b.goals.map(g => [g.id, budgetCalc.goalStatus(g, b.transactions, today)])),
+      months: Object.fromEntries([...months].map(m => [m, budgetCalc.monthSummary(b.transactions, b.categories, m)])) };
+  }
   data.complaintInfo = Object.fromEntries(data.complaints.map(c => [c.id, complaints.status(c)]));
   return {
     data,
@@ -938,6 +945,11 @@ function registerIpc() {
   h('budget:txDelete', (ids) => { const r = store.deleteTransactions(ids); notifyChanged(); return r; });
   h('budget:ruleDelete', (text) => { store.deleteRule(text); notifyChanged(); });
   h('budget:regularSave', (r) => { const x = store.saveRegular(r); notifyChanged(); return x; });
+  h('budget:goalSave', (g) => { const x = store.saveGoal(g); notifyChanged(); return x; });
+  h('budget:goalDelete', (id) => { store.deleteGoal(id); notifyChanged(); });
+  h('budget:goalMoney', (id, m) => { store.addGoalMoney(id, m); notifyChanged(); });
+  h('budget:goalMoneyRemove', (id, mid) => { store.removeGoalMoney(id, mid); notifyChanged(); });
+  h('budget:txGoal', (ids, goalId) => { const r = store.setTransactionGoal(ids, goalId); notifyChanged(); return r; });
   h('budget:regularDelete', (id) => { store.deleteRegular(id); notifyChanged(); });
   // ---- "If something happens to me" pack ----
   const KIN_TYPES = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', txt: 'text/plain', html: 'text/html', htm: 'text/html',

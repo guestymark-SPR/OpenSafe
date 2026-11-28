@@ -115,8 +115,34 @@ app.on('browser-window-created', (_e, win) => {
       await js(`(() => { const p = document.querySelector('[data-action=libCaseOpen][data-case="AFCS appeal"]'); p.click(); })()`); await wait(900);
       R.caseMoney = await js(`(document.getElementById('caseMoney') || {}).innerText`);
       await shot('b9-case');
-      // take back the last import
+      // ---- savings goal and plan
       await js(`document.querySelector('[data-nav=budget]').click()`); await wait(500);
+      await js(`(() => { const b = [...document.querySelectorAll('[data-action=bTab]')].find(x => x.dataset.t === 'goals'); b.click(); })()`); await wait(400);
+      await js(`document.querySelector('[data-action=bGoalNew]').click()`); await wait(400);
+      const by = new Date(Date.UTC(Y, M - 1 + 11, 15)).toISOString().slice(0, 10); // 12 months counting this one
+      await js(`(() => { const el = document.getElementById('goalForm').elements; el.name.value = 'Boat deposit'; el.target.value = '6000'; el.by.value = '${by}'; el.start.value = '1200'; })()`);
+      await js(`document.querySelector('#goalForm [type=submit]').click()`); await wait(800);
+      await js(`document.querySelector('[data-action=bGoalMoney]').click()`); await wait(400);
+      await js(`(() => { const el = document.getElementById('gmForm').elements; el.amount.value = '400'; el.note.value = 'From the AFCS payment'; })()`);
+      await js(`document.querySelector('#gmForm [type=submit]').click()`); await wait(800);
+      R.goal = await js(`document.querySelector('.goal').innerText.replace(/\\s+/g, ' ')`);
+      await shot('b10-goal');
+      // add income so the plan has something to plan
+      await js(`(() => { const b = [...document.querySelectorAll('[data-action=bTab]')].find(x => x.dataset.t === 'regular'); b.click(); })()`); await wait(400);
+      await js(`document.querySelector('[data-action=bRegNew][data-kind=income]').click()`); await wait(400);
+      await js(`(() => { const el = document.getElementById('regForm').elements; el.name.value = 'AFCS payment'; el.amount.value = '1450'; el.every.value = 'month'; el.next.value = '${dmy(m, 1).split('/').reverse().join('-')}'; el.match.value = 'AFCS'; })()`);
+      await js(`document.querySelector('#regForm [type=submit]').click()`); await wait(800);
+      // a groceries limit
+      await js(`document.querySelector('#view .head [data-action=moreMenu]').click()`); await wait(200);
+      await js(`document.querySelector('#view .head [data-action=bCats]').click()`); await wait(500);
+      await js(`(() => { const tr = [...document.querySelectorAll('#bcForm tbody tr')].find(r => r.querySelector('[data-k=name]').value === 'Groceries'); tr.querySelector('[data-k=limit]').value = '250'; })()`);
+      await js(`document.querySelector('#bcForm [type=submit]').click()`); await wait(800);
+      await js(`(() => { const b = [...document.querySelectorAll('[data-action=bTab]')].find(x => x.dataset.t === 'plan'); b.click(); })()`); await wait(600);
+      R.planTiles = await js(`document.querySelector('.bstats').innerText.replace(/\\s+/g, ' ')`);
+      R.planRows = await js(`[...document.querySelectorAll('#view table.list')[0].querySelectorAll('tr')].map(r => r.innerText.replace(/\\s+/g, ' '))`);
+      R.byMonth = await js(`document.querySelectorAll('#view table.list')[1] ? document.querySelectorAll('#view table.list')[1].innerText.replace(/\\s+/g, ' ') : ''`);
+      await shot('b11-plan');
+      // take back the last import
       await js(`document.querySelector('#view .head [data-action=moreMenu]').click()`); await wait(200);
       await js(`document.querySelector('#view .head [data-action=bImports]').click()`); await wait(500);
       await js(`document.querySelector('[data-action=bUndo]').click()`); await wait(900);

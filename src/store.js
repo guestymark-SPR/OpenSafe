@@ -1624,7 +1624,10 @@ class Store {
     if (!this.data.budget || typeof this.data.budget !== 'object') this.data.budget = {};
     const b = this.data.budget;
     if (!Array.isArray(b.categories) || !b.categories.length) b.categories = B.DEFAULT_CATEGORIES.map(c => Object.assign({}, c));
-    for (const k of ['rules', 'transactions', 'regular', 'imports']) if (!Array.isArray(b[k])) b[k] = [];
+    for (const k of ['rules', 'transactions', 'regular', 'imports', 'goals']) if (!Array.isArray(b[k])) b[k] = [];
+    // 2.20 filed "Savings" as a transfer; savings now have their own kind so they can be counted as saved
+    for (const c of b.categories) if (c.name === 'Savings' && c.kind === 'transfer' && !b.savingsKindSet) c.kind = 'savings';
+    b.savingsKindSet = true;
     if (!b.maps || typeof b.maps !== 'object') b.maps = {};
     return b;
   }
@@ -1632,7 +1635,7 @@ class Store {
   saveBudgetCategories(list) {
     const b = this.budget();
     const seen = new Set();
-    const out = (Array.isArray(list) ? list : []).map(c => ({ id: c.id && /^[a-z0-9]{1,20}$/i.test(c.id) ? c.id : 'c' + uid().slice(0, 8), name: cleanString(c.name, 60), limit: Math.max(0, Math.round(Number(c.limit) || 0)), kind: ['income', 'transfer'].includes(c.kind) ? c.kind : 'spend' }))
+    const out = (Array.isArray(list) ? list : []).map(c => ({ id: c.id && /^[a-z0-9]{1,20}$/i.test(c.id) ? c.id : 'c' + uid().slice(0, 8), name: cleanString(c.name, 60), limit: Math.max(0, Math.round(Number(c.limit) || 0)), kind: ['income', 'transfer', 'savings'].includes(c.kind) ? c.kind : 'spend' }))
       .filter(c => c.name && !seen.has(c.name.toLowerCase()) && seen.add(c.name.toLowerCase())).slice(0, 80);
     if (!out.length) throw new Error('Keep at least one category.');
     const ids = new Set(out.map(c => c.id));
@@ -1673,6 +1676,11 @@ class Store {
       fresh.push(n);
     }
     fresh.sort((x, y) => x.date.localeCompare(y.date));
+    const savingsCat = (b.categories.find(c => c.kind === 'savings') || {}).id || '';
+    for (const n of fresh) {
+      const g = n.amount < 0 && b.goals.find(x => !x.done && x.match && n.description.toLowerCase().includes(x.match.toLowerCase()));
+      if (g) { n.goalId = g.id; res.toGoals = (res.toGoals || 0) + 1; if (!n.categoryId && savingsCat) { n.categoryId = savingsCat; res.categorised++; } }
+    }
     for (const n of fresh) {
       const r = b.regular.find(x => B.matchesRegular(n, x));
       if (!r) continue;
@@ -1732,6 +1740,44 @@ class Store {
   }
   setTransactionNote(id, note) { const t = this.budget().transactions.find(x => x.id === id); if (!t) throw new Error('Transaction not found'); t.note = cleanString(note, 500); this.save(); }
   deleteTransactions(ids) { const b = this.budget(), want = new Set(ids || []); const before = b.transactions.length; b.transactions = b.transactions.filter(t => !want.has(t.id)); this.save(); return before - b.transactions.length; }
+  // ----- savings goals -----
+  saveGoal(input) {
+    const b = this.budget();
+    const ex = input && input.id ? b.goals.find(g => g.id === input.id) : null;
+    if (input && input.id && !ex) throw new Error('Goal not found');
+    const g = { id: ex ? ex.id : uid(), name: cleanString(input.name, 80), target: Math.max(0, Math.round(Number(input.target) || 0)), by: cleanDate(input.by),
+      match: cleanString(input.match, 60), notes: cleanString(input.notes, 1000), done: !!input.done, createdAt: ex ? ex.createdAt : nowIso(), money: ex ? ex.money || [] : [] };
+    if (!g.name) throw new Error('Give the goal a name.');
+    if (!g.target) throw new Error('Enter how much you want to save.');
+    if (!ex) { const start = Math.round(Number(input.start) || 0); if (start) g.money.push({ id: uid(), date: todayIso(), amount: start, note: 'Saved already', start: true }); }
+    if (ex) Object.assign(ex, g); else b.goals.push(g);
+    if (g.match) { const sc = (b.categories.find(c => c.kind === 'savings') || {}).id || ''; for (const t of b.transactions) if (!t.goalId && t.amount < 0 && t.description.toLowerCase().includes(g.match.toLowerCase())) { t.goalId = g.id; if (!t.categoryId && sc) t.categoryId = sc; } }
+    this.save();
+    return ex || g;
+  }
+  deleteGoal(id) { const b = this.budget(); b.goals = b.goals.filter(g => g.id !== id); for (const t of b.transactions) if (t.goalId === id) t.goalId = ''; this.save(); }
+  /** Money put in (or taken out, as a minus) by hand. */
+  addGoalMoney(id, m) {
+    const g = this.budget().goals.find(x => x.id === id); if (!g) throw new Error('Goal not found');
+    const amount = Math.round(Number(m && m.amount));
+    if (!Number.isFinite(amount) || !amount) throw new Error('Enter an amount.');
+    g.money.push({ id: uid(), date: cleanDate(m.date) || todayIso(), amount, note: cleanString(m.note, 200) });
+    g.money.sort((x, y) => x.date.localeCompare(y.date));
+    this.save();
+  }
+  removeGoalMoney(id, moneyId) { const g = this.budget().goals.find(x => x.id === id); if (!g) throw new Error('Goal not found'); g.money = g.money.filter(m => m.id !== moneyId); this.save(); }
+  /** Count transactions towards a goal ('' to take them off). They go in the Savings category if they have none. */
+  setTransactionGoal(ids, goalId) {
+    const b = this.budget(), want = new Set(ids || []);
+    const g = goalId ? b.goals.find(x => x.id === goalId) : null;
+    if (goalId && !g) throw new Error('Goal not found');
+    const sc = (b.categories.find(c => c.kind === 'savings') || {}).id || '';
+    let n = 0;
+    for (const t of b.transactions) if (want.has(t.id)) { t.goalId = g ? g.id : ''; if (g && !t.categoryId && sc) t.categoryId = sc; n++; }
+    this.save();
+    return n;
+  }
+
   /** A regular bill or income. */
   saveRegular(input) {
     const B = require('./budget');

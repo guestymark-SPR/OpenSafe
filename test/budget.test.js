@@ -86,3 +86,66 @@ test('cases, deleting categories, renewal reminders', () => {
   assert.ok(s.reminders().some(r => r.kind.startsWith('Contract ends') && r.assetName === 'Sky broadband'));
   assert.throws(() => s.saveRegular({ name: 'x', amount: 0, next: soon }), /amount/);
 });
+
+test('savings count as saved, not spent', () => {
+  const cats = [{ id: 'i', kind: 'income' }, { id: 's', kind: 'savings' }, { id: 'g', kind: 'spend' }];
+  const r = B.monthSummary([{ date: '2026-11-01', amount: 100000, categoryId: 'i' }, { date: '2026-11-02', amount: -20000, categoryId: 's' }, { date: '2026-11-03', amount: -5000, categoryId: 'g' }], cats, '2026-11');
+  assert.deepStrictEqual([r.income, r.spend, r.saved, r.left], [100000, 5000, 20000, 75000]);
+});
+test('goal status: monthly need counts this month and the target month; on track from the last 3 months', () => {
+  const g = { id: 'g1', target: 600000, by: '2027-04-15', createdAt: '2026-06-01T10:00:00Z', money: [{ date: '2026-08-10', amount: 100000 }, { date: '2026-09-10', amount: 50000 }, { date: '2026-10-10', amount: 50000 }] };
+  const tx = [{ goalId: 'g1', date: '2026-11-05', amount: -50000 }];
+  const st = B.goalStatus(g, tx, '2026-11-28');
+  assert.strictEqual(st.saved, 250000); assert.strictEqual(st.left, 350000);
+  assert.strictEqual(st.monthsLeft, 6); // Nov, Dec, Jan, Feb, Mar, Apr
+  assert.strictEqual(st.need, 58334); // £3,500 / 6, rounded up to the penny
+  assert.strictEqual(st.avg3, 66667); // the last 3 full months, Aug–Oct: £1,000 + £500 + £500 = £2,000 / 3
+  assert.strictEqual(st.state, 'ontrack'); // £666.67 a month against £583.34 needed
+  assert.strictEqual(B.goalStatus(Object.assign({}, g, { target: 900000 }), tx, '2026-11-28').state, 'behind');
+  assert.strictEqual(B.goalStatus(Object.assign({}, g, { target: 200000 }), tx, '2026-11-28').state, 'done');
+  assert.strictEqual(B.goalStatus(Object.assign({}, g, { by: '2026-10-01' }), tx, '2026-11-28').state, 'late');
+  assert.strictEqual(B.goalStatus(Object.assign({}, g, { by: '' }), tx, '2026-11-28').state, 'open');
+});
+test('plan: limit or bills in a category, whichever is more; loose bills; goals; what is left', () => {
+  const b = { categories: [{ id: 'e', name: 'Energy', kind: 'spend', limit: 10000 }, { id: 'f', name: 'Food', kind: 'spend', limit: 30000 }, { id: 'i', name: 'Income', kind: 'income', limit: 0 }],
+    regular: [{ kind: 'income', amount: 150000, every: 'month' }, { kind: 'bill', name: 'Octopus', amount: 12000, every: 'month', categoryId: 'e' }, { kind: 'bill', name: 'Gym', amount: 1200, every: 'year' }],
+    goals: [{ id: 'g', name: 'Boat', target: 120000, by: '2027-10-31', money: [] }], transactions: [] };
+  const p = B.plan(b, '2026-11-28');
+  assert.strictEqual(p.income, 150000);
+  assert.deepStrictEqual(p.lines.map(l => [l.name, l.amount]), [['Energy', 12000], ['Food', 30000], ['Gym', 100]]);
+  assert.strictEqual(p.toGoals, 10000); // £1,200 over 12 months (Nov 2026 to Oct 2027)
+  assert.strictEqual(p.left, 150000 - 42100 - 10000);
+});
+test('store: goals with starting amount, money by hand, transactions towards a goal, matching on import', () => {
+  const { s } = fresh();
+  const g = s.saveGoal({ name: 'Boat deposit', target: 500000, by: '2027-06-30', start: 100000, match: 'SAVINGS SPACE' });
+  s.addGoalMoney(g.id, { amount: 25000, date: '2026-11-10', note: 'birthday' });
+  s.addGoalMoney(g.id, { amount: -5000, date: '2026-11-12' });
+  const csv = 'Date,Counter Party,Reference,Type,Amount (GBP),Balance (GBP)\n20/11/2026,Boat,TO SAVINGS SPACE,INTERNAL TRANSFER,-200.00,100.00\n21/11/2026,Tesco,TESCO,CONTACTLESS,-10.00,90.00\n';
+  const r = s.importTransactions(bank.read(csv, 'starling').transactions, { bank: 'starling' });
+  assert.strictEqual(r.toGoals, 1);
+  const t = s.budget().transactions.find(x => x.description.includes('SAVINGS'));
+  assert.strictEqual(t.goalId, g.id);
+  assert.strictEqual(s.budget().categories.find(c => c.id === t.categoryId).kind, 'savings');
+  assert.strictEqual(B.goalStatus(s.budget().goals[0], s.budget().transactions, '2026-11-28').saved, 100000 + 25000 - 5000 + 20000);
+  const tesco = s.budget().transactions.find(x => x.description.includes('TESCO'));
+  s.setTransactionGoal([tesco.id], g.id);
+  assert.strictEqual(B.goalStatus(s.budget().goals[0], s.budget().transactions, '2026-11-28').saved, 141000);
+  s.deleteGoal(g.id);
+  assert.ok(s.budget().transactions.every(x => !x.goalId));
+  assert.throws(() => s.saveGoal({ name: 'x', target: 0 }), /how much/);
+});
+test('2.20 data: Savings changes from a transfer to savings once', () => {
+  const { s } = fresh();
+  s.data.budget = { categories: [{ id: 'c22', name: 'Savings', limit: 0, kind: 'transfer' }] };
+  assert.strictEqual(s.budget().categories[0].kind, 'savings');
+  s.budget().categories[0].kind = 'transfer';
+  assert.strictEqual(s.budget().categories[0].kind, 'transfer', 'a choice made afterwards is kept');
+});
+test('a goal started this month is "just started", and "saved already" is not counted as a month\'s saving', () => {
+  const g = { id: 'n', target: 100000, by: '2027-11-30', createdAt: '2026-11-20T09:00:00Z', money: [{ date: '2026-11-20', amount: 50000, start: true }] };
+  const st = B.goalStatus(g, [], '2026-11-28');
+  assert.strictEqual(st.state, 'new'); assert.strictEqual(st.saved, 50000);
+  const later = B.goalStatus(Object.assign({}, g, { money: g.money.concat([{ date: '2026-12-05', amount: 5000 }]) }), [], '2027-01-10');
+  assert.strictEqual(later.avgMonths, 1); assert.strictEqual(later.avg3, 5000); // only December counts, not the starting £500
+});
