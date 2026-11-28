@@ -95,7 +95,12 @@ function budgetNow() {
   const since = B.addDays(today, -30);
   const rises = b.regular.flatMap(r => (r.history || []).filter(h => h.date >= since && h.to > h.from).map(h => ({ id: r.id, name: r.name, ...h })));
   const alerts = { limits, short: fc && fc.short ? { date: fc.short, low: fc.low, lowDate: fc.lowDate } : null, unusual: B.unusual(b.transactions, since), rises };
-  return { today, nowKey, periods, months, carried, accounts, forecast: fc, found, sinking: B.sinking(b.regular, today), netWorth: nw, debts, alerts,
+  const check = B.checkup(b, today, { periods, months, nowKey });
+  check.doubles = check.doubles.filter(d => !b.dismissed.includes('dbl:' + d.b));
+  if (check.fees.list) { check.fees.list = check.fees.list.filter(f => !b.dismissed.includes('fee:' + f.id)); check.fees.total = check.fees.list.reduce((t, f) => t + f.amount, 0); check.fees.perYear = check.days ? Math.round(check.fees.total * 365 / check.days) : 0; if (!check.fees.list.length) check.fees = []; }
+  check.potential = (check.fees.perYear || 0) + check.small.reduce((t, g) => t + Math.round(g.perYear / 2), 0) + check.rising.reduce((t, r) => t + r.perYear, 0) + check.doubles.reduce((t, d) => t + d.amount, 0);
+  check.made = { list: b.savingsMade.slice().reverse(), perYear: b.savingsMade.reduce((t, x) => t + x.perYear, 0) };
+  return { today, nowKey, periods, months, carried, accounts, forecast: fc, found, check, sinking: B.sinking(b.regular, today), netWorth: nw, debts, alerts,
     flex: B.flexPlan(b, today, b.settings.flexLimit),
     plan: B.plan(b, today), goals: Object.fromEntries(b.goals.map(g => [g.id, B.goalStatus(g, b.transactions, today)])) };
 }
@@ -992,6 +997,10 @@ function registerIpc() {
   h('budget:account', (name, x) => { const r = store.saveBudgetAccount(name, x); notifyChanged(); return r; });
   h('budget:ignoreFound', (key) => { store.ignoreFound(key); notifyChanged(); });
   h('budget:addFound', (list) => { let n = 0; for (const f of (Array.isArray(list) ? list : []).slice(0, 100)) { store.saveRegular(f); n++; } notifyChanged(); return n; });
+  h('budget:review', (id, action) => { const r = store.reviewRegular(id, action); notifyChanged(); return r; });
+  h('budget:savingMade', (x) => { store.addSavingMade(x); notifyChanged(); });
+  h('budget:savingMadeRemove', (id) => { store.removeSavingMade(id); notifyChanged(); });
+  h('budget:dismiss', (key) => { store.dismissFinding(key); notifyChanged(); });
   h('budget:debtSave', (x) => { const r = store.saveDebt(x); notifyChanged(); return r; });
   h('budget:debtDelete', (id) => { store.deleteDebt(id); notifyChanged(); });
   h('budget:otherSave', (x) => { const r = store.saveOther(x); notifyChanged(); return r; });

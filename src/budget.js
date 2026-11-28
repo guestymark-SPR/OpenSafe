@@ -395,6 +395,71 @@ function flexSpent(txs, categories, p) {
   return t;
 }
 
+// ---------- ways to save ----------
+const FEE = /\b(fee|fees|charge|charges|overdraft|od int|interest charged|debit interest|unpaid|returned item|late payment|non[- ]sterling|commission|unarranged)\b/i;
+/**
+ * Looks through your own transactions for money that could be saved. Everything is from your statements:
+ * no outside prices. today is YYYY-MM-DD; periods(keys) gives the period objects; months maps keys to summaries.
+ */
+function checkup(b, today, { periods, months, nowKey }) {
+  const kind = Object.fromEntries((b.categories || []).map(c => [c.id, c.kind]));
+  const txs = b.transactions || [];
+  const from90 = addDays(today, -90);
+  const recent = txs.filter(t => t.date >= from90 && t.date < today);
+  const out = { fees: [], small: [], rising: [], doubles: [], bills: [], leftover: null, potential: 0, days: 0 };
+  if (!txs.length) return out;
+  const firstDate = txs.reduce((m, t) => t.date < m ? t.date : m, '9999');
+  out.days = Math.min(90, Math.round((Date.parse(today) - Date.parse(firstDate > from90 ? firstDate : from90)) / 864e5));
+  const perYear = (total) => out.days ? Math.round(total * 365 / out.days) : 0;
+  // 1. bank fees and interest
+  const fees = recent.filter(t => t.amount < 0 && FEE.test(t.description + ' ' + (t.type || '')) && kind[t.categoryId] !== 'transfer');
+  const feeTot = fees.reduce((x, t) => x - t.amount, 0);
+  if (fees.length) out.fees = { list: fees.map(t => ({ id: t.id, date: t.date, description: t.description, amount: -t.amount })), total: feeTot, perYear: perYear(feeTot) };
+  // 2. small, frequent spending (not regular bills, not transfers or savings)
+  const groups = {};
+  for (const t of recent) {
+    if (t.amount >= 0 || t.billId || ['transfer', 'savings', 'income'].includes(kind[t.categoryId])) continue;
+    const k = ruleText(t.description).toLowerCase(); if (!k) continue;
+    (groups[k] = groups[k] || { name: ruleText(t.description), list: [] }).list.push(t);
+  }
+  out.small = Object.values(groups).map(g => { const tot = g.list.reduce((x, t) => x - t.amount, 0); return { name: g.name, count: g.list.length, total: tot, average: Math.round(tot / g.list.length), perYear: perYear(tot) }; })
+    .filter(g => g.count >= 6 && g.average <= 1500).sort((a, c) => c.perYear - a.perYear).slice(0, 8);
+  // 3. categories going up: the last 3 full periods against the 3 before
+  const keys = Object.keys(months).sort().filter(k => k < nowKey);
+  const last3 = keys.slice(-3), prev3 = keys.slice(-6, -3);
+  if (last3.length === 3 && prev3.length === 3) {
+    const avg = (ks, c) => Math.round(ks.reduce((t, k) => t + ((months[k].by || {})[c] || 0), 0) / 3);
+    for (const c of (b.categories || []).filter(c => c.kind === 'spend')) {
+      const now = avg(last3, c.id), was = avg(prev3, c.id);
+      if (now - was >= 2000 && was > 0 && now >= was * 1.15) out.rising.push({ categoryId: c.id, name: c.name, now, was, perYear: (now - was) * 12, limit: c.limit || 0 });
+    }
+    out.rising.sort((a, c) => c.perYear - a.perYear);
+  }
+  // 4. possible double charges: same payee and amount within a day, £10 or more, not regular
+  const seen = {};
+  for (const t of txs.filter(t => t.date >= addDays(today, -120) && t.amount <= -1000 && !t.billId).sort((a, c) => a.date.localeCompare(c.date))) {
+    const k = ruleText(t.description).toLowerCase() + '|' + t.amount;
+    const prev = seen[k];
+    if (prev && (Date.parse(t.date) - Date.parse(prev.date)) / 864e5 <= 1) out.doubles.push({ a: prev.id, b: t.id, date: t.date, description: t.description, amount: -t.amount });
+    seen[k] = t;
+  }
+  // 5. regular bills and subscriptions to review, biggest yearly cost first, with any rise
+  for (const r of (b.regular || []).filter(r => r.kind !== 'income' && !r.cancelled && (!r.ends || r.ends >= today))) {
+    if (r.reviewed && r.reviewed > addDays(today, -182)) continue;
+    const yearly = r.amount * PER_YEAR[r.every || 'month'];
+    const rises = (r.history || []).filter(h => h.to > h.from);
+    const first = (r.history || [])[0];
+    out.bills.push({ id: r.id, name: r.name, yearly, every: r.every, amount: r.amount, subscription: !!r.subscription, renews: r.renews || '',
+      risen: first && r.amount > first.from ? { from: first.from, to: r.amount, pct: Math.round((r.amount - first.from) / first.from * 100) } : null, rises: rises.length });
+  }
+  out.bills.sort((a, c) => (c.risen ? 1 : 0) - (a.risen ? 1 : 0) || (c.subscription ? 1 : 0) - (a.subscription ? 1 : 0) || c.yearly - a.yearly);
+  // 6. money left over on average in the last 3 full periods
+  if (last3.length) { const l = Math.round(last3.reduce((t, k) => t + months[k].left, 0) / last3.length); if (l > 0) out.leftover = { perMonth: l, months: last3.length }; }
+  // what all of it could come to in a year, if every change were made (half the small spending, fees, back to the earlier level, double charges refunded)
+  out.potential = (out.fees.perYear || 0) + out.small.reduce((t, g) => t + Math.round(g.perYear / 2), 0) + out.rising.reduce((t, r) => t + r.perYear, 0) + out.doubles.reduce((t, d) => t + d.amount, 0);
+  return out;
+}
+
 const pounds = (p) => (p < 0 ? '-' : '') + '£' + (Math.abs(p) / 100).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-module.exports = { debtPlan, unusual, netWorth, flexPlan, flexSpent, PER_YEAR, parts, inPeriod, period, periodOf, periodStart, nextKey, carried, accountBalances, forecast, dailySpend, findRegular, sinking, addDays, goalStatus, plan, DEFAULT_CATEGORIES, EVERY, step, occurrences, monthly, categorise, ruleText, matchesRegular, monthSummary, priceChange, pounds };
+module.exports = { checkup, debtPlan, unusual, netWorth, flexPlan, flexSpent, PER_YEAR, parts, inPeriod, period, periodOf, periodStart, nextKey, carried, accountBalances, forecast, dailySpend, findRegular, sinking, addDays, goalStatus, plan, DEFAULT_CATEGORIES, EVERY, step, occurrences, monthly, categorise, ruleText, matchesRegular, monthSummary, priceChange, pounds };

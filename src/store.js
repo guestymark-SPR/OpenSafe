@@ -1634,7 +1634,7 @@ class Store {
     if (!b.maps || typeof b.maps !== 'object') b.maps = {};
     if (!b.accounts || typeof b.accounts !== 'object') b.accounts = {};
     if (!Array.isArray(b.ignored)) b.ignored = [];
-    for (const k of ['debts', 'other', 'netWorth']) if (!Array.isArray(b[k])) b[k] = [];
+    for (const k of ['debts', 'other', 'netWorth', 'savingsMade', 'dismissed']) if (!Array.isArray(b[k])) b[k] = [];
     b.settings = Object.assign({ monthStart: { day: 1, weekend: '' }, buffer: 0, everyday: true, style: 'categories', flexLimit: 0, debtExtra: 0, debtOrder: 'avalanche', belongings: true }, b.settings || {});
     return b;
   }
@@ -1739,6 +1739,35 @@ class Store {
     this.save();
     return t;
   }
+
+  /**
+   * After a review: 'keep' hides the bill from Ways to save for six months; 'cancel' ends it today
+   * and notes what it saves a year (shown as savings you've made).
+   */
+  reviewRegular(id, action) {
+    const B = require('./budget');
+    const b = this.budget(), r = b.regular.find(x => x.id === id);
+    if (!r) throw new Error('Not found');
+    const today = todayIso();
+    if (action === 'cancel') {
+      r.ends = addDaysIso(today, -1); r.cancelled = today; // no more payments from today
+      b.savingsMade.push({ id: uid(), date: today, name: r.name, perYear: r.amount * B.PER_YEAR[r.every || 'month'], what: 'Cancelled' });
+    } else r.reviewed = today;
+    this.save();
+    return r;
+  }
+  /** Note a saving you made yourself (a cheaper deal, a cut-back), to count it. */
+  addSavingMade(input) {
+    const b = this.budget();
+    const perYear = Math.round(Number(input && input.perYear) || 0);
+    if (!perYear || perYear < 0) throw new Error('Enter what it saves a year.');
+    const name = cleanString(input.name, 80); if (!name) throw new Error('Say what you changed.');
+    b.savingsMade.push({ id: uid(), date: cleanDate(input.date) || todayIso(), name, perYear, what: cleanString(input.what, 40) || 'Changed' });
+    this.save();
+  }
+  removeSavingMade(id) { const b = this.budget(); b.savingsMade = b.savingsMade.filter(x => x.id !== id); this.save(); }
+  /** Hide one finding (a double charge that wasn't, a fee that's fine). */
+  dismissFinding(key) { const b = this.budget(); const k = cleanString(key, 80); if (k && !b.dismissed.includes(k)) b.dismissed.push(k); b.dismissed = b.dismissed.slice(-1000); this.save(); }
 
   /** Stop suggesting a payment the finder thought was regular. */
   ignoreFound(key) { const b = this.budget(); const k = cleanString(key, 80).toLowerCase(); if (k && !b.ignored.includes(k)) b.ignored.push(k); b.ignored = b.ignored.slice(-500); this.save(); }
