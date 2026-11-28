@@ -960,6 +960,258 @@
     };
   }
   /** One case: every letter, sent and received, oldest first. */
+  // ---------- Bills & budget ----------
+  const gbp = (p, sign) => (p < 0 ? '−' : sign && p > 0 ? '+' : '') + '£' + (Math.abs(p || 0) / 100).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const toPence = (v) => { const t = String(v || '').replace(/[£,\s]/g, ''); return /^\d+(\.\d{1,2})?$/.test(t) ? Math.round(Number(t) * 100) : NaN; };
+  const EVERY_L = { week: 'Every week', '2weeks': 'Every 2 weeks', '4weeks': 'Every 4 weeks', month: 'Every month', quarter: 'Every 3 months', half: 'Every 6 months', year: 'Every year' };
+  const thisMonth = () => new Date().toISOString().slice(0, 7);
+  const monthName = (m) => new Date(m + '-01T00:00:00Z').toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const shiftMonth = (m, n) => { const d = new Date(m + '-01T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() + n); return d.toISOString().slice(0, 7); };
+  function bdata() { return state.snap.data.budget || { categories: [], rules: [], transactions: [], regular: [], imports: [], maps: {} }; }
+  function bcat(id) { return bdata().categories.find(c => c.id === id); }
+  function bStep(s, every, day) {
+    const d = new Date(s + 'T00:00:00Z');
+    const addM = (n) => { const y = d.getUTCFullYear(), m = d.getUTCMonth() + n, last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate(); return new Date(Date.UTC(y, m, Math.min(day, last))).toISOString().slice(0, 10); };
+    if (every === 'week' || every === '2weeks' || every === '4weeks') { d.setUTCDate(d.getUTCDate() + { week: 7, '2weeks': 14, '4weeks': 28 }[every]); return d.toISOString().slice(0, 10); }
+    return addM({ quarter: 3, half: 6, year: 12 }[every] || 1);
+  }
+  function bOccur(r, from, to) { const out = []; if (!r.next) return out; const day = +r.next.slice(8, 10); let d = r.next, g = 0; while (d <= to && g++ < 1000) { if (d >= from && (!r.ends || d <= r.ends)) out.push(d); d = bStep(d, r.every, day); } return out; }
+  function bMonthly(r) { const a = r.amount || 0; return Math.round({ week: a * 52 / 12, '2weeks': a * 26 / 12, '4weeks': a * 13 / 12, quarter: a / 3, half: a / 6, year: a / 12 }[r.every] ?? a); }
+  function bSummary(month) {
+    const b = bdata(), kind = Object.fromEntries(b.categories.map(c => [c.id, c.kind]));
+    const by = {}; let income = 0, spend = 0, unc = 0, n = 0;
+    for (const t of b.transactions) {
+      if (!t.date.startsWith(month)) continue;
+      n++;
+      const k = kind[t.categoryId];
+      if (k === 'transfer') continue;
+      if (!t.categoryId) unc++;
+      if (k === 'income' || (!t.categoryId && t.amount > 0)) { income += t.amount; continue; }
+      spend -= t.amount; by[t.categoryId || ''] = (by[t.categoryId || ''] || 0) - t.amount;
+    }
+    return { income, spend, left: income - spend, by, unc, n };
+  }
+
+  function viewBudget() {
+    const b = bdata();
+    state.bm = state.bm || thisMonth();
+    const t = state.btab || 'overview';
+    const tabs = [['overview', 'This month'], ['tx', 'Transactions'], ['regular', 'Bills & income'], ['calendar', 'Coming up']];
+    const body = t === 'tx' ? budgetTx() : t === 'regular' ? budgetRegular() : t === 'calendar' ? budgetCalendar() : budgetOverview();
+    const monthNav = t === 'overview' || t === 'tx' ? `<span class="seg"><button data-action="bMonth" data-n="-1" title="Previous month">‹</button><button disabled style="min-width:150px;color:var(--ink)">${esc(monthName(state.bm))}</button><button data-action="bMonth" data-n="1" title="Next month">›</button></span>` : '';
+    return `<div class="head"><h1>Bills &amp; budget</h1><span class="sub">${b.transactions.length ? `${b.transactions.length.toLocaleString('en-GB')} transactions` : 'Import a statement from your bank to start'}</span><div class="spacer"></div>
+      ${monthNav}
+      ${dd('More', [{ label: 'Categories and monthly limits…', action: 'bCats', icon: 'tag' }, { label: 'Your category rules…', action: 'bRules', icon: 'check' }, { label: 'Imports (take one back)…', action: 'bImports', icon: 'download' }])}
+      <button class="btn primary" data-action="bImport">${icon('upload')}Import bank CSV…</button></div>
+      ${state.bAsk ? `<div class="note" style="margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1">Put every payment containing <b>"${esc(state.bAsk.text)}"</b> in <b>${esc((bcat(state.bAsk.cat) || {}).name || '')}</b>, now and in future imports?</span>
+        <button class="btn small primary" data-action="bAskYes">Yes, always</button><button class="btn small" data-action="bAskNo">Just this one</button></div>` : ''}
+      <div class="tabs">${tabs.map(([k, l]) => `<button data-action="bTab" data-t="${k}" class="${t === k ? 'on' : ''}">${l}</button>`).join('')}</div>${body}`;
+  }
+  function budgetOverview() {
+    const b = bdata(), s = bSummary(state.bm);
+    const regs = b.regular;
+    const billsPlan = regs.filter(r => r.kind !== 'income').reduce((t, r) => t + bMonthly(r), 0), incomePlan = regs.filter(r => r.kind === 'income').reduce((t, r) => t + bMonthly(r), 0);
+    const cats = b.categories.filter(c => c.kind === 'spend' && (c.limit || s.by[c.id]));
+    const rows = cats.map(c => {
+      const spent = s.by[c.id] || 0, lim = c.limit || 0, pct = lim ? Math.min(100, Math.round(spent / lim * 100)) : 0, over = lim && spent > lim;
+      return `<tr><td><a href="#" data-action="bCatTx" data-cat="${esc(c.id)}">${esc(c.name)}</a></td><td class="num">${gbp(spent)}</td><td class="num faint">${lim ? gbp(lim) : '—'}</td>
+        <td style="width:34%">${lim ? `<div class="bmeter" title="${pct}% of the limit"><span style="width:${pct}%" class="${over ? 'over' : spent > lim * 0.85 ? 'near' : ''}"></span></div>` : ''}</td>
+        <td class="num">${lim ? (over ? `<span class="pill bad">${icon('alert')}${gbp(spent - lim)} over</span>` : `${gbp(lim - spent)} left`) : ''}</td></tr>`;
+    }).join('');
+    const unc = s.by[''] || 0;
+    return `${!b.transactions.length ? `<div class="card" style="max-width:720px"><h2>Start with a statement</h2><p class="muted">Download your transactions as a CSV file from your bank, then use <b>Import bank CSV…</b> and choose your bank from the list. Nothing is sent anywhere: the file is read on this PC. Account numbers are never kept.</p>
+        <p class="muted" style="margin-bottom:0">You can also add your regular bills and income under <b>Bills &amp; income</b> first, to see what's coming up.</p></div>` : ''}
+      <div class="tiles bstats"><div class="card tile"><div class="lbl">Money in</div><div class="num">${gbp(s.income)}</div>${incomePlan ? `<div class="faint small">Regular income about ${gbp(incomePlan)} a month</div>` : ''}</div>
+        <div class="card tile"><div class="lbl">Money out</div><div class="num">${gbp(s.spend)}</div>${billsPlan ? `<div class="faint small">Regular bills about ${gbp(billsPlan)} a month</div>` : ''}</div>
+        <div class="card tile"><div class="lbl">${s.left < 0 ? 'Short by' : 'Left over'}</div><div class="num" style="color:${s.left < 0 ? 'var(--bad)' : 'inherit'}">${gbp(Math.abs(s.left))}</div><div class="faint small">Transfers to savings or your other accounts aren't counted</div></div></div>
+      ${s.unc ? `<div class="note" style="margin:12px 0">${s.unc} transaction${s.unc === 1 ? '' : 's'} in ${esc(monthName(state.bm))} ${s.unc === 1 ? 'has' : 'have'} no category yet. <a href="#" data-action="bCatTx" data-cat="none">Sort them out</a></div>` : ''}
+      <div class="card" style="padding:0;margin-top:12px"><table class="list"><thead><tr><th>Category</th><th class="num">Spent</th><th class="num">Limit</th><th></th><th class="num"></th></tr></thead><tbody>
+        ${rows || `<tr><td colspan="5" class="muted">No spending in ${esc(monthName(state.bm))} yet.${b.categories.some(c => c.limit) ? '' : ' Set monthly limits under More → Categories and monthly limits.'}</td></tr>`}
+        ${unc ? `<tr><td><a href="#" data-action="bCatTx" data-cat="none"><i>No category</i></a></td><td class="num">${gbp(unc)}</td><td></td><td></td><td></td></tr>` : ''}</tbody></table></div>`;
+  }
+  function budgetTxList() {
+    const b = bdata(), q = (state.bq || '').toLowerCase(), c = state.bc || '';
+    return b.transactions.filter(t => (state.bAll || t.date.startsWith(state.bm)) && (!q || (t.description + ' ' + (t.note || '')).toLowerCase().includes(q))
+      && (!c || (c === 'none' ? !t.categoryId : t.categoryId === c))).slice().reverse();
+  }
+  function budgetTx() {
+    const b = bdata(), list = budgetTxList(), pick = state.bPick || (state.bPick = new Set());
+    for (const id of [...pick]) if (!list.some(t => t.id === id)) pick.delete(id);
+    const opts = (sel) => `<option value="">No category</option>${b.categories.map(c => `<option value="${esc(c.id)}" ${c.id === sel ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}`;
+    const tot = list.reduce((x, t) => x + t.amount, 0);
+    return `<div class="toolbar" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"><input type="search" id="bq" placeholder="Search descriptions" value="${esc(state.bq || '')}" style="flex:1;min-width:200px">
+        <select id="bc"><option value="">All categories</option><option value="none" ${state.bc === 'none' ? 'selected' : ''}>No category</option>${b.categories.map(c => `<option value="${esc(c.id)}" ${state.bc === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
+        <label class="switch"><input type="checkbox" id="bAll" ${state.bAll ? 'checked' : ''}> All months</label></div>
+      ${pick.size ? `<div class="selbar" style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><b>${pick.size} chosen</b><select id="bSelCat"><option value="">Put in category…</option>${b.categories.map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select>
+        <button class="btn small" data-action="bSelCase">${icon('folder')}Add to a case…</button><button class="btn small danger" data-action="bSelDel">${icon('trash')}Delete</button><button class="btn small" data-action="bSelNone">Clear</button></div>` : ''}
+      ${!list.length ? `<div class="card empty">${b.transactions.length ? 'Nothing matches.' : 'No transactions yet. Use Import bank CSV… to add some.'}</div>` : `<div class="card" style="padding:0"><table class="list btx"><thead><tr><th style="width:30px"></th><th>Date</th><th>Description</th><th>Category</th><th class="num">Amount</th></tr></thead><tbody>
+        ${list.slice(0, 1500).map(t => `<tr class="${pick.has(t.id) ? 'sel' : ''}"><td><input type="checkbox" data-bpick="${esc(t.id)}" ${pick.has(t.id) ? 'checked' : ''}></td><td class="nowrap meta">${ukDate(t.date)}</td>
+          <td>${esc(t.description)}${t.billId ? ` <span class="pill acc" title="Matched to a regular payment">${icon('calendar')}${esc((b.regular.find(r => r.id === t.billId) || {}).name || 'Regular')}</span>` : ''}${t.caseName ? ` <span class="pill case" data-action="libCaseOpen" data-case="${esc(t.caseName)}">${icon('folder')}${esc(t.caseName)}</span>` : ''}
+            ${t.type || t.account ? `<div class="meta faint">${esc([t.type, t.account].filter(Boolean).join(' · '))}</div>` : ''}${t.note ? `<div class="meta">${esc(t.note)}</div>` : ''}</td>
+          <td><select data-btxcat="${esc(t.id)}" class="small">${opts(t.categoryId)}</select></td>
+          <td class="num nowrap" style="color:${t.amount > 0 ? 'var(--good)' : 'inherit'}">${gbp(t.amount, true)}</td></tr>`).join('')}</tbody>
+        <tfoot><tr><td></td><td colspan="3" class="muted">${list.length.toLocaleString('en-GB')} shown${list.length > 1500 ? ' (the first 1,500 are listed: search or choose a category to narrow it down)' : ''}</td><td class="num"><b>${gbp(tot, true)}</b></td></tr></tfoot></table></div>`}`;
+  }
+  function budgetRegular() {
+    const b = bdata();
+    const row = (r) => { const last = (r.history || []).slice(-1)[0], c = bcat(r.categoryId);
+      return `<tr data-action="bRegEdit" data-id="${esc(r.id)}" style="cursor:pointer"><td><b>${esc(r.name)}</b>${c ? `<div class="meta faint">${esc(c.name)}</div>` : ''}</td><td class="num">${gbp(r.amount)}</td><td class="meta">${esc(EVERY_L[r.every] || '')}</td>
+        <td class="meta nowrap">${r.next ? ukDate(r.next) : ''}</td>
+        <td>${last ? `<span class="pill ${last.to > last.from ? 'warn' : 'good'}" title="Changed ${esc(ukDate(last.date))}">${last.to > last.from ? '▲' : '▼'} from ${gbp(last.from)}</span>` : ''}
+          ${r.renews ? `<span class="pill ${r.renews <= new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10) ? 'warn' : ''}">${icon('calendar')}Contract ends ${ukDate(r.renews)}</span>` : ''}${r.match ? '' : ` <span class="faint small">not matched to statements</span>`}</td></tr>`; };
+    const sect = (kind, title) => { const l = b.regular.filter(r => (r.kind === 'income') === (kind === 'income')).sort((x, y) => (x.next || '').localeCompare(y.next || ''));
+      const tot = l.reduce((t, r) => t + bMonthly(r), 0);
+      return `<div class="section-title" style="display:flex;align-items:center;gap:8px">${title}<span class="faint small">${l.length ? `about ${gbp(tot)} a month` : ''}</span><div class="spacer" style="flex:1"></div><button class="btn small" data-action="bRegNew" data-kind="${kind}">${icon('plus')}Add</button></div>
+        <div class="card" style="padding:0;margin-bottom:16px"><table class="list"><thead><tr><th>Name</th><th class="num">Amount</th><th>How often</th><th>Next</th><th></th></tr></thead><tbody>${l.map(row).join('') || `<tr><td colspan="5" class="muted">None yet.</td></tr>`}</tbody></table></div>`; };
+    return sect('bill', 'Bills') + sect('income', 'Income') + `<p class="faint small">When a statement is imported, payments containing a bill's <b>words to look for</b> are matched to it, its next date moves on, and if the amount has changed the old price is kept so you can see it went up.</p>`;
+  }
+  function budgetCalendar() {
+    const b = bdata(), from = new Date().toISOString().slice(0, 10), to = new Date(Date.now() + 42 * 864e5).toISOString().slice(0, 10);
+    const ev = [];
+    for (const r of b.regular) for (const d of bOccur(r, from, to)) ev.push({ d, r });
+    ev.sort((x, y) => x.d.localeCompare(y.d) || x.r.name.localeCompare(y.r.name));
+    if (!ev.length) return `<div class="card empty">Nothing due in the next six weeks. Add your bills and income under <b>Bills &amp; income</b>.</div>`;
+    let run = 0, last = '';
+    return `<p class="muted" style="margin-top:0">The next six weeks of your regular bills and income, with the running total of money in minus money out.</p><div class="card" style="padding:0"><table class="list"><thead><tr><th>Date</th><th>What</th><th class="num">Amount</th><th class="num">Running total</th></tr></thead><tbody>
+      ${ev.map(({ d, r }) => { const a = r.kind === 'income' ? r.amount : -r.amount; run += a; const show = d !== last; last = d;
+        return `<tr><td class="nowrap">${show ? `<b>${new Date(d + 'T00:00:00Z').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })}</b>` : ''}</td><td>${esc(r.name)}</td><td class="num" style="color:${a > 0 ? 'var(--good)' : 'inherit'}">${gbp(a, true)}</td><td class="num ${run < 0 ? 'bad' : ''}" style="color:${run < 0 ? 'var(--bad)' : 'inherit'}">${gbp(run, true)}</td></tr>`; }).join('')}</tbody></table></div>`;
+  }
+  function regularForm(r, kind) {
+    const b = bdata(); r = r || { kind, every: 'month', amount: 0 };
+    const inc = r.kind === 'income';
+    openModal(`<form class="dialog" id="regForm"><div class="dh"><h2>${r.id ? esc(r.name) : inc ? 'Add income' : 'Add a bill'}</h2></div><div class="db">
+      <label class="f s3">Name<input name="name" maxlength="80" value="${esc(r.name || '')}" placeholder="${inc ? 'For example: AFCS payment' : 'For example: Octopus Energy'}" autofocus></label>
+      <label class="f">Amount (£)<input name="amount" inputmode="decimal" value="${r.amount ? (r.amount / 100).toFixed(2) : ''}"></label>
+      <label class="f">How often<select name="every">${Object.entries(EVERY_L).map(([k, l]) => `<option value="${k}" ${r.every === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label class="f">Next due<input type="date" name="next" value="${esc(r.next || '')}"></label>
+      <label class="f">Category<select name="categoryId"><option value="">None</option>${b.categories.map(c => `<option value="${esc(c.id)}" ${c.id === r.categoryId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+      <label class="f">Words to look for on statements<input name="match" maxlength="60" value="${esc(r.match || '')}" placeholder="For example: OCTOPUS"><span class="faint small">As they appear in your bank's description. Leave blank not to match.</span></label>
+      ${inc ? '' : `<label class="f">Contract or fixed price ends<input type="date" name="renews" value="${esc(r.renews || '')}"><span class="faint small">You'll get a reminder to check the price before it goes up.</span></label>`}
+      <label class="f">Last payment<input type="date" name="ends" value="${esc(r.ends || '')}"><span class="faint small">Only if it stops on a date.</span></label>
+      <label class="f s3">Notes<textarea name="notes" rows="2" maxlength="1000">${esc(r.notes || '')}</textarea></label>
+      ${(r.history || []).length ? `<div class="s3"><div class="section-title" style="margin:4px 0">Price changes</div><table class="list"><tbody>${r.history.slice().reverse().map(h => `<tr><td class="meta">${ukDate(h.date)}</td><td>${gbp(h.from)} → <b>${gbp(h.to)}</b></td><td class="meta">${h.to > h.from ? `up ${gbp(h.to - h.from)} (${Math.round((h.to - h.from) / h.from * 100)}%)` : `down ${gbp(h.from - h.to)}`}${h.typed ? ' · typed in' : ' · from a statement'}</td></tr>`).join('')}</tbody></table></div>` : ''}
+      <div class="err s3" id="regErr"></div></div>
+      <div class="df">${r.id ? `<button type="button" class="btn danger" id="regDel">${icon('trash')}Delete</button><div style="flex:1"></div>` : ''}<button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Save</button></div></form>`);
+    const f = $('#regForm');
+    if ($('#regDel')) $('#regDel').onclick = async () => { await run(() => keep.budgetRegularDelete(r.id)); closeModal(); await refresh(); };
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const el = f.elements, amount = toPence(el.amount.value);
+      if (!Number.isFinite(amount) || amount <= 0) { $('#regErr').textContent = 'Enter the amount, like 45.99'; return; }
+      try { await keep.budgetRegularSave({ id: r.id, kind: inc ? 'income' : 'bill', name: el.name.value, amount, every: el.every.value, next: el.next.value, categoryId: el.categoryId.value, match: el.match.value, renews: el.renews ? el.renews.value : '', ends: el.ends.value, notes: el.notes.value });
+        closeModal(); await refresh(); toast('✓ Saved'); } catch (ex) { $('#regErr').textContent = ex.message; }
+    };
+  }
+  async function bankImportForm() {
+    const banks = await run(() => keep.budgetBanks());
+    const last = state.bBank || (bdata().imports.slice(-1)[0] || {}).bank || '';
+    openModal(`<form class="dialog" id="bkForm"><div class="dh"><h2>Import a bank statement</h2></div><div class="db">
+      <label class="f s3">Your bank<select name="bank" id="bkBank"><option value="">Choose your bank…</option>${banks.map(x => `<option value="${esc(x.id)}" ${x.id === last ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
+      <p class="s3 muted small" id="bkHow" style="margin:0"></p>
+      <label class="f s3">Account name<input name="account" maxlength="60" placeholder="For example: Starling current account (optional, to tell accounts apart)"></label>
+      <div class="s3" id="bkOut"></div><div class="err s3" id="bkErr"></div></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button type="button" class="btn" id="bkPick">${icon('folder')}Choose the CSV file…</button><button class="btn primary" type="submit" id="bkGo" disabled>Import</button></div></form>`);
+    const f = $('#bkForm'); let cur = null;
+    const how = () => { const x = banks.find(y => y.id === $('#bkBank').value); $('#bkHow').textContent = x ? x.how : ''; if (x && !f.elements.account.value) f.elements.account.placeholder = x.name + ' (optional, to tell accounts apart)'; };
+    $('#bkBank').onchange = () => { how(); cur = null; $('#bkOut').innerHTML = ''; $('#bkGo').disabled = true; };
+    how();
+    const show = (r) => {
+      cur = r; $('#bkErr').textContent = '';
+      if (!r.ok) {
+        const cols = r.headings.map((h, i) => h == null ? '' : `<option value="${i}">${esc(h || 'Column ' + (i + 1))}</option>`).join('');
+        const sel = (f2, label, req) => `<label class="f">${label}${req ? '' : ' <span class="faint">(if there is one)</span>'}<select data-map="${f2}"><option value="">—</option>${cols}</select></label>`;
+        const two = r.map && r.map.out != null && r.map.in != null;
+        $('#bkOut').innerHTML = `<div class="note" style="margin-bottom:10px">${esc(r.reason || '')}</div>
+          <div class="grid2" style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px">${sel('date', 'Date', 1)}${sel('payee', 'Who (payee)', 0)}${sel('desc', 'Description or reference', 0)}${sel('type', 'Type', 0)}
+          <label class="f s3" style="grid-column:1/-1">Amounts are in<select id="bkTwo"><option value="1">one column, with a minus for money out</option><option value="2" ${two ? 'selected' : ''}>two columns: money out and money in</option></select></label>
+          <span id="bkOne" style="display:contents">${sel('amount', 'Amount', 1)}</span><span id="bkPair" style="display:contents">${sel('out', 'Money out', 1)}${sel('in', 'Money in', 1)}</span>${sel('balance', 'Balance', 0)}</div>
+          ${r.sample.length ? `<div class="faint small" style="margin-top:8px">First rows of the file:</div><div style="overflow:auto;max-height:150px"><table class="list small"><thead><tr>${r.headings.map(h => `<th>${h == null ? '<i>not read</i>' : esc(h)}</th>`).join('')}</tr></thead><tbody>${r.sample.map(row => `<tr>${row.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : ''}
+          <button type="button" class="btn" id="bkApply" style="margin-top:10px">Use these columns</button>`;
+        for (const [k, v] of Object.entries(r.map || {})) { const s = f.querySelector(`[data-map="${k}"]`); if (s) s.value = String(v); }
+        const pair = () => { const t = $('#bkTwo').value === '2'; $('#bkOne').style.display = t ? 'none' : 'contents'; $('#bkPair').style.display = t ? 'contents' : 'none'; };
+        $('#bkTwo').onchange = pair; pair();
+        $('#bkApply').onclick = async () => {
+          const map = {}; f.querySelectorAll('[data-map]').forEach(s => { if (s.value !== '' && s.offsetParent !== null) map[s.dataset.map] = Number(s.value); });
+          if ($('#bkTwo').value === '2') delete map.amount; else { delete map.out; delete map.in; }
+          try { show(await keep.budgetRemap(r.token, map)); } catch (ex) { $('#bkErr').textContent = ex.message; }
+        };
+        $('#bkGo').disabled = true; return;
+      }
+      $('#bkOut').innerHTML = `<div class="card" style="background:var(--surface2,transparent);margin:0"><b>${r.count.toLocaleString('en-GB')} transaction${r.count === 1 ? '' : 's'}</b> from ${ukDate(r.from)} to ${ukDate(r.to)} in <span class="mono">${esc(r.name)}</span>.
+        ${r.already ? `<br>${r.already} of them ${r.already === 1 ? 'is' : 'are'} already in OpenSafe and won't be added twice.` : ''}${r.skipped ? `<br><span class="faint">${r.skipped} row${r.skipped === 1 ? '' : 's'} left out (balance lines${r.problemCount ? ', or rows whose date or amount couldn\'t be read' : ''}).</span>` : ''}
+        ${r.problemCount ? `<div class="err" style="margin-top:6px">${r.problems.map(esc).join('<br>')}</div>` : ''}
+        <div class="faint small" style="margin-top:8px">Check these look right: money out should be minus.</div>
+        <table class="list small" style="margin-top:4px"><tbody>${r.preview.map(t => `<tr><td class="nowrap">${ukDate(t.date)}</td><td>${esc(t.description)}</td><td class="num nowrap">${gbp(t.amount, true)}</td></tr>`).join('')}</tbody></table></div>`;
+      $('#bkGo').disabled = r.count - r.already <= 0;
+    };
+    $('#bkPick').onclick = async () => {
+      const bank = $('#bkBank').value; if (!bank) { $('#bkErr').textContent = 'Choose your bank first.'; return; }
+      state.bBank = bank;
+      try { const r = await keep.budgetRead(bank); if (r) show(r); } catch (ex) { $('#bkErr').textContent = ex.message; }
+    };
+    f.onsubmit = async (ev) => {
+      ev.preventDefault(); if (!cur || !cur.ok) return;
+      busy(f, true, 'Importing…');
+      try {
+        const r = await keep.budgetImport(cur.token, f.elements.account.value.trim());
+        closeModal(); state.btab = 'tx'; state.bm = (cur.to || thisMonth()).slice(0, 7); await refresh();
+        openModal(`<div class="dialog narrow"><div class="dh"><h2>Imported</h2></div><div class="db"><p class="s3" style="margin:0">${r.added} transaction${r.added === 1 ? '' : 's'} added${r.duplicates ? `, ${r.duplicates} already here` : ''}. ${r.categorised} put in a category${r.matched ? `, ${r.matched} matched to your regular bills and income` : ''}.</p>
+          ${r.priceChanges.length ? `<div class="s3"><b>Price changes:</b><br>${r.priceChanges.map(c => `${esc(c.name)}: ${gbp(c.from)} → <b>${gbp(c.to)}</b> (${ukDate(c.date)})`).join('<br>')}</div>` : ''}
+          ${r.added - r.categorised > 0 ? `<p class="s3 muted">Give the rest a category in the list. When you do, OpenSafe offers to do the same for every payment like it.</p>` : ''}</div>
+          <div class="df"><button class="btn primary" data-action="close">Done</button></div></div>`);
+      } catch (ex) { $('#bkErr').textContent = ex.message; busy(f, false); }
+    };
+  }
+  function budgetCatsForm() {
+    const b = bdata(); const rows = b.categories.concat([{ id: '', name: '', limit: 0, kind: 'spend' }, { id: '', name: '', limit: 0, kind: 'spend' }]);
+    openModal(`<form class="dialog" id="bcForm"><div class="dh"><h2>Categories and monthly limits</h2></div><div class="db"><div class="s3" style="max-height:60vh;overflow:auto"><table class="list"><thead><tr><th>Name</th><th>Monthly limit (£)</th><th>Kind</th></tr></thead><tbody>
+      ${rows.map((c, i) => `<tr data-i="${i}" data-id="${esc(c.id)}"><td><input data-k="name" maxlength="60" value="${esc(c.name)}" style="width:100%"></td><td><input data-k="limit" inputmode="decimal" value="${c.limit ? (c.limit / 100).toFixed(2) : ''}" style="width:110px"></td>
+        <td><select data-k="kind"><option value="spend">Spending</option><option value="income" ${c.kind === 'income' ? 'selected' : ''}>Income</option><option value="transfer" ${c.kind === 'transfer' ? 'selected' : ''}>Transfer (not counted)</option></select></td></tr>`).join('')}</tbody></table></div>
+      <p class="s3 faint small" style="margin:0">Clear a name to remove that category: its transactions go back to "No category". Leave a limit blank for no limit.</p><div class="err s3" id="bcErr"></div></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Save</button></div></form>`);
+    $('#bcForm').onsubmit = async (ev) => {
+      ev.preventDefault();
+      const list = [...$('#bcForm').querySelectorAll('tbody tr')].map(tr => ({ id: tr.dataset.id, name: tr.querySelector('[data-k=name]').value.trim(), limit: toPence(tr.querySelector('[data-k=limit]').value || '0'), kind: tr.querySelector('[data-k=kind]').value })).filter(c => c.name);
+      if (list.some(c => !Number.isFinite(c.limit))) { $('#bcErr').textContent = 'A limit isn\'t a number. Use amounts like 250 or 250.00'; return; }
+      try { await keep.budgetCategories(list); closeModal(); await refresh(); toast('✓ Saved'); } catch (ex) { $('#bcErr').textContent = ex.message; }
+    };
+  }
+  function budgetRulesForm() {
+    const b = bdata();
+    openModal(`<div class="dialog"><div class="dh"><h2>Your category rules</h2></div><div class="db"><p class="s3 muted" style="margin:0">Payments whose description contains these words go in that category when they're imported. Rules are made when you choose "Yes, always" after changing a category.</p>
+      <div class="s3">${b.rules.length ? `<table class="list"><tbody>${b.rules.slice().sort((x, y) => x.text.localeCompare(y.text)).map(r => `<tr><td>"${esc(r.text)}"</td><td>→ ${esc((bcat(r.categoryId) || {}).name || '')}</td><td style="text-align:right"><button class="btn small" data-action="bRuleDel" data-text="${esc(r.text)}">${icon('trash')}</button></td></tr>`).join('')}</tbody></table>` : '<p class="muted">No rules yet.</p>'}</div></div>
+      <div class="df"><button class="btn primary" data-action="close">Done</button></div></div>`);
+  }
+  function budgetImportsForm() {
+    const b = bdata();
+    openModal(`<div class="dialog"><div class="dh"><h2>Imports</h2></div><div class="db"><p class="s3 muted" style="margin:0">Imported the wrong file, or chose the wrong bank? Take it back: every transaction it added is removed.</p>
+      <div class="s3">${b.imports.length ? `<table class="list"><tbody>${b.imports.slice().reverse().map(i => `<tr><td>${ukDate(i.at)}</td><td>${esc(i.account || i.bank)}</td><td>${i.added} added</td><td style="text-align:right"><button class="btn small danger" data-action="bUndo" data-id="${esc(i.id)}">Take back</button></td></tr>`).join('')}</tbody></table>` : '<p class="muted">Nothing imported yet.</p>'}</div></div>
+      <div class="df"><button class="btn primary" data-action="close">Done</button></div></div>`);
+  }
+  function wireBudget() {
+    const keepScroll = () => { const sc = $('#view').scrollTop; render(); $('#view').scrollTop = sc; };
+    if ($('#bq')) $('#bq').oninput = () => { state.bq = $('#bq').value; const pos = $('#bq').selectionStart; render(); const n = $('#bq'); n.focus(); n.setSelectionRange(pos, pos); };
+    if ($('#bc')) $('#bc').onchange = () => { state.bc = $('#bc').value; render(); };
+    if ($('#bAll')) $('#bAll').onchange = () => { state.bAll = $('#bAll').checked; render(); };
+    if ($('#bSelCat')) $('#bSelCat').onchange = async () => { const c = $('#bSelCat').value; if (!c) return; const ids = [...state.bPick]; await run(() => keep.budgetTxCategory(ids, c, ''), `✓ ${ids.length} put in ${(bcat(c) || {}).name}`); state.bPick = new Set(); await refresh(); };
+    $$('[data-btxcat]').forEach(sel => { sel.onchange = async () => {
+      const id = sel.dataset.btxcat, cat = sel.value, t = bdata().transactions.find(x => x.id === id);
+      await run(() => keep.budgetTxCategory([id], cat, ''));
+      const text = cat && t ? (t.description.split(' — ')[0].replace(/••••\d{4}/g, '').replace(/\b\d[\d/.:-]*\b/g, '').replace(/\s+/g, ' ').trim().slice(0, 40)) : '';
+      state.bAsk = text && bdata().transactions.some(x => x.id !== id && !x.categoryId && x.description.toLowerCase().includes(text.toLowerCase())) || (text && !bdata().rules.some(r => r.text.toLowerCase() === text.toLowerCase())) ? { id, cat, text } : null;
+      await refresh(); keepScroll();
+    }; });
+  }
+  /** Money in and out tied to a case, for its page. */
+  function caseMoneyHtml(name) {
+    const l = (bdata().transactions || []).filter(t => (t.caseName || '').toLowerCase() === name.toLowerCase());
+    if (!l.length) return '';
+    const inn = l.filter(t => t.amount > 0).reduce((x, t) => x + t.amount, 0), out = l.filter(t => t.amount < 0).reduce((x, t) => x - t.amount, 0);
+    return `<div class="card" id="caseMoney" style="margin-bottom:14px"><h2>${icon('pound')}Money on this case</h2>
+      <div class="muted" style="margin-bottom:6px">In ${gbp(inn)} · Out ${gbp(out)} · Overall <b>${gbp(inn - out, true)}</b></div>
+      <table class="list small"><tbody>${l.map(t => `<tr><td class="nowrap meta">${ukDate(t.date)}</td><td>${esc(t.description)}${t.note ? `<div class="meta">${esc(t.note)}</div>` : ''}</td><td class="num nowrap">${gbp(t.amount, true)}</td></tr>`).join('')}</tbody></table></div>`;
+  }
+
   function viewCase() {
     const name = state.caseName || '';
     const list = libEntries('document').concat(libEntries('data')).filter(e => (e.caseName || '').toLowerCase() === name.toLowerCase())
@@ -971,6 +1223,7 @@
         <button class="btn" data-action="libBundle" data-ids="${esc(ids)}">${icon('printer')}Bundle PDF of the case…</button>
         ${dd('More', [{ label: 'Start a complaint…', action: 'libComplaintNew', icon: 'alert' }, { label: 'Subject access request…', action: 'libSarNew', icon: 'mail' }, { label: 'Draft a statement…', action: 'libStatementNew', icon: 'file' }, { label: 'Write a letter in this case…', action: 'libLetterNew', icon: 'edit' }, { label: 'Add documents to this case…', action: 'libCaseAdd', icon: 'plus' }, '-', { label: 'Rename case…', action: 'libCaseRename', icon: 'edit' }])}</div>
       ${complaintsHtml(name)}
+      ${caseMoneyHtml(name)}
       ${!list.length ? '<div class="card empty">No letters in this case yet.</div>' : `<div class="timeline">${list.map(e => {
         const d = e.docDate || e.createdAt.slice(0, 10), y = d.slice(0, 4);
         const yr = y !== lastYear ? `<div class="tyear">${esc(y)}</div>` : ''; lastYear = y;
@@ -1397,6 +1650,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
   // ---------- one search for everything ----------
   // ---------- Help and What's new ----------
   const NEWS = [
+    ['2.20.0', 'Bills & budget', ['A new <b>Bills &amp; budget</b> page: import a CSV from your bank (choose your bank from the list), give spending categories and monthly limits, and see money in, out and left each month.', 'Your regular <b>bills and income</b> are matched to statements: next dates move on by themselves and price rises are noted.', '<b>Coming up</b> shows the next six weeks of payments, and transactions can be added to a case.']],
     ['2.19.0', 'Order emails, a weekly summary, and a pack for your family', ['<b>Make items from this order…</b> (More, on an order email in Data or Documents): the things you bought become items, each with the email as its receipt.', '<b>Monday summary</b>: a notification on Mondays with what\'s due that week and letters waiting for a reply (Settings to turn it off).', '<b>If something happens to me</b> (Import & backup): one locked file for your next of kin with a letter, contacts, insurance, valuable things and chosen documents. It opens in any web browser with a passphrase.']],
     ['2.18.0', 'Complaints and subject access', ['<b>Start a complaint…</b> (a case\'s More menu, or + New): each stage with its time limits for DWP and the CMS, Veterans UK, government, councils, banks, energy and phone companies, from their published rules. Deadlines go into Reminders.', '<b>Subject access request…</b>: a letter asking for the information an organisation holds on you, with the one-month reply date and what to do next.']],
     ['2.17.0', 'Statements and forms', ['<b>Draft a statement…</b> on a case (More menu): a numbered, dated account built from its letters, your highlights and notes, to edit and save as Word or PDF.', '<b>Fill in this form…</b> on a PDF\'s ⋯ menu: fillable forms get your name, address and earlier answers suggested; a filled-in copy is saved.']],
@@ -1432,6 +1686,8 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     ['complaint', 2, 'Start a complaint', 'Open a case → More → <b>Start a complaint…</b>, pick who it\'s about and the date you complained. The stages should appear with their time limits; click <b>Got their reply…</b> and the date for the next stage should be worked out.'],
     ['order', 2, 'Items from an order email', 'Drag an order confirmation email (.eml, or .msg from Outlook) into Data, open it, then More → <b>Make items from this order…</b>. The shop, order number and lines should be filled in; check them, add, and each item should have the email as a PDF receipt.'],
     ['weekly', 3, 'Monday summary', 'Settings → <b>Show it now</b>. A Windows notification should appear with this week\'s reminders. Next Monday it should come by itself when you open OpenSafe (or from the tray, with Keep reminders running on).'],
+    ['budget', 1, 'Bank statement import', 'Bills &amp; budget → <b>Import bank CSV…</b>. Choose your bank, then a CSV downloaded from it. Check the dates and amounts in the preview (money out should be minus) before you import. If it says the columns don\'t match, choose them and tell me which bank, so the list can be corrected.'],
+    ['bills', 2, 'Bills matched to statements', 'Add a bill under <b>Bills &amp; income</b> with words that appear in its statement line (like OCTOPUS). Import a statement: the payment should show the bill\'s name, and its next date should move on.'],
     ['kinpack', 1, 'If something happens to me', 'Import & backup → <b>Make the pack…</b>. Tick a document, set a passphrase, save. Double-click the saved file: it should open in your browser, refuse a wrong passphrase, and show everything with the right one. Try opening a document from it, and try it on your phone too.'],
     ['twopc', 3, 'Two PCs (only if you have a second PC)', 'Choose the same OneDrive folder on both under Import & backup → Two PCs. Add an item on one; once OneDrive has copied it (usually a few minutes), it should appear on the other.']
   ];
@@ -1714,7 +1970,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     const pageKey = [state.view, state.itemId, state.libId].join('|');
     if (pageKey !== state.lastPageKey) { state.lastPageKey = pageKey; v.classList.remove('enter'); void v.offsetWidth; v.classList.add('enter'); }
     else v.classList.remove('enter');
-    const views = { dashboard: viewDashboard, items: viewItems, item: viewItem, reminders: viewReminders, phone: viewPhone, reports: viewReports, settings: viewSettings, vault: viewVault, policies: viewPolicies, bin: viewBin, trips: viewTrips, places: viewPlaces, data: viewData, docs: () => viewLibrary('docs'), files: () => viewLibrary('files'), libitem: viewLibItem, search: viewSearch, help: viewHelp, case: viewCase };
+    const views = { dashboard: viewDashboard, items: viewItems, item: viewItem, reminders: viewReminders, phone: viewPhone, reports: viewReports, settings: viewSettings, vault: viewVault, policies: viewPolicies, bin: viewBin, trips: viewTrips, places: viewPlaces, data: viewData, docs: () => viewLibrary('docs'), files: () => viewLibrary('files'), libitem: viewLibItem, search: viewSearch, help: viewHelp, case: viewCase, budget: viewBudget };
     v.innerHTML = (views[state.view] || viewDashboard)();
     if (state.view === 'phone') { loadCapture(); loadPhone(); const d = $('#wifiDetails'); if (d) d.ontoggle = () => { state.wifiOpen = d.open; }; }
     if (state.view === 'item') wireDrop();
@@ -1725,6 +1981,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
       const q = state.f.q.trim();
       keep.searchAll(q).then(r => { state.itemHits = { q, ids: new Set(r.items.map(x => x.id)), why: new Map(r.items.filter(x => x.snippet).map(x => [x.id, x])) }; if (state.view === 'items' && state.f.q.trim() === q && r.items.some(x => x.snippet)) { const qi = $('#q'), pos = qi && qi.selectionStart, had = document.activeElement === qi; render(); if (had) { const n = $('#q'); n.focus(); n.setSelectionRange(pos, pos); } } }).catch(() => {});
     }
+    if (state.view === 'budget') wireBudget();
     if (state.view === 'vault') wireVaultForm();
     if (state.view === 'reports') spendingCard();
     if (state.view === 'trips' && $('#extraForm')) $('#extraForm').onsubmit = async (e) => { e.preventDefault(); const v = e.target.text.value; if (!v.trim()) return; await run(() => keep.addTripExtra(state.tripId, v)); await refresh(); };
@@ -1762,7 +2019,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     <div class="dash">
       <div class="dash-main">
         <div class="card"><h2>${icon('bell')}Coming up<span class="spacer"></span><a href="#" class="meta" data-nav="reminders" style="font-weight:500">All reminders</a></h2>
-          ${rem.length ? `<div class="rows">${rem.map(r => `<div class="rowi" ${r.libraryId ? `data-action="libOpen" data-lib="${esc(r.libraryId)}"` : r.policyId ? 'data-nav="policies"' : `data-open="${r.assetId}"`}>
+          ${rem.length ? `<div class="rows">${rem.map(r => `<div class="rowi" ${r.regularId ? 'data-action="bOpenRegular" data-id="' + esc(r.regularId) + '"' : r.libraryId ? `data-action="libOpen" data-lib="${esc(r.libraryId)}"` : r.policyId ? 'data-nav="policies"' : `data-open="${r.assetId}"`}>
               <span class="pill ${r.daysLeft < 0 ? 'bad' : 'warn'}">${esc(r.kind)}</span>
               <span style="flex:1">${esc(r.assetName)}</span><span class="meta nowrap">${dueText(r.daysLeft)}</span></div>`).join('')}</div>`
             : '<div class="muted">Nothing due in the next ' + state.snap.data.settings.reminderDays + ' days.</div>'}</div>
@@ -2174,7 +2431,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     const r = state.snap.reminders;
     const over = r.filter(x => x.daysLeft < 0), soon = r.filter(x => x.daysLeft >= 0);
     const block = (title, list, cls) => `<div class="card" style="margin-bottom:16px"><h2>${title}</h2>${list.length ? `<div class="rows">${list.map(x => `
-      <div class="rowi" ${x.complaintId ? `data-action="libCaseOpen" data-case="${esc(x.caseName || '')}"` : x.libraryId ? `data-action="libOpen" data-lib="${esc(x.libraryId)}"` : x.policyId ? 'data-nav="policies"' : `data-open="${x.assetId}" data-opentab="${x.source === 'item' ? 'overview' : 'service'}"`}><span class="pill ${cls}">${esc(x.kind)}</span><span style="flex:1"><b>${esc(x.assetName)}</b></span>
+      <div class="rowi" ${x.regularId ? 'data-action="bOpenRegular" data-id="' + esc(x.regularId) + '"' : x.complaintId ? `data-action="libCaseOpen" data-case="${esc(x.caseName || '')}"` : x.libraryId ? `data-action="libOpen" data-lib="${esc(x.libraryId)}"` : x.policyId ? 'data-nav="policies"' : `data-open="${x.assetId}" data-opentab="${x.source === 'item' ? 'overview' : 'service'}"`}><span class="pill ${cls}">${esc(x.kind)}</span><span style="flex:1"><b>${esc(x.assetName)}</b></span>
       <span class="meta">${ukDate(x.date)}</span><span class="nowrap" style="width:130px;text-align:right">${dueText(x.daysLeft)}</span></div>`).join('')}</div>` : '<div class="muted">None.</div>'}</div>`;
     return `<div class="head"><h1>Reminders</h1><span class="sub">Warranties, service and MOT dates, things lent or borrowed, insurance renewals and letters to reply to, looking ${state.snap.data.settings.reminderDays} days ahead</span><span class="spacer"></span><button class="btn" data-action="remIcs" title="A calendar file for Outlook, Google Calendar or your phone">${icon('calendar')}Add to my calendar…</button></div>
       ${block('Overdue', over, 'bad')}${block('Coming up', soon, 'warn')}`;
@@ -2666,6 +2923,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     const lay = e.target.closest('[data-layout]');
     if (lay) { state.f.layout = lay.dataset.layout; render(); return; }
 
+    if (e.target.dataset && e.target.dataset.bpick) { const id = e.target.dataset.bpick; state.bPick = state.bPick || new Set(); if (e.target.checked) state.bPick.add(id); else state.bPick.delete(id); const sc = $('#view').scrollTop; render(); $('#view').scrollTop = sc; return; }
     const act = e.target.closest('[data-action]');
     if (act && (act.dataset.action === 'libSelBox' || act.dataset.action === 'libSelAll')) { // checkboxes: read the tick now, before anything else
       state.libPick = state.libPick || new Set();
@@ -2795,6 +3053,23 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
         case 'addValuation': valuationForm(a); break;
         case 'rmValuation': if (confirm('Delete this valuation from the history? The item\'s value now isn\'t changed.')) { await run(() => keep.removeValuation(a.id, act.dataset.vid), 'Deleted'); await refresh(); } break;
         case 'bcLookup': barcodeLookup(a); break;
+        case 'bTab': state.btab = act.dataset.t; state.bPick = new Set(); render(); break;
+        case 'bMonth': state.bm = shiftMonth(state.bm || thisMonth(), Number(act.dataset.n)); state.bPick = new Set(); render(); break;
+        case 'bImport': await bankImportForm(); break;
+        case 'bCats': budgetCatsForm(); break;
+        case 'bRules': budgetRulesForm(); break;
+        case 'bImports': budgetImportsForm(); break;
+        case 'bCatTx': e.preventDefault(); state.btab = 'tx'; state.bc = act.dataset.cat; state.bAll = false; render(); break;
+        case 'bAskYes': { const q = state.bAsk; state.bAsk = null; const n = await run(() => keep.budgetTxCategory([q.id], q.cat, q.text)); await refresh(); toast(`✓ Rule saved${n > 1 ? `: ${n} transactions now in ${(bcat(q.cat) || {}).name}` : ''}`, 4000); break; }
+        case 'bAskNo': state.bAsk = null; render(); break;
+        case 'bOpenRegular': state.btab = 'regular'; go('budget'); { const r = bdata().regular.find(x => x.id === act.dataset.id); if (r) regularForm(r); } break;
+        case 'bRegNew': regularForm(null, act.dataset.kind); break;
+        case 'bRegEdit': regularForm(bdata().regular.find(r => r.id === act.dataset.id)); break;
+        case 'bSelNone': state.bPick = new Set(); render(); break;
+        case 'bSelDel': { const ids = [...state.bPick]; if (confirm(`Delete ${ids.length} transaction${ids.length === 1 ? '' : 's'}? Importing the same statement again would add ${ids.length === 1 ? 'it' : 'them'} back.`)) { await run(() => keep.budgetTxDelete(ids), 'Deleted'); state.bPick = new Set(); await refresh(); } break; }
+        case 'bSelCase': { const ids = [...state.bPick]; const name = await promptText('Add to a case', 'Case name (leave blank to take them off a case)', '', (state.snap.data.libCases || []).map(c => c.name)); if (name === null || name === undefined) break; await run(() => keep.budgetTxCase(ids, name.trim()), name.trim() ? `✓ Added to ${name.trim()}` : 'Taken off the case'); state.bPick = new Set(); await refresh(); break; }
+        case 'bRuleDel': await run(() => keep.budgetRuleDelete(act.dataset.text)); await refresh(); budgetRulesForm(); break;
+        case 'bUndo': { if (!confirm('Take back this import? Every transaction it added is removed.')) break; const n = await run(() => keep.budgetUndo(act.dataset.id)); await refresh(); budgetImportsForm(); toast(`Removed ${n} transaction${n === 1 ? '' : 's'}`); break; }
         case 'kinOpen': { const d = await run(() => keep.kinInfo()); if (d) kinForm(d); break; }
         case 'watchChoose': { const st = await run(() => keep.watchChoose(act.dataset.kind)); if (st) toast(`✓ Watching that folder for ${st.kind === 'data' ? 'Data' : 'Documents'}`, 4000); await refresh(); break; }
         case 'watchStop': await run(() => keep.watchStop(), 'Stopped watching the folder'); await refresh(); break;

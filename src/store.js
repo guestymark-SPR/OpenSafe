@@ -93,6 +93,8 @@ function cleanMoney(v) {
   if (!Number.isFinite(n) || n < 0) return null;
   return Math.round(n * 100) / 100;
 }
+function todayIso() { const d = new Date(); return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())).toISOString().slice(0, 10); }
+function addDaysIso(s, n) { const d = new Date(s + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
 function cleanDate(v) {
   const s = cleanString(v, 10);
   if (!s) return '';
@@ -1602,6 +1604,11 @@ class Store {
       if (cur && cur.state === 'waiting' && cur.dueReply) { const n = diff(cur.dueReply); if (n <= days) out.push({ complaintId: c.id, caseName: c.caseName, assetName: `${c.title}${c.org ? ' (' + c.org + ')' : ''}: ${cur.name}`, kind: 'Complaint reply due', date: cur.dueReply, daysLeft: n }); }
       if (st.next && st.next.startBy) { const n = diff(st.next.startBy); if (n <= days && n >= -30) out.push({ complaintId: c.id, caseName: c.caseName, assetName: `${c.title}${c.org ? ' (' + c.org + ')' : ''}`, kind: `Last day for: ${st.next.name}`, date: st.next.startBy, daysLeft: n }); }
     }
+    for (const r of ((this.data.budget || {}).regular || [])) {
+      if (!r.renews) continue;
+      const n = diff(r.renews);
+      if (n <= days && n >= -30) out.push({ regularId: r.id, assetName: r.name, kind: 'Contract ends — check the price', date: r.renews, daysLeft: n });
+    }
     for (const p of this.data.policies || []) {
       if (!p.renewalDate) continue;
       const n = diff(p.renewalDate);
@@ -1609,6 +1616,145 @@ class Store {
     }
     return out.sort((x, y) => x.daysLeft - y.daysLeft);
   }
+
+  // ---------- Bills & budget ----------
+  /** The budget data, created with the standard categories the first time. Money is in pence. */
+  budget() {
+    const B = require('./budget');
+    if (!this.data.budget || typeof this.data.budget !== 'object') this.data.budget = {};
+    const b = this.data.budget;
+    if (!Array.isArray(b.categories) || !b.categories.length) b.categories = B.DEFAULT_CATEGORIES.map(c => Object.assign({}, c));
+    for (const k of ['rules', 'transactions', 'regular', 'imports']) if (!Array.isArray(b[k])) b[k] = [];
+    if (!b.maps || typeof b.maps !== 'object') b.maps = {};
+    return b;
+  }
+  _budgetCat(id) { return id && this.budget().categories.some(c => c.id === id) ? id : ''; }
+  saveBudgetCategories(list) {
+    const b = this.budget();
+    const seen = new Set();
+    const out = (Array.isArray(list) ? list : []).map(c => ({ id: c.id && /^[a-z0-9]{1,20}$/i.test(c.id) ? c.id : 'c' + uid().slice(0, 8), name: cleanString(c.name, 60), limit: Math.max(0, Math.round(Number(c.limit) || 0)), kind: ['income', 'transfer'].includes(c.kind) ? c.kind : 'spend' }))
+      .filter(c => c.name && !seen.has(c.name.toLowerCase()) && seen.add(c.name.toLowerCase())).slice(0, 80);
+    if (!out.length) throw new Error('Keep at least one category.');
+    const ids = new Set(out.map(c => c.id));
+    for (const t of b.transactions) if (t.categoryId && !ids.has(t.categoryId)) t.categoryId = '';
+    b.rules = b.rules.filter(r => ids.has(r.categoryId));
+    for (const r of b.regular) if (r.categoryId && !ids.has(r.categoryId)) r.categoryId = '';
+    b.categories = out;
+    this.save();
+    return b.categories;
+  }
+  /** Remember the columns you chose for a bank's file, so next month's goes straight through. */
+  saveBankMap(bankId, headings, map) {
+    const b = this.budget();
+    b.maps[String(bankId).slice(0, 20)] = { headings: (headings || []).map(h => cleanString(h == null ? '' : h, 80)), map: Object.fromEntries(Object.entries(map || {}).filter(([k, v]) => /^[a-z]{2,10}$/.test(k) && Number.isInteger(v) && v >= 0 && v < 200)) };
+    this.save();
+  }
+  /**
+   * Add transactions from a bank file. Ones already imported (same bank, date, amount, description, and position among identical ones) are skipped.
+   * New ones are put in a category by your rules, matched to your regular bills and income, and price changes are noted.
+   */
+  importTransactions(txs, { bank, account } = {}) {
+    const B = require('./budget');
+    const b = this.budget();
+    const have = new Set(b.transactions.map(t => t.key));
+    const imp = { id: uid(), at: nowIso(), bank: cleanString(bank, 20), account: cleanString(account, 60), added: 0 };
+    const res = { added: 0, duplicates: 0, categorised: 0, matched: 0, priceChanges: [], importId: imp.id };
+    const fresh = [];
+    for (const t of (Array.isArray(txs) ? txs : []).slice(0, 20000)) {
+      if (!t || !t.key || have.has(t.key)) { res.duplicates++; continue; }
+      have.add(t.key);
+      const amount = Math.round(Number(t.amount));
+      const date = cleanDate(t.date);
+      if (!date || !Number.isFinite(amount)) continue;
+      const n = { id: uid(), key: String(t.key).slice(0, 40), importId: imp.id, account: imp.account, date, amount, description: cleanString(t.description, 300), type: cleanString(t.type, 60), bankCategory: cleanString(t.bankCategory, 60), categoryId: '', billId: '', caseName: '', note: '' };
+      if (Number.isFinite(t.balance)) n.balance = Math.round(t.balance);
+      n.categoryId = B.categorise(n.description, b.rules);
+      if (n.categoryId) res.categorised++;
+      fresh.push(n);
+    }
+    fresh.sort((x, y) => x.date.localeCompare(y.date));
+    for (const n of fresh) {
+      const r = b.regular.find(x => B.matchesRegular(n, x));
+      if (!r) continue;
+      n.billId = r.id; res.matched++;
+      if (!n.categoryId && r.categoryId) { n.categoryId = r.categoryId; res.categorised++; }
+      if (!r.lastSeen || n.date >= r.lastSeen) {
+        const ch = B.priceChange(r, n);
+        if (ch && r.lastSeen) { r.history = (r.history || []).concat([ch]).slice(-50); r.amount = Math.abs(n.amount); res.priceChanges.push({ name: r.name, ...ch }); }
+        r.lastSeen = n.date;
+        // the payment has come, so the next one is due after it
+        const day = Number(r.next ? r.next.slice(8, 10) : n.date.slice(8, 10));
+        let guard = 0;
+        while (r.next && r.next <= addDaysIso(n.date, 7) && guard++ < 60) r.next = B.step(r.next, r.every, day);
+      }
+    }
+    b.transactions.push(...fresh);
+    b.transactions.sort((x, y) => x.date.localeCompare(y.date));
+    imp.added = res.added = fresh.length;
+    if (fresh.length) b.imports.push(imp);
+    b.imports = b.imports.slice(-200);
+    this.save();
+    return res;
+  }
+  /** Take back an import: removes the transactions it added. */
+  undoImport(importId) {
+    const b = this.budget();
+    const before = b.transactions.length;
+    b.transactions = b.transactions.filter(t => t.importId !== importId);
+    b.imports = b.imports.filter(i => i.id !== importId);
+    this.save();
+    return before - b.transactions.length;
+  }
+  /** Put transactions in a category; with `rule`, also file every other transaction containing that text, now and in future imports. */
+  setTransactionCategory(ids, categoryId, rule) {
+    const B = require('./budget');
+    const b = this.budget();
+    const cat = this._budgetCat(categoryId);
+    const want = new Set(ids || []);
+    let n = 0;
+    for (const t of b.transactions) if (want.has(t.id)) { t.categoryId = cat; n++; }
+    const text = cleanString(rule, 60);
+    if (text && cat) {
+      b.rules = b.rules.filter(r => r.text.toLowerCase() !== text.toLowerCase()).concat([{ text, categoryId: cat }]).slice(-1000);
+      for (const t of b.transactions) if (!t.categoryId && B.categorise(t.description, [{ text, categoryId: cat }])) { t.categoryId = cat; n++; }
+    }
+    this.save();
+    return n;
+  }
+  deleteRule(text) { const b = this.budget(); b.rules = b.rules.filter(r => r.text !== text); this.save(); }
+  /** Tie transactions to a case (money in and out on a dispute), or clear with ''. */
+  setTransactionCase(ids, caseName) {
+    const b = this.budget(), want = new Set(ids || []), c = cleanString(caseName, 120);
+    let n = 0;
+    for (const t of b.transactions) if (want.has(t.id)) { t.caseName = c; n++; }
+    this.save();
+    return n;
+  }
+  setTransactionNote(id, note) { const t = this.budget().transactions.find(x => x.id === id); if (!t) throw new Error('Transaction not found'); t.note = cleanString(note, 500); this.save(); }
+  deleteTransactions(ids) { const b = this.budget(), want = new Set(ids || []); const before = b.transactions.length; b.transactions = b.transactions.filter(t => !want.has(t.id)); this.save(); return before - b.transactions.length; }
+  /** A regular bill or income. */
+  saveRegular(input) {
+    const B = require('./budget');
+    const b = this.budget();
+    const ex = input && input.id ? b.regular.find(r => r.id === input.id) : null;
+    if (input && input.id && !ex) throw new Error('Not found');
+    const r = {
+      id: ex ? ex.id : uid(), kind: input.kind === 'income' ? 'income' : 'bill',
+      name: cleanString(input.name, 80), amount: Math.max(0, Math.round(Number(input.amount) || 0)),
+      every: B.EVERY[input.every] ? input.every : 'month', next: cleanDate(input.next), ends: cleanDate(input.ends),
+      categoryId: this._budgetCat(input.categoryId), match: cleanString(input.match, 60), renews: cleanDate(input.renews),
+      notes: cleanString(input.notes, 1000), lastSeen: ex ? ex.lastSeen || '' : '', history: ex ? ex.history || [] : []
+    };
+    if (!r.name) throw new Error('Give it a name.');
+    if (!r.amount) throw new Error('Enter the amount.');
+    if (!r.next) throw new Error('Enter when it\'s next due.');
+    if (ex && ex.amount && ex.amount !== r.amount) r.history = r.history.concat([{ date: todayIso(), from: ex.amount, to: r.amount, typed: true }]).slice(-50);
+    if (ex) Object.assign(ex, r); else b.regular.push(r);
+    if (r.match) for (const t of b.transactions) if (!t.billId && B.matchesRegular(t, r)) { t.billId = r.id; if (!t.categoryId && r.categoryId) t.categoryId = r.categoryId; }
+    this.save();
+    return ex || r;
+  }
+  deleteRegular(id) { const b = this.budget(); b.regular = b.regular.filter(r => r.id !== id); for (const t of b.transactions) if (t.billId === id) t.billId = ''; this.save(); }
 
   // ---------- insurance policies ----------
   _normalisePolicy(input, existing) {

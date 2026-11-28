@@ -377,3 +377,11 @@ body.viewing{overflow:hidden}
 .libright .libbig.ph{height:260px}
 .libright .libprevmsg{max-height:min(520px,calc(100vh - 220px));font-size:13px}
 @media (max-width:1100px){.libgrid{grid-template-columns:1fr}.libright{position:static;order:-1}}
+/* Bills & budget */
+.bstats{grid-template-columns:repeat(3,minmax(0,1fr))}
+.bstats .lbl{font-size:12px;color:var(--muted)} .bstats .num{font-size:24px;font-weight:650;margin:2px 0}
+.bmeter{height:8px;border-radius:4px;background:var(--line);overflow:hidden}
+.bmeter span{display:block;height:100%;border-radius:4px;background:var(--accent-text)}
+.bmeter span.near{background:var(--warn)} .bmeter span.over{background:var(--bad)}
+table.list td.num,table.list th.num{text-align:right;font-variant-numeric:tabular-nums}
+.btx select.small{max-width:170px;padding:3px 6px}

@@ -27,11 +27,11 @@ function build(reminders, { now = new Date() } = {}) {
   const seen = new Set();
   for (const r of reminders) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(r.date || '')) continue;
-    const who = r.assetId || r.libraryId || r.policyId || slug(r.assetName);
+    const who = r.assetId || r.libraryId || r.policyId || r.regularId || slug(r.assetName);
     const uid = `${slug(r.kind)}-${who}@opensafe`;
     if (seen.has(uid)) continue;
     seen.add(uid);
-    const what = r.libraryId ? 'Documents' : r.policyId ? 'Insurance' : 'Items';
+    const what = r.libraryId ? 'Documents' : r.policyId ? 'Insurance' : r.regularId ? 'Bills & budget' : 'Items';
     lines.push('BEGIN:VEVENT', `UID:${uid}`, `DTSTAMP:${stamp}`, `DTSTART;VALUE=DATE:${day(r.date)}`, `DTEND;VALUE=DATE:${day(nextDay(r.date))}`,
       `SUMMARY:${esc(`${r.kind}: ${r.assetName}`)}`, `DESCRIPTION:${esc(`From OpenSafe (${what}). Open OpenSafe to see the details or mark it done.`)}`,
       'TRANSP:TRANSPARENT', 'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${esc(r.kind)}`, 'TRIGGER:-PT15H', 'END:VALARM', 'END:VEVENT');

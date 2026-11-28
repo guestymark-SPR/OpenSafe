@@ -137,6 +137,15 @@ Emails, Word files and saved web pages are shown with scripts switched off. Use 
 
 **If something happens to me:** **Import & backup → If something happens to me** makes one locked file for your next of kin: a letter from you, where things are, people to contact, your insurance policies, items worth more than an amount you choose, and the documents you tick (copied into the file, up to 80 MB). It's a web page that opens in any browser (Chrome, Edge, Firefox or Safari, on a computer or phone) with nothing to install and nothing sent over the internet, once the passphrase is typed. It's encrypted with AES-256-GCM, with the key made from the passphrase by PBKDF2-SHA256 (600,000 rounds); without the passphrase it can't be read, so give the passphrase to them separately and keep a copy. OpenSafe remembers your choices, never the passphrase. The file is a snapshot: make a new one when things change.
 
+**Bills & budget:** a page in the sidebar for money in and out.
+- **Import bank CSV…**: choose your bank from the list (Starling, Nationwide, NatWest, Monzo, Barclays, or Other bank), then the CSV file you downloaded from it. You see the date range and the first rows before anything is added. Each bank's layout is checked by its column headings: if the file doesn't match (the bank changed its export, or you picked the wrong bank), nothing is guessed. You choose which column is the date, description and amount, and OpenSafe remembers that for next time. Dates are read day first (01/08/2026 is 1 August). Transactions already imported are skipped, so overlapping statements are fine, and **More → Imports** takes an import back.
+- The bank layouts come from accounting tools and exports people have shared, not from the banks, which don't publish them. The heading check is there so a change at the bank can't put wrong figures in.
+- Account numbers are never kept: account and sort-code columns aren't read, and long numbers in descriptions are shortened to their last four digits.
+- **Categories**: choose one for a transaction and OpenSafe offers to do the same for every payment like it, now and in future imports. Set monthly limits under **More → Categories and monthly limits**. **This month** shows money in, money out, what's left and each category against its limit. Transfers to savings or between your accounts aren't counted.
+- **Bills & income**: your regular payments, how often and when next. With **words to look for**, imported payments are matched to the bill, its next date moves on, and if the amount changed the old price is kept, so you can see a bill went up and by how much. A **contract end** date gives you a reminder to check the price.
+- **Coming up**: the next six weeks of bills and income with a running total.
+- **Cases**: tick transactions and **Add to a case…**; the case page then shows the money in and out on it.
+
 **Same file twice:** adding a file that's already kept (exactly the same file, in Documents or Data, or in the vault while it's unlocked) asks first: **Skip those** or **Add anyway**.
 
 **Bundle PDF:** tick letters (or Data entries) and choose **Bundle PDF…** (also on right-click and a document's **More** menu) to get one PDF for an MP, a solicitor, a tribunal or an appeal. They go in by the date on each one (oldest or newest first; undated ones last), with a contents page at the front (date, who from, title, reference and the pages each one is on) and *Page 3 of 40* on every page. PDFs and photos go in as they are; emails (.eml and .msg), Word and Excel files are turned into pages. Pictures from the internet in emails are never loaded. Anything that can't go in a PDF (such as videos) is listed on the contents page as not included. **Hide private details** (in the same window) blacks out what you tick (National Insurance numbers, bank sort codes and account numbers, card numbers, phone numbers, email addresses) and any words you type, such as names. Words are found in each page's text or, on scanned pages, by reading the page on this PC. Every page is then redrawn as a picture, so hidden details can't be copied out of the PDF; your own copies aren't changed. It tells you what it hid. Always check the PDF before sending: things can be missed, especially handwriting or faint scans. Typed words aren't saved.
@@ -319,6 +328,8 @@ src/complaints.js   Complaint stages and time limits
 src/orderinfo.js    Reads order confirmation emails
 src/summary.js      Monday summary wording
 src/kinpack.js      "If something happens to me" locked file
+src/bankcsv.js      Reads bank CSV exports
+src/budget.js       Bills & budget sums
 src/bundle.js       Bundle PDF: chosen documents in date order with a contents page and page numbers
 src/renderer/       Desktop UI (plain HTML/CSS/JS)
 src/phone/          Phone page for the Wi-Fi link

@@ -33,6 +33,7 @@
     video: '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="m16 10.5 5-3v9l-5-3z"/>',
     image: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m4 18 5.5-5 4 3.5 2.5-2 4 3.5"/>',
     camera: '<path d="M4 8h3.5l1.8-2.5h5.4L16.5 8H20v11.5H4z"/><circle cx="12" cy="13.5" r="3.5"/>',
+    pound: '<path d="M16 6.5A3.5 3.5 0 0 0 9.5 8v4.5c0 2.5-1 4.5-3 5.5h11"/><path d="M7 12.5h7"/>',
     chart: '<path d="M4 20V4"/><path d="M4 20h16"/><path d="M8 16v-4M12 16V8M16 16v-6"/>',
     upload: '<path d="M12 15V4"/><path d="m7.5 8.5 4.5-4.5 4.5 4.5"/><path d="M4.5 15v5h15v-5"/>',
     download: '<path d="M12 4v11"/><path d="m7.5 10.5 4.5 4.5 4.5-4.5"/><path d="M4.5 15v5h15v-5"/>',

@@ -391,7 +391,8 @@ const complaints = require('./complaints');
 const { FolderWatch } = require('./watcher');
 const { summaryText } = require('./summary');
 const orderinfo = require('./orderinfo')
-const kinpack = require('./kinpack');
+const kinpack = require('./kinpack')
+const bankcsv = require('./bankcsv');
 const { Sync } = require('./sync');
 /** Turn a page of HTML into an A4 PDF, with scripts off and nothing loaded from the internet. */
 async function renderHtmlToPdf(html) {
@@ -560,6 +561,7 @@ function remindOnStartup() {
 
 function snapshot() {
   if (store.isLocked()) return { locked: true, security: store.securityState(), version: require('../package.json').version };
+  store.budget(); // make sure the standard categories exist
   const data = JSON.parse(JSON.stringify(Object.assign({}, store.data, { vault: undefined, assets: [], bin: [] })));
   data.bin = store.binView();
   delete data.settings.phoneToken;
@@ -896,6 +898,47 @@ function registerIpc() {
     libChanged(); notifyChanged();
     return { ids, receipt: !!receipt };
   });
+  // ---- Bills & budget ----
+  const bankFiles = new Map(); // token -> { bank, buf, name } while you're looking at the preview
+  const bankResult = (token, r) => Object.assign({ token, name: bankFiles.get(token).name }, r, { transactions: undefined, count: r.transactions ? r.transactions.length : 0,
+    preview: (r.transactions || []).slice(0, 8), total: (r.transactions || []).reduce((t, x) => t + x.amount, 0),
+    from: r.transactions && r.transactions.length ? r.transactions.reduce((m, x) => x.date < m ? x.date : m, '9999') : '', to: r.transactions && r.transactions.length ? r.transactions.reduce((m, x) => x.date > m ? x.date : m, '') : '',
+    already: r.transactions ? (() => { const have = new Set(store.budget().transactions.map(t => t.key)); return r.transactions.filter(t => have.has(t.key)).length; })() : 0 });
+  h('budget:banks', () => bankcsv.BANKS.map(b => ({ id: b.id, name: b.name, how: b.how })));
+  h('budget:read', async (bankId) => {
+    const pick = await dialog.showOpenDialog(win, { title: 'Choose the CSV file from your bank', properties: ['openFile'], filters: [{ name: 'CSV file', extensions: ['csv', 'txt'] }, { name: 'All files', extensions: ['*'] }] });
+    if (pick.canceled || !pick.filePaths[0]) return null;
+    const file = pick.filePaths[0];
+    if (fs.statSync(file).size > 20 * 1024 * 1024) throw new Error('That file is over 20 MB, which is too big for a bank statement CSV. Choose a shorter date range.');
+    const buf = fs.readFileSync(file);
+    const token = crypto.randomBytes(8).toString('hex');
+    bankFiles.clear(); bankFiles.set(token, { bank: String(bankId), buf, name: path.basename(file) });
+    return bankResult(token, bankcsv.read(buf, String(bankId), store.budget().maps[String(bankId)]));
+  });
+  h('budget:remap', (token, map) => {
+    const f = bankFiles.get(token); if (!f) throw new Error('Choose the file again.');
+    f.map = map;
+    return bankResult(token, bankcsv.readWithMap(f.buf, f.bank, map));
+  });
+  h('budget:import', (token, account) => {
+    const f = bankFiles.get(token); if (!f) throw new Error('Choose the file again.');
+    const r = f.map ? bankcsv.readWithMap(f.buf, f.bank, f.map) : bankcsv.read(f.buf, f.bank, store.budget().maps[f.bank]);
+    if (!r.ok) throw new Error(r.reason || 'The file couldn\'t be read.');
+    if (f.map) store.saveBankMap(f.bank, r.headings, r.map);
+    const res = store.importTransactions(r.transactions, { bank: f.bank, account: account || (bankcsv.BANKS.find(b => b.id === f.bank) || {}).name });
+    bankFiles.delete(token);
+    notifyChanged();
+    return Object.assign(res, { skipped: r.skipped, problems: r.problemCount });
+  });
+  h('budget:undo', (id) => { const n = store.undoImport(id); notifyChanged(); return n; });
+  h('budget:categories', (list) => { const r = store.saveBudgetCategories(list); notifyChanged(); return r; });
+  h('budget:txCategory', (ids, cat, rule) => { const r = store.setTransactionCategory(ids, cat, rule); notifyChanged(); return r; });
+  h('budget:txCase', (ids, name) => { const r = store.setTransactionCase(ids, name); notifyChanged(); return r; });
+  h('budget:txNote', (id, note) => { store.setTransactionNote(id, note); notifyChanged(); });
+  h('budget:txDelete', (ids) => { const r = store.deleteTransactions(ids); notifyChanged(); return r; });
+  h('budget:ruleDelete', (text) => { store.deleteRule(text); notifyChanged(); });
+  h('budget:regularSave', (r) => { const x = store.saveRegular(r); notifyChanged(); return x; });
+  h('budget:regularDelete', (id) => { store.deleteRegular(id); notifyChanged(); });
   // ---- "If something happens to me" pack ----
   const KIN_TYPES = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', txt: 'text/plain', html: 'text/html', htm: 'text/html',
     docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', doc: 'application/msword', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', eml: 'message/rfc822' };

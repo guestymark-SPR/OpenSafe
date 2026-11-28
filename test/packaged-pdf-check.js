@@ -68,7 +68,11 @@ const F = path.join(__dirname, 'fixtures', 'library');
     const oi = require(path.join(R, 'app.asar', 'src', 'orderinfo.js'));
     if (oi.parse('Order #12345\nWidget\n£5.00\nOrder total: £5.00', { from: 'Shop <a@shop.co.uk>' }).orderNo !== '12345') throw new Error('order not read');
     require(path.join(R, 'app.asar', 'src', 'summary.js'));
-    console.log('ok   family pack and orders');
+    const bc = require(path.join(R, 'app.asar', 'src', 'bankcsv.js'));
+    const br = bc.read(Buffer.from('"Date","Transaction type","Description","Paid out","Paid in","Balance"\n"21 Nov 2026","Visa","SHOP","\xa310.00","","\xa390.00"\n', 'latin1'), 'nationwide');
+    if (!br.ok || br.transactions[0].amount !== -1000) throw new Error('bank CSV not read: ' + br.reason);
+    require(path.join(R, 'app.asar', 'src', 'budget.js'));
+    console.log('ok   family pack and orders'); console.log('ok   bank csv read');
   } catch (e) { bad++; console.log('FAIL family pack/orders', e.message); }
   viewer.clear(); await require(path.join(R, 'app.asar', 'src', 'ocr.js')).stop();
   process.exit(bad ? 1 : 0);
