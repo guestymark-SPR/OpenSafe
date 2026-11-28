@@ -59,6 +59,47 @@ let tray = null, quitting = false, bgTimer = null, scheduleTimer = null;
 const bgEnabled = () => !!readPrefs().background;
 const localISO = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const dayDiff = (a, b) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);
+/** Bills & budget sums, worked out here so the window, the Monday summary and the tests all use the same ones. */
+function budgetNow() {
+  const B = budgetCalc, b = store.budget(), d = new Date(), today = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())).toISOString().slice(0, 10);
+  const ms = b.settings.monthStart, nowKey = B.periodOf(today, ms);
+  const keys = new Set(b.transactions.map(t => B.periodOf(t.date, ms))); keys.add(nowKey); keys.add(B.nextKey(nowKey));
+  const periods = {}, months = {};
+  for (const k of keys) { periods[k] = B.period(k, ms); months[k] = B.monthSummary(b.transactions, b.categories, periods[k]); months[k].flex = B.flexSpent(b.transactions, b.categories, periods[k]); }
+  const spentBy = (k) => (months[k] || (months[k] = B.monthSummary(b.transactions, b.categories, periods[k] = periods[k] || B.period(k, ms)))).by;
+  const carried = Object.fromEntries([...keys].map(k => [k, B.carried(b.categories, k, spentBy)]));
+  // balances and forecast
+  const balances = B.accountBalances(b.transactions);
+  const accounts = Object.entries(balances).map(([name, x]) => { const a = b.accounts[name] || {}; const kind = a.kind || 'current'; return { name, kind, forecast: a.forecast !== false && kind === 'current', ...x }; });
+  const inF = accounts.filter(a => a.forecast);
+  let fc = null;
+  if (inF.length) {
+    const from = inF.reduce((m, a) => a.date < m ? a.date : m, '9999');
+    const daily = b.settings.everyday ? B.dailySpend(b.transactions, b.categories, today) : 0;
+    fc = B.forecast({ start: inF.reduce((t, a) => t + a.balance, 0), from, to: B.addDays(today > from ? today : from, 45), regular: b.regular, daily, buffer: b.settings.buffer, today });
+    fc.daily = daily; fc.accounts = inF.map(a => a.name); fc.stale = Math.round((Date.parse(today) - Date.parse(from)) / 864e5);
+    fc.mixedDates = inF.some(a => a.date !== from);
+  }
+  const found = B.findRegular(b.transactions, b.categories, b.regular, today).filter(f => !b.ignored.includes(f.key));
+  // net worth: accounts, other savings and assets, belongings (if counted), minus debts
+  const rates = store.data.settings.depreciation || {};
+  const belongings = b.settings.belongings ? store.allAssets().filter(a => !['Sold', 'Disposed', 'Lost / Stolen', 'Given back', 'Borrowed'].includes(a.status)).reduce((t, a) => t + Math.round(valueNow(a, rates) * 100), 0) : 0;
+  const nw = B.netWorth({ accounts, other: b.other, belongings, debts: b.debts });
+  if (accounts.length || b.other.length || b.debts.length) { try { store.recordNetWorth(today.slice(0, 7), nw); } catch (_) {} }
+  const debts = B.debtPlan(b.debts, { extra: b.settings.debtExtra, order: b.settings.debtOrder, start: B.nextKey(today.slice(0, 7)) });
+  // alerts: limits, the forecast, unusual payments, price rises in the last 30 days
+  const s = months[nowKey], car = carried[nowKey] || {};
+  const limits = b.categories.filter(c => c.kind === 'spend' && (c.limit || car[c.id])).map(c => ({ id: c.id, name: c.name, spent: (s.by || {})[c.id] || 0, limit: Math.max(0, (c.limit || 0) + (car[c.id] || 0)) }))
+    .filter(x => x.limit && x.spent >= x.limit * 0.85).map(x => Object.assign(x, { over: x.spent > x.limit }));
+  if (b.settings.style === 'flex' && b.settings.flexLimit && s.flex >= b.settings.flexLimit * 0.85) limits.push({ id: 'flex', name: 'Everyday spending', spent: s.flex, limit: b.settings.flexLimit, over: s.flex > b.settings.flexLimit });
+  const since = B.addDays(today, -30);
+  const rises = b.regular.flatMap(r => (r.history || []).filter(h => h.date >= since && h.to > h.from).map(h => ({ id: r.id, name: r.name, ...h })));
+  const alerts = { limits, short: fc && fc.short ? { date: fc.short, low: fc.low, lowDate: fc.lowDate } : null, unusual: B.unusual(b.transactions, since), rises };
+  return { today, nowKey, periods, months, carried, accounts, forecast: fc, found, sinking: B.sinking(b.regular, today), netWorth: nw, debts, alerts,
+    flex: B.flexPlan(b, today, b.settings.flexLimit),
+    plan: B.plan(b, today), goals: Object.fromEntries(b.goals.map(g => [g.id, B.goalStatus(g, b.transactions, today)])) };
+}
+
 function writeSchedule() {
   if (!store || store.isLocked()) return;
   const enc = store.isEncrypted();
@@ -66,8 +107,14 @@ function writeSchedule() {
   // letters you sent that haven't had a reply (for the Monday summary)
   const rs = store.replyStatus(), lib = store.libraryView();
   const waiting = lib.filter(e => e.sent && rs[e.id] && !rs[e.id].replied).map(e => enc ? { sentOn: e.docDate || e.createdAt.slice(0, 10) } : { sentOn: e.docDate || e.createdAt.slice(0, 10), who: e.from || e.title });
+  let budget = null;
+  try {
+    const a = budgetNow().alerts;
+    budget = enc ? { short: !!a.short, limits: a.limits.length, unusual: a.unusual.length, rises: a.rises.length }
+      : { short: a.short, limits: a.limits.map(x => ({ name: x.name, over: x.over })), unusual: a.unusual.length, rises: a.rises.map(r => ({ name: r.name, from: r.from, to: r.to })) };
+  } catch (_) {}
   const p = readPrefs();
-  p.schedule = { updatedAt: new Date().toISOString(), named: !enc, entries, waiting };
+  p.schedule = { updatedAt: new Date().toISOString(), named: !enc, entries, waiting, budget };
   writePrefs(p);
 }
 function scheduleSoon() { clearTimeout(scheduleTimer); scheduleTimer = setTimeout(() => { try { writeSchedule(); } catch (_) {} }, 1500); }
@@ -574,30 +621,7 @@ function snapshot() {
   const watch = watcher ? watcher.status() : null;
   data.libReplies = store.replyStatus();
   data.complaints = store.complaints();
-  { // Bills & budget sums, worked out here so the window and the tests use the same ones
-    const B = budgetCalc, b = store.budget(), d = new Date(), today = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())).toISOString().slice(0, 10);
-    const ms = b.settings.monthStart, nowKey = B.periodOf(today, ms);
-    const keys = new Set(b.transactions.map(t => B.periodOf(t.date, ms))); keys.add(nowKey); keys.add(B.nextKey(nowKey));
-    const periods = {}, months = {};
-    for (const k of keys) { periods[k] = B.period(k, ms); months[k] = B.monthSummary(b.transactions, b.categories, periods[k]); }
-    const spentBy = (k) => (months[k] || (months[k] = B.monthSummary(b.transactions, b.categories, periods[k] = periods[k] || B.period(k, ms)))).by;
-    const carried = Object.fromEntries([...keys].map(k => [k, B.carried(b.categories, k, spentBy)]));
-    // balances and forecast
-    const balances = B.accountBalances(b.transactions);
-    const accounts = Object.entries(balances).map(([name, x]) => { const a = b.accounts[name] || {}; const kind = a.kind || 'current'; return { name, kind, forecast: a.forecast !== false && kind === 'current', ...x }; });
-    const inF = accounts.filter(a => a.forecast);
-    let fc = null;
-    if (inF.length) {
-      const from = inF.reduce((m, a) => a.date < m ? a.date : m, '9999');
-      const daily = b.settings.everyday ? B.dailySpend(b.transactions, b.categories, today) : 0;
-      fc = B.forecast({ start: inF.reduce((t, a) => t + a.balance, 0), from, to: B.addDays(today > from ? today : from, 45), regular: b.regular, daily, buffer: b.settings.buffer, today });
-      fc.daily = daily; fc.accounts = inF.map(a => a.name); fc.stale = Math.round((Date.parse(today) - Date.parse(from)) / 864e5);
-      fc.mixedDates = inF.some(a => a.date !== from);
-    }
-    const found = B.findRegular(b.transactions, b.categories, b.regular, today).filter(f => !b.ignored.includes(f.key));
-    data.budgetCalc = { today, nowKey, periods, months, carried, accounts, forecast: fc, found, sinking: B.sinking(b.regular, today),
-      plan: B.plan(b, today), goals: Object.fromEntries(b.goals.map(g => [g.id, B.goalStatus(g, b.transactions, today)])) };
-  }
+  data.budgetCalc = budgetNow();
   data.complaintInfo = Object.fromEntries(data.complaints.map(c => [c.id, complaints.status(c)]));
   return {
     data,
@@ -953,7 +977,8 @@ function registerIpc() {
     const res = store.importTransactions(r.transactions, { bank: f.bank, account: account || (bankcsv.BANKS.find(b => b.id === f.bank) || {}).name });
     bankFiles.delete(token);
     notifyChanged();
-    return Object.assign(res, { skipped: r.skipped, problems: r.problemCount });
+    const now = budgetNow(), added = new Set(store.budget().transactions.filter(t => t.importId === res.importId).map(t => t.id));
+    return Object.assign(res, { skipped: r.skipped, problems: r.problemCount, unusual: now.alerts.unusual.filter(u => added.has(u.id)), short: now.alerts.short });
   });
   h('budget:undo', (id) => { const n = store.undoImport(id); notifyChanged(); return n; });
   h('budget:categories', (list) => { const r = store.saveBudgetCategories(list); notifyChanged(); return r; });
@@ -967,6 +992,11 @@ function registerIpc() {
   h('budget:account', (name, x) => { const r = store.saveBudgetAccount(name, x); notifyChanged(); return r; });
   h('budget:ignoreFound', (key) => { store.ignoreFound(key); notifyChanged(); });
   h('budget:addFound', (list) => { let n = 0; for (const f of (Array.isArray(list) ? list : []).slice(0, 100)) { store.saveRegular(f); n++; } notifyChanged(); return n; });
+  h('budget:debtSave', (x) => { const r = store.saveDebt(x); notifyChanged(); return r; });
+  h('budget:debtDelete', (id) => { store.deleteDebt(id); notifyChanged(); });
+  h('budget:otherSave', (x) => { const r = store.saveOther(x); notifyChanged(); return r; });
+  h('budget:otherDelete', (id) => { store.deleteOther(id); notifyChanged(); });
+  h('budget:txSplits', (id, list) => { const r = store.setTransactionSplits(id, list); notifyChanged(); return r; });
   h('budget:goalSave', (g) => { const x = store.saveGoal(g); notifyChanged(); return x; });
   h('budget:goalDelete', (id) => { store.deleteGoal(id); notifyChanged(); });
   h('budget:goalMoney', (id, m) => { store.addGoalMoney(id, m); notifyChanged(); });

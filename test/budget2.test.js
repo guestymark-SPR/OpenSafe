@@ -85,7 +85,7 @@ const fs = require('fs'), os = require('os'), path = require('path');
 const { Store } = require('../src/store');
 test('store: settings, carry-over start, subscriptions, accounts, ignoring a find, the 4-week reminder', () => {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'osb2-')); const s = new Store(d); s.load();
-  assert.deepStrictEqual(s.saveBudgetSettings({ monthStart: { day: 28, weekend: 'before' }, buffer: 5000, everyday: false }), { monthStart: { day: 28, weekend: 'before' }, buffer: 5000, everyday: false });
+  { const r = s.saveBudgetSettings({ monthStart: { day: 28, weekend: 'before' }, buffer: 5000, everyday: false }); assert.deepStrictEqual([r.monthStart, r.buffer, r.everyday], [{ day: 28, weekend: 'before' }, 5000, false]); assert.strictEqual(s.saveBudgetSettings({ style: 'flex' }).buffer, 5000, 'a partial save keeps the rest'); }
   assert.strictEqual(s.saveBudgetSettings({ monthStart: { day: 40 } }).monthStart.day, 28);
   const cats = s.budget().categories.map(c => Object.assign({}, c));
   cats.find(c => c.name === 'Groceries').rollover = true;

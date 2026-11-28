@@ -1634,7 +1634,8 @@ class Store {
     if (!b.maps || typeof b.maps !== 'object') b.maps = {};
     if (!b.accounts || typeof b.accounts !== 'object') b.accounts = {};
     if (!Array.isArray(b.ignored)) b.ignored = [];
-    b.settings = Object.assign({ monthStart: { day: 1, weekend: '' }, buffer: 0, everyday: true }, b.settings || {});
+    for (const k of ['debts', 'other', 'netWorth']) if (!Array.isArray(b[k])) b[k] = [];
+    b.settings = Object.assign({ monthStart: { day: 1, weekend: '' }, buffer: 0, everyday: true, style: 'categories', flexLimit: 0, debtExtra: 0, debtOrder: 'avalanche', belongings: true }, b.settings || {});
     return b;
   }
   _budgetCat(id) { return id && this.budget().categories.some(c => c.id === id) ? id : ''; }
@@ -1662,8 +1663,15 @@ class Store {
     const b = this.budget();
     const ms = input && input.monthStart || {};
     const day = ms.day === 'last' ? 'last' : Math.max(1, Math.min(28, Math.round(Number(ms.day) || 1)));
-    b.settings = { monthStart: { day, weekend: ['before', 'after'].includes(ms.weekend) ? ms.weekend : '' },
-      buffer: Math.max(0, Math.round(Number(input && input.buffer) || 0)), everyday: !(input && input.everyday === false) };
+    const prev = b.settings || {}, has = (k) => input && Object.prototype.hasOwnProperty.call(input, k);
+    b.settings = { monthStart: has('monthStart') ? { day, weekend: ['before', 'after'].includes(ms.weekend) ? ms.weekend : '' } : prev.monthStart,
+      buffer: has('buffer') ? Math.max(0, Math.round(Number(input.buffer) || 0)) : prev.buffer || 0,
+      everyday: has('everyday') ? input.everyday !== false : prev.everyday !== false,
+      style: has('style') ? (input.style === 'flex' ? 'flex' : 'categories') : prev.style || 'categories',
+      flexLimit: has('flexLimit') ? Math.max(0, Math.round(Number(input.flexLimit) || 0)) : prev.flexLimit || 0,
+      debtExtra: has('debtExtra') ? Math.max(0, Math.round(Number(input.debtExtra) || 0)) : prev.debtExtra || 0,
+      debtOrder: has('debtOrder') ? (input.debtOrder === 'snowball' ? 'snowball' : 'avalanche') : prev.debtOrder || 'avalanche',
+      belongings: has('belongings') ? input.belongings !== false : prev.belongings !== false };
     this.save();
     return b.settings;
   }
@@ -1676,6 +1684,62 @@ class Store {
     this.save();
     return b.accounts[key];
   }
+  // ----- debts, and other savings and assets (for net worth) -----
+  saveDebt(input) {
+    const b = this.budget();
+    const ex = input && input.id ? b.debts.find(d => d.id === input.id) : null;
+    if (input && input.id && !ex) throw new Error('Not found');
+    const apr = Number(input.apr);
+    const d = { id: ex ? ex.id : uid(), name: cleanString(input.name, 80), kind: ['card', 'loan', 'overdraft', 'finance', 'other'].includes(input.kind) ? input.kind : 'other',
+      balance: Math.max(0, Math.round(Number(input.balance) || 0)), apr: Number.isFinite(apr) && apr >= 0 && apr < 1000 ? Math.round(apr * 100) / 100 : 0,
+      minimum: Math.max(0, Math.round(Number(input.minimum) || 0)), notes: cleanString(input.notes, 1000), asOf: cleanDate(input.asOf) || todayIso() };
+    if (!d.name) throw new Error('Give it a name.');
+    if (ex) Object.assign(ex, d); else b.debts.push(d);
+    this.save();
+    return ex || d;
+  }
+  deleteDebt(id) { const b = this.budget(); b.debts = b.debts.filter(d => d.id !== id); this.save(); }
+  saveOther(input) {
+    const b = this.budget();
+    const ex = input && input.id ? b.other.find(o => o.id === input.id) : null;
+    if (input && input.id && !ex) throw new Error('Not found');
+    const o = { id: ex ? ex.id : uid(), name: cleanString(input.name, 80), kind: ['savings', 'isa', 'pension', 'investment', 'property', 'vehicle', 'owed', 'other'].includes(input.kind) ? input.kind : 'other',
+      value: Math.round(Number(input.value) || 0), asOf: cleanDate(input.asOf) || todayIso(), notes: cleanString(input.notes, 500) };
+    if (!o.name) throw new Error('Give it a name.');
+    if (ex) Object.assign(ex, o); else b.other.push(o);
+    this.save();
+    return ex || o;
+  }
+  deleteOther(id) { const b = this.budget(); b.other = b.other.filter(o => o.id !== id); this.save(); }
+  /** Keep one net worth figure per calendar month (the latest seen that month). Saves only when it changes. */
+  recordNetWorth(month, n) {
+    const b = this.budget();
+    const e = b.netWorth.find(x => x.month === month);
+    const v = { month, total: n.total, accounts: n.accounts, other: n.other, belongings: n.belongings, debts: n.debts };
+    if (e && e.total === v.total && e.belongings === v.belongings && e.debts === v.debts) return false;
+    if (e) Object.assign(e, v); else b.netWorth.push(v);
+    b.netWorth.sort((x, y) => x.month.localeCompare(y.month));
+    b.netWorth = b.netWorth.slice(-240);
+    this.save();
+    return true;
+  }
+  /** Split a transaction across categories. The parts must add up to the transaction; an empty list removes the split. */
+  setTransactionSplits(id, splits) {
+    const b = this.budget(), t = b.transactions.find(x => x.id === id);
+    if (!t) throw new Error('Transaction not found');
+    const list = (Array.isArray(splits) ? splits : []).map(x => ({ categoryId: this._budgetCat(x.categoryId), amount: Math.round(Number(x.amount)), note: cleanString(x.note, 120) })).filter(x => Number.isFinite(x.amount) && x.amount);
+    if (!list.length) { delete t.splits; this.save(); return t; }
+    if (list.length < 2) throw new Error('A split needs at least two parts.');
+    if (list.some(x => Math.sign(x.amount) !== Math.sign(t.amount))) throw new Error('Each part should be money ' + (t.amount < 0 ? 'out' : 'in') + ', like the transaction.');
+    const sum = list.reduce((a, x) => a + x.amount, 0);
+    if (sum !== t.amount) throw new Error(`The parts add up to £${(Math.abs(sum) / 100).toFixed(2)}, but the transaction is £${(Math.abs(t.amount) / 100).toFixed(2)}.`);
+    t.splits = list.slice(0, 20);
+    t.categoryId = list[0].categoryId; // the largest part names it in lists
+    t.categoryId = list.slice().sort((a, c) => Math.abs(c.amount) - Math.abs(a.amount))[0].categoryId;
+    this.save();
+    return t;
+  }
+
   /** Stop suggesting a payment the finder thought was regular. */
   ignoreFound(key) { const b = this.budget(); const k = cleanString(key, 80).toLowerCase(); if (k && !b.ignored.includes(k)) b.ignored.push(k); b.ignored = b.ignored.slice(-500); this.save(); }
 
@@ -1753,7 +1817,7 @@ class Store {
     const cat = this._budgetCat(categoryId);
     const want = new Set(ids || []);
     let n = 0;
-    for (const t of b.transactions) if (want.has(t.id)) { t.categoryId = cat; n++; }
+    for (const t of b.transactions) if (want.has(t.id)) { t.categoryId = cat; delete t.splits; n++; }
     const text = cleanString(rule, 60);
     if (text && cat) {
       b.rules = b.rules.filter(r => r.text.toLowerCase() !== text.toLowerCase()).concat([{ text, categoryId: cat }]).slice(-1000);

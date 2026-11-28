@@ -386,3 +386,21 @@ body.viewing{overflow:hidden}
 table.list td.num,table.list th.num{text-align:right;font-variant-numeric:tabular-nums}
 .btx select.small{max-width:170px;padding:3px 6px}
 .warnrow td{background:color-mix(in srgb,var(--bad) 6%,transparent)}
+/* charts: reference palette (validated light and dark), hairline grid, thin marks */
+.viz{--vs1:#257de0;--vs2:#f47230;--vs3:#00b894;--vs4:#f2a600;--vs5:#ee7fac;--vs6:#008a17;--vgrid:#e7e7e7;--vbase:#c2c2c2;--vtick:#666;margin:4px 0 8px}
+@media (prefers-color-scheme: dark){.viz{--vs1:#338ced;--vs2:#e76624;--vs3:#00a888;--vs4:#d28e05;--vs5:#e24d8b;--vs6:#0aac23;--vgrid:#303030;--vbase:#474747;--vtick:#9c9c9c}}
+.viz svg{display:block;overflow:visible}
+.vtitle{font-weight:600;margin:0 0 4px}
+.vgrid{stroke:var(--vgrid);stroke-width:1}.vbase{stroke:var(--vbase)}.vthresh{stroke:var(--bad);stroke-width:1}
+.vtick{fill:var(--vtick);font-size:11px;font-variant-numeric:tabular-nums}
+.vs1{fill:var(--vs1)}.vs2{fill:var(--vs2)}.vs3{fill:var(--vs3)}.vs4{fill:var(--vs4)}.vs5{fill:var(--vs5)}.vs6{fill:var(--vs6)}
+.vstroke1{stroke:var(--vs1)}.vline{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}.varea{opacity:.1}
+.vdot{stroke:var(--surface);stroke-width:2}
+.vhit{fill:transparent;cursor:default}.vhit.on{fill:var(--vtick);fill-opacity:.06}
+.vcross{stroke:var(--vbase);stroke-width:1}
+.vlegend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin:0 0 6px}
+.vlegend i,.vtr i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px;background:currentColor}
+.vlegend i.vs1,.vtr i.vs1{background:var(--vs1)}.vlegend i.vs2,.vtr i.vs2{background:var(--vs2)}.vlegend i.vs3,.vtr i.vs3{background:var(--vs3)}.vlegend i.vs4,.vtr i.vs4{background:var(--vs4)}.vlegend i.vs5,.vtr i.vs5{background:var(--vs5)}.vlegend i.vs6,.vtr i.vs6{background:var(--vs6)}
+.vtr i{width:12px;height:2px;border-radius:1px;vertical-align:3px}.vtr i.vnone{background:transparent}
+.vtip{position:fixed;z-index:50;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.15);padding:8px 10px;font-size:12px;pointer-events:none;display:none;min-width:140px}
+.vth{color:var(--muted);margin-bottom:4px}.vtr{display:flex;align-items:center;gap:6px;white-space:nowrap}.vtr b{font-variant-numeric:tabular-nums}.vtr span{color:var(--muted)}

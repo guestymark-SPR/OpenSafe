@@ -321,6 +321,80 @@ function sinking(regular, today) {
   }).sort((a, b) => a.next.localeCompare(b.next));
 }
 
+// ---------- debts ----------
+/**
+ * When each debt is paid off, paying every minimum plus `extra` a month on top.
+ * Order 'avalanche' (highest interest first) or 'snowball' (smallest balance first); when one is cleared,
+ * its minimum goes to the next. Interest is worked out monthly at APR / 12 on the balance: an estimate
+ * (card interest is usually charged daily, and minimum payments usually fall as the balance falls).
+ */
+function debtPlan(debts, { extra = 0, order = 'avalanche', start = '' } = {}) {
+  const live = (debts || []).filter(d => d.balance > 0).map(d => ({ id: d.id, name: d.name, bal: d.balance, rate: (Number(d.apr) || 0) / 100 / 12, min: Math.max(0, d.minimum || 0), interest: 0, months: 0, done: false }));
+  if (!live.length) return { debts: [], months: 0, interest: 0, never: false };
+  const pickOrder = () => live.filter(d => !d.done).sort((a, b) => order === 'snowball' ? a.bal - b.bal || b.rate - a.rate : b.rate - a.rate || a.bal - b.bal);
+  const budget = live.reduce((t, d) => t + d.min, 0) + Math.max(0, extra);
+  let m = 0;
+  for (; m < 600 && live.some(d => !d.done); m++) {
+    for (const d of live) if (!d.done) { const i = Math.round(d.bal * d.rate); d.bal += i; d.interest += i; }
+    let pot = budget;
+    for (const d of live) if (!d.done) { const p = Math.min(d.min, d.bal); d.bal -= p; pot -= p; }
+    for (const d of pickOrder()) { if (pot <= 0) break; const p = Math.min(pot, d.bal); d.bal -= p; pot -= p; }
+    for (const d of live) if (!d.done && d.bal <= 0) { d.done = true; d.months = m + 1; }
+  }
+  const never = live.some(d => !d.done);
+  const month = (n) => { if (!start) return ''; const x = new Date(start.slice(0, 7) + '-01T00:00:00Z'); x.setUTCMonth(x.getUTCMonth() + n - 1); return x.toISOString().slice(0, 7); };
+  return { debts: live.map(d => ({ id: d.id, name: d.name, months: d.done ? d.months : null, clearBy: d.done ? month(d.months) : '', interest: d.interest })),
+    months: never ? null : Math.max(...live.map(d => d.months)), clearBy: never ? '' : month(Math.max(...live.map(d => d.months))), interest: live.reduce((t, d) => t + d.interest, 0), never, perMonth: budget };
+}
+
+// ---------- unusual payments ----------
+/** A payment is unusual when it's more than 2.5 times the usual amount for that payee (needs 3 earlier payments to compare with). */
+function unusual(txs, since) {
+  const by = {};
+  for (const t of txs.slice().sort((a, b) => a.date.localeCompare(b.date))) {
+    if (t.amount >= 0) continue;
+    const k = ruleText(t.description).toLowerCase(); if (!k) continue;
+    (by[k] = by[k] || []).push(t);
+  }
+  const out = [];
+  for (const list of Object.values(by)) list.forEach((t, i) => {
+    if (t.date < since || i < 3) return;
+    const prev = list.slice(Math.max(0, i - 12), i).map(x => -x.amount).sort((a, b) => a - b);
+    const usual = prev[Math.floor(prev.length / 2)];
+    if (-t.amount > usual * 2.5 && -t.amount - usual >= 1000) out.push({ id: t.id, date: t.date, description: t.description, amount: t.amount, usual });
+  });
+  return out.sort((a, b) => b.date.localeCompare(a.date));
+}
+
+// ---------- net worth ----------
+/** Accounts (credit cards count as owed), other savings and assets you've added, belongings if counted, minus debts. */
+function netWorth({ accounts = [], other = [], belongings = 0, debts = [] }) {
+  const accts = accounts.reduce((t, a) => t + (a.kind === 'credit' ? -Math.abs(a.balance) : a.balance), 0);
+  const oth = other.reduce((t, o) => t + (o.kind === 'owed' ? -Math.abs(o.value) : o.value), 0);
+  const owed = debts.reduce((t, d) => t + Math.max(0, d.balance || 0), 0);
+  return { accounts: accts, other: oth, belongings, debts: owed, total: accts + oth + belongings - owed };
+}
+
+// ---------- one spending-money total ("flex") ----------
+/** Fixed bills (monthly ones), occasional bills (as a monthly set-aside), goals, then everything else as one flexible amount. */
+function flexPlan(b, today, flexLimit) {
+  const reg = (b.regular || []).filter(r => !r.ends || r.ends >= today);
+  const income = reg.filter(r => r.kind === 'income').reduce((t, r) => t + monthly(r), 0);
+  const occasional = new Set(['quarter', 'half', 'year']);
+  const fixed = reg.filter(r => r.kind !== 'income' && !occasional.has(r.every)).reduce((t, r) => t + monthly(r), 0);
+  const nonMonthly = reg.filter(r => r.kind !== 'income' && occasional.has(r.every)).reduce((t, r) => t + monthly(r), 0);
+  const goals = (b.goals || []).filter(g => !g.done).reduce((t, g) => t + goalStatus(g, b.transactions, today).need, 0);
+  const flexible = Math.max(0, flexLimit || 0);
+  return { income, fixed, nonMonthly, goals, flexible, left: income - fixed - nonMonthly - goals - flexible };
+}
+/** Flexible spending in a period: spending that isn't a regular bill, transfer, savings or income. */
+function flexSpent(txs, categories, p) {
+  const kind = Object.fromEntries(categories.map(c => [c.id, c.kind]));
+  let t = 0;
+  for (const tx of txs) { if (!inPeriod(tx.date, p) || tx.billId) continue; for (const x of parts(tx)) { const k = kind[x.categoryId]; if (k === 'transfer' || k === 'savings' || k === 'income' || (!x.categoryId && x.amount > 0)) continue; t -= x.amount; } }
+  return t;
+}
+
 const pounds = (p) => (p < 0 ? '-' : '') + '£' + (Math.abs(p) / 100).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-module.exports = { PER_YEAR, parts, inPeriod, period, periodOf, periodStart, nextKey, carried, accountBalances, forecast, dailySpend, findRegular, sinking, addDays, goalStatus, plan, DEFAULT_CATEGORIES, EVERY, step, occurrences, monthly, categorise, ruleText, matchesRegular, monthSummary, priceChange, pounds };
+module.exports = { debtPlan, unusual, netWorth, flexPlan, flexSpent, PER_YEAR, parts, inPeriod, period, periodOf, periodStart, nextKey, carried, accountBalances, forecast, dailySpend, findRegular, sinking, addDays, goalStatus, plan, DEFAULT_CATEGORIES, EVERY, step, occurrences, monthly, categorise, ruleText, matchesRegular, monthSummary, priceChange, pounds };

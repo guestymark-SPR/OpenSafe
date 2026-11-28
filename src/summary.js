@@ -18,6 +18,22 @@ function summaryText(sch, today) {
   if (waiting.length) lines.push(sch.named
     ? `Waiting for replies: ${waiting.slice(0, 3).map(w => `${w.who} (${w.days} day${w.days === 1 ? '' : 's'})`).join(', ')}${waiting.length > 3 ? ` and ${waiting.length - 3} more` : ''}`
     : `${waiting.length} letter${waiting.length === 1 ? '' : 's'} waiting for a reply, the oldest for ${waiting[0].days} days`);
+  // money (from Bills & budget)
+  const b = sch.budget;
+  if (b) {
+    const gbp = (p) => '£' + (Math.abs(p) / 100).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (sch.named) {
+      if (b.short) lines.push(`Money: your balance could run short on ${ukShort(b.short.date)}`);
+      const over = (b.limits || []).filter(x => x.over), near = (b.limits || []).filter(x => !x.over);
+      if (over.length) lines.push(`Over the limit: ${over.map(x => x.name).join(', ')}`);
+      if (near.length) lines.push(`Nearly at the limit: ${near.map(x => x.name).join(', ')}`);
+      if ((b.rises || []).length) lines.push(`Price rises: ${b.rises.slice(0, 2).map(r => `${r.name} ${gbp(r.from)} → ${gbp(r.to)}`).join(', ')}${b.rises.length > 2 ? ` and ${b.rises.length - 2} more` : ''}`);
+      if (b.unusual) lines.push(`${b.unusual} unusual payment${b.unusual === 1 ? '' : 's'} to check`);
+    } else {
+      const n = (b.short ? 1 : 0) + (b.limits || 0) + (b.unusual || 0) + (b.rises || 0);
+      if (n) lines.push(`${n} money alert${n === 1 ? '' : 's'} in Bills & budget`);
+    }
+  }
   return lines.length ? lines.join('\n') : 'Nothing due this week, and no letters waiting for a reply.';
 }
 
