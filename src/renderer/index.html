@@ -12,26 +12,26 @@
   <div class="brand"><img src="icon.png" alt=""><span>OpenSafe</span></div>
   <form class="sidesearch" id="gSearchForm" role="search"><span data-icon="search"></span><input id="gSearch" type="search" placeholder="Search everything…" aria-label="Search items, documents and data" autocomplete="off"></form>
   <nav id="nav">
-    <button data-nav="dashboard"><span data-icon="home"></span>Home</button>
-    <button data-nav="reminders"><span data-icon="bell"></span>Reminders <b id="remBadge" class="badge hidden"></b></button>
+    <button data-nav="dashboard" data-c="1"><span data-icon="home"></span>Home</button>
+    <button data-nav="reminders" data-c="7"><span data-icon="bell"></span>Reminders <b id="remBadge" class="badge hidden"></b></button>
     <div class="navh">Inventory</div>
-    <button data-nav="items"><span data-icon="box"></span>Items</button>
-    <button data-nav="docs"><span data-icon="letter"></span>Documents</button>
-    <button data-nav="files"><span data-icon="folder"></span>Data</button>
-    <button data-nav="places"><span data-icon="pin"></span>Places</button>
-    <button data-nav="trips"><span data-icon="bag"></span>Packing lists</button>
+    <button data-nav="items" data-c="2"><span data-icon="box"></span>Items</button>
+    <button data-nav="docs" data-c="5"><span data-icon="letter"></span>Documents</button>
+    <button data-nav="files" data-c="8"><span data-icon="folder"></span>Data</button>
+    <button data-nav="places" data-c="6"><span data-icon="pin"></span>Places</button>
+    <button data-nav="trips" data-c="4"><span data-icon="bag"></span>Packing lists</button>
     <div class="navh">Protection</div>
-    <button data-nav="budget"><span data-icon="pound"></span>Bills &amp; budget</button>
-    <button data-nav="policies"><span data-icon="shield"></span>Insurance</button>
-    <button data-nav="vault" id="vaultNav"><span data-icon="lock"></span>Vault <b id="vaultState" class="vstate"></b></button>
+    <button data-nav="budget" data-c="3"><span data-icon="pound"></span>Bills &amp; budget</button>
+    <button data-nav="policies" data-c="1"><span data-icon="shield"></span>Insurance</button>
+    <button data-nav="vault" data-c="5" id="vaultNav"><span data-icon="lock"></span>Vault <b id="vaultState" class="vstate"></b></button>
     <div class="navh">Tools</div>
-    <button data-nav="reports"><span data-icon="printer"></span>Reports &amp; printing</button>
-    <button data-nav="phone"><span data-icon="phone"></span>Phone app</button>
-    <button data-nav="data"><span data-icon="database"></span>Import &amp; backup</button>
-    <button data-nav="help"><span data-icon="help"></span>Help and what's new</button>
+    <button data-nav="reports" data-c="8"><span data-icon="printer"></span>Reports &amp; printing</button>
+    <button data-nav="phone" data-c="2"><span data-icon="phone"></span>Phone app</button>
+    <button data-nav="data" data-c="6"><span data-icon="database"></span>Import &amp; backup</button>
+    <button data-nav="help" data-c="3"><span data-icon="help"></span>Help and what's new</button>
   </nav>
   <div class="sidefoot">
-    <button data-nav="settings" class="navbtn"><span data-icon="gear"></span>Settings</button>
+    <button data-nav="settings" class="navbtn" data-c="8"><span data-icon="gear"></span>Settings</button>
     <button id="lockBtn" class="navbtn hidden" data-action="lockApp" title="Lock OpenSafe now"><span data-icon="lock"></span>Lock OpenSafe</button>
     <span class="menuwrap dd newdd"><button id="addBtn" type="button" class="btn primary wide ddbtn" data-action="moreMenu"><span data-icon="plus"></span><span>New</span><span data-icon="down" class="caretwrap"></span></button>
       <div class="menu hidden left up newmenu">

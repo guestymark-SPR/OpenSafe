@@ -404,3 +404,45 @@ table.list td.num,table.list th.num{text-align:right;font-variant-numeric:tabula
 .vtr i{width:12px;height:2px;border-radius:1px;vertical-align:3px}.vtr i.vnone{background:transparent}
 .vtip{position:fixed;z-index:50;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.15);padding:8px 10px;font-size:12px;pointer-events:none;display:none;min-width:140px}
 .vth{color:var(--muted);margin-bottom:4px}.vtr{display:flex;align-items:center;gap:6px;white-space:nowrap}.vtr b{font-variant-numeric:tabular-nums}.vtr span{color:var(--muted)}
+
+/* ---------- colour: one hue per section, notebook tabs (2.26) ---------- */
+:root{
+  --c1:#2a7c70;--c1s:#e0f1ee; --c2:#2f6fb0;--c2s:#e3edf8; --c3:#b7791f;--c3s:#fbf0dc; --c4:#c4553d;--c4s:#fbe7e2;
+  --c5:#6b55b5;--c5s:#ece8f8; --c6:#3d8a3d;--c6s:#e4f2e2; --c7:#b8487a;--c7s:#f8e4ee; --c8:#5b6b7a;--c8s:#e8ecf0;
+  /* brighter steps for the dark sidebar */
+  --c1b:#6fc3b5;--c2b:#79b2ea;--c3b:#e8b464;--c4b:#ef9580;--c5b:#ae9ff0;--c6b:#86cc86;--c7b:#ea94bb;--c8b:#a9b6c3;
+  --page:var(--c1);--page-soft:var(--c1s);
+}
+@media (prefers-color-scheme: dark){:root{
+  --c1:#5fb3a6;--c1s:#1d3532; --c2:#6ea8e0;--c2s:#1c2a3a; --c3:#e0a95a;--c3s:#3a2e1a; --c4:#e88a74;--c4s:#3b231e;
+  --c5:#a796e6;--c5s:#2a2540; --c6:#7cc27c;--c6s:#1f3320; --c7:#e08ab0;--c7s:#3a2130; --c8:#9aa8b6;--c8s:#262d33;
+}}
+/* sidebar: each section's icon in its colour, and the bar beside the open page */
+nav button[data-c] > svg{color:var(--cb)}
+nav button[data-c="1"]{--cb:var(--c1b)}nav button[data-c="2"]{--cb:var(--c2b)}nav button[data-c="3"]{--cb:var(--c3b)}nav button[data-c="4"]{--cb:var(--c4b)}
+nav button[data-c="5"]{--cb:var(--c5b)}nav button[data-c="6"]{--cb:var(--c6b)}nav button[data-c="7"]{--cb:var(--c7b)}nav button[data-c="8"]{--cb:var(--c8b)}
+nav button.on[data-c]::before{background:var(--cb)}
+nav button.on[data-c]{background:color-mix(in srgb,var(--cb) 16%,transparent)}
+/* the page's colour: a mark by the heading, card icons */
+.head h1{display:flex;align-items:center;gap:10px}
+.head h1::before{content:"";width:6px;height:22px;border-radius:3px;background:var(--page);flex:none}
+.card h2 svg,.tile h2 svg{color:var(--page)}
+.section-title{color:color-mix(in srgb,var(--page) 55%,var(--muted))}
+/* figure tiles: a coloured top edge, in turn */
+.bstats .tile{border-top:3px solid var(--c2)}
+.bstats .tile:nth-child(2){border-top-color:var(--c4)}.bstats .tile:nth-child(3){border-top-color:var(--c6)}.bstats .tile:nth-child(4){border-top-color:var(--c3)}
+/* notebook tabs: each tab its own colour; the open one joins the page */
+.tabs{gap:3px;border-bottom:1px solid var(--line);padding:0 4px;align-items:flex-end;margin-bottom:18px}
+.tabs button{--tab:var(--c1);--tab-soft:var(--c1s);background:var(--tab-soft);color:var(--ink);border:1px solid var(--line);border-bottom:0;border-radius:10px 10px 0 0;
+  padding:8px 16px 7px;margin-bottom:0;font-weight:550;position:relative;opacity:.82;box-shadow:inset 0 3px 0 color-mix(in srgb,var(--tab) 55%,transparent);transition:opacity .12s,transform .12s}
+.tabs button:hover{opacity:1;transform:translateY(-1px)}
+.tabs button.on{background:var(--bg);opacity:1;padding:10px 18px 9px;margin-bottom:-1px;border-bottom:1px solid var(--bg);color:var(--ink);font-weight:650;
+  box-shadow:inset 0 4px 0 var(--tab);transform:none}
+.tabs button:nth-child(8n+1){--tab:var(--c1);--tab-soft:var(--c1s)}.tabs button:nth-child(8n+2){--tab:var(--c3);--tab-soft:var(--c3s)}
+.tabs button:nth-child(8n+3){--tab:var(--c2);--tab-soft:var(--c2s)}.tabs button:nth-child(8n+4){--tab:var(--c4);--tab-soft:var(--c4s)}
+.tabs button:nth-child(8n+5){--tab:var(--c5);--tab-soft:var(--c5s)}.tabs button:nth-child(8n+6){--tab:var(--c6);--tab-soft:var(--c6s)}
+.tabs button:nth-child(8n+7){--tab:var(--c7);--tab-soft:var(--c7s)}.tabs button:nth-child(8n+8){--tab:var(--c8);--tab-soft:var(--c8s)}
+@media print{.tabs button{box-shadow:none}}
+.card.stat{border-top:3px solid var(--c2)}
+.card.stat:nth-child(2){border-top-color:var(--c4)}.card.stat:nth-child(3){border-top-color:var(--c6)}.card.stat:nth-child(4){border-top-color:var(--c3)}
+.bars .fill{background:var(--page)}

@@ -2111,6 +2111,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
   // ---------- one search for everything ----------
   // ---------- Help and What's new ----------
   const NEWS = [
+    ['2.26.0', 'A bit more colour', ['Each part of OpenSafe has its own colour, in the sidebar, by each page\'s heading and on its cards: the teal stays.', '<b>Notebook tabs</b> on Bills &amp; budget and on each item: each tab is its own colour, and the open one joins the page.', 'Colour in dark mode too, in brighter shades.']],
     ['2.25.0', 'PDF statements and whole folders', ['<b>PDF bank statements</b>, including scanned ones: every row is checked against the statement\'s running balance before it\'s added.', 'Import <b>several statements or a whole folder</b> at once; months already imported (from a CSV or PDF) aren\'t added twice.', '<b>Add a folder…</b> in Documents and Data adds every file in it, each as its own entry. You can also drag a folder in.']],
     ['2.24.0', 'Ways to save', ['A new <b>Ways to save</b> tab in Bills &amp; budget: possible double charges, bank charges, small spending that adds up, categories creeping up, and bills and subscriptions to review, each with what it\'s worth a year.', 'Cancel a subscription and the saving is counted in <b>Savings you\'ve made</b>; turn what you\'d save into a savings goal in one click.']],
     ['2.23.0', 'Net worth, debts and charts', ['<b>Net worth &amp; debts</b>: everything you have minus what you owe, over time, and when each debt will be paid off (with extra payments, highest interest or smallest first).', '<b>Worth a look</b>: categories near or over their limit, unusual payments and price rises, also in the Monday summary.', '<b>Charts</b> of money in and out, spending by category and your expected balance; <b>split</b> a transaction across categories; or budget with <b>one amount</b> for everyday spending.']],
@@ -2180,7 +2181,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     const n = CHECKS.filter(c => done[c[0]]).length;
     return `<div class="head"><h1>Help and what's new</h1><span class="sub">OpenSafe ${esc(state.snap.version || '')}</span><span class="spacer"></span><button class="btn" data-action="helpGuide">${icon('help')}Full guide (opens GitHub)</button></div>
     <div class="grid g2 helpgrid">
-      <div class="card"><h2>${icon('bell')}What's new</h2>
+      <div class="card" style="--page:var(--c7)"><h2>${icon('bell')}What's new</h2>
         ${NEWS.map(([ver, title, lines]) => `<div class="news"><div class="nv"><span class="pill">${esc(ver)}</span> <b>${esc(title)}</b></div><ul>${lines.map(l => `<li>${l}</li>`).join('')}</ul></div>`).join('')}</div>
       <div class="card"><h2>${icon('help')}Finding your way</h2><ul class="helplist">
         <li><b>Search everything</b> (top left) finds items, letters and files, and the words inside them.</li>
@@ -2442,6 +2443,9 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     const navView = state.view === 'item' || state.view === 'bin' ? 'items' : state.view === 'libitem' ? libKindPage((libEntry(state.libId) || {}).kind) : state.view === 'case' ? 'docs' : state.view;
     $$('.side [data-nav]').forEach(b => b.classList.toggle('on', b.dataset.nav === navView));
     const v = $('#view');
+    // the page takes its section's colour (the heading mark, card icons, section titles)
+    const navBtn = $(`.side [data-nav="${navView}"]`), c = (navBtn && navBtn.dataset.c) || '1';
+    v.style.setProperty('--page', `var(--c${c})`); v.style.setProperty('--page-soft', `var(--c${c}s)`);
     const pageKey = [state.view, state.itemId, state.libId].join('|');
     if (pageKey !== state.lastPageKey) { state.lastPageKey = pageKey; v.classList.remove('enter'); void v.offsetWidth; v.classList.add('enter'); }
     else v.classList.remove('enter');
@@ -2498,23 +2502,23 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
               <span class="pill ${r.daysLeft < 0 ? 'bad' : 'warn'}">${esc(r.kind)}</span>
               <span style="flex:1">${esc(r.assetName)}</span><span class="meta nowrap">${dueText(r.daysLeft)}</span></div>`).join('')}</div>`
             : '<div class="muted">Nothing due in the next ' + state.snap.data.settings.reminderDays + ' days.</div>'}</div>
-        <div class="card"><h2>${icon('chart')}Value by category</h2>
+        <div class="card" style="--page:var(--c2)"><h2>${icon('chart')}Value by category</h2>
           <div class="bars">${cats.map(([c, d]) => `
             <div class="barrow" data-action="filterCat" data-cat="${esc(c)}" title="${esc(c)}: ${money(d.value)} across ${d.count} item${d.count === 1 ? '' : 's'}">
               <span class="lab">${esc(c)} <span class="faint">(${d.count})</span></span>
               <span class="track"><span class="fill" style="width:${(d.value / max * 100).toFixed(1)}%;display:block"></span></span>
               <span class="v">${money0(d.value)}</span></div>`).join('')}</div></div>
-        <div class="card"><h2>${icon('box')}Recently added<span class="spacer"></span><a href="#" class="meta" data-nav="items" style="font-weight:500">All items</a></h2>
+        <div class="card" style="--page:var(--c2)"><h2>${icon('box')}Recently added<span class="spacer"></span><a href="#" class="meta" data-nav="items" style="font-weight:500">All items</a></h2>
           <div class="rows">${recent.map(a => `<div class="rowi" data-open="${a.id}">${thumb(a)}
             <div style="flex:1;min-width:0"><div class="name">${esc(a.name)}</div><div class="meta">${esc([a.category, a.location].filter(Boolean).join(' · '))}</div></div>
             ${a.source === 'phone' ? '<span class="pill acc">from phone</span>' : ''}<span class="meta nowrap">${ukDate(a.createdAt.slice(0, 10))}</span></div>`).join('')}</div></div>
         ${recallsCard()}
       </div>
       <div class="dash-side">
-        <div class="card"><h2>${icon('check')}Gaps to fill</h2>
+        <div class="card" style="--page:var(--c3)"><h2>${icon('check')}Gaps to fill</h2>
           ${[['serial', 'No serial number'], ['receipt', 'No receipt'], ['insurer', 'No insurer'], ['photo', 'No photo']].map(([k, l]) => `<div class="gap" ${gapsN[k] ? `data-action="gap" data-gap="${k}" style="cursor:pointer"` : ''}><span>${l}</span><span class="pill ${gapsN[k] ? 'warn' : 'good'}">${gapsN[k] || icon('check')}</span></div>`).join('')}</div>
-        ${topLocs.length ? `<div class="card"><h2>${icon('pin')}Places<span class="spacer"></span><a href="#" class="meta" data-nav="places" style="font-weight:500">All places</a></h2><div class="rows">${topLocs.map(([p, d]) => `<div class="rowi" data-action="goPlace" data-place="${esc(p)}"><span style="flex:1">${esc(locLabel(p))}</span><span class="meta nowrap">${d.count} · ${money0(d.value)}</span></div>`).join('')}</div></div>` : ''}
-        ${Object.keys(s.byOwner || {}).length ? `<div class="card"><h2>${icon('users')}Who owns what</h2><div class="rows">${Object.entries(s.byOwner).sort((x, y) => y[1].value - x[1].value).map(([p, v]) => `<div class="rowi" data-action="filterOwner" data-owner="${esc(p)}"><span style="flex:1">${esc(p)}</span><span class="meta">${v.count} · ${money0(v.value)}</span></div>`).join('')}</div><div class="faint" style="margin-top:6px">Items with no owner count as yours.</div></div>` : ''}
+        ${topLocs.length ? `<div class="card" style="--page:var(--c6)"><h2>${icon('pin')}Places<span class="spacer"></span><a href="#" class="meta" data-nav="places" style="font-weight:500">All places</a></h2><div class="rows">${topLocs.map(([p, d]) => `<div class="rowi" data-action="goPlace" data-place="${esc(p)}"><span style="flex:1">${esc(locLabel(p))}</span><span class="meta nowrap">${d.count} · ${money0(d.value)}</span></div>`).join('')}</div></div>` : ''}
+        ${Object.keys(s.byOwner || {}).length ? `<div class="card" style="--page:var(--c5)"><h2>${icon('users')}Who owns what</h2><div class="rows">${Object.entries(s.byOwner).sort((x, y) => y[1].value - x[1].value).map(([p, v]) => `<div class="rowi" data-action="filterOwner" data-owner="${esc(p)}"><span style="flex:1">${esc(p)}</span><span class="meta">${v.count} · ${money0(v.value)}</span></div>`).join('')}</div><div class="faint" style="margin-top:6px">Items with no owner count as yours.</div></div>` : ''}
       </div>
     </div>`;
   }
