@@ -68,13 +68,19 @@ function matchesRegular(t, r) {
   return r.kind === 'income' ? t.amount > 0 : t.amount < 0;
 }
 
-/** A month's totals. month = 'YYYY-MM'. Transfers (between your own accounts, to savings) count in neither. */
+/** A transaction's parts: its splits if it has them, otherwise itself. */
+const parts = (t) => Array.isArray(t.splits) && t.splits.length ? t.splits.map(x => ({ amount: x.amount, categoryId: x.categoryId || '' })) : [{ amount: t.amount, categoryId: t.categoryId || '' }];
+/** Is a date in a period? A period is 'YYYY-MM' (a calendar month) or { from, to } (from inclusive, to exclusive). */
+const inPeriod = (d, p) => typeof p === 'string' ? d.startsWith(p) : d >= p.from && d < p.to;
+
+/** A period's totals. Transfers (between your own accounts) count in nothing; savings count as saved. */
 function monthSummary(txs, categories, month) {
   const kind = Object.fromEntries(categories.map(c => [c.id, c.kind]));
   const by = {};
   let income = 0, spend = 0, saved = 0, uncategorised = 0;
-  for (const t of txs) {
-    if (!t.date.startsWith(month)) continue;
+  for (const tx of txs) {
+    if (!inPeriod(tx.date, month)) continue;
+    for (const t of parts(tx)) {
     const k = kind[t.categoryId];
     if (k === 'transfer') continue;
     if (k === 'savings') { saved -= t.amount; continue; }
@@ -83,6 +89,7 @@ function monthSummary(txs, categories, month) {
     if (k === 'income') { income += t.amount; continue; }
     spend -= t.amount; // refunds in a spend category reduce that category
     by[t.categoryId || ''] = (by[t.categoryId || ''] || 0) - t.amount;
+    }
   }
   return { income, spend, saved, left: income - spend - saved, by, uncategorised };
 }
@@ -147,6 +154,173 @@ function plan(b, today) {
   return { income, lines, spend, goals, toGoals, left: income - spend - toGoals };
 }
 
+
+// ---------- budget periods: calendar months, or payday to payday ----------
+const iso2 = (y, m, d) => new Date(Date.UTC(y, m, d)).toISOString().slice(0, 10);
+/**
+ * The period a budget "month" covers. settings.monthStart: { day: 1-28 or 'last', weekend: 'before' | 'after' | '' }.
+ * key 'YYYY-MM' is the month the period starts in. With day 1 and no weekend rule it is the calendar month.
+ */
+function periodStart(key, ms) {
+  const y = Number(key.slice(0, 4)), m = Number(key.slice(5, 7)) - 1;
+  const last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  const day = !ms || !ms.day ? 1 : ms.day === 'last' ? last : Math.min(Number(ms.day), last);
+  const d = new Date(Date.UTC(y, m, day));
+  const wd = d.getUTCDay();
+  if (ms && ms.weekend === 'before' && (wd === 0 || wd === 6)) d.setUTCDate(d.getUTCDate() - (wd === 6 ? 1 : 2));
+  if (ms && ms.weekend === 'after' && (wd === 0 || wd === 6)) d.setUTCDate(d.getUTCDate() + (wd === 6 ? 2 : 1));
+  return d.toISOString().slice(0, 10);
+}
+const nextKey = (key, n = 1) => { const d = new Date(key + '-01T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() + n); return d.toISOString().slice(0, 7); };
+function period(key, ms) {
+  const from = periodStart(key, ms), to = periodStart(nextKey(key), ms);
+  const last = new Date(Date.parse(to + 'T00:00:00Z') - 864e5).toISOString().slice(0, 10);
+  return { key, from, to, last, calendar: !ms || ((!ms.day || ms.day === 1) && !ms.weekend) };
+}
+/** Which period a date is in. */
+function periodOf(date, ms) {
+  let key = date.slice(0, 7);
+  if (date < periodStart(key, ms)) key = nextKey(key, -1);
+  else if (date >= periodStart(nextKey(key), ms)) key = nextKey(key);
+  return key;
+}
+
+// ---------- carry-over (rollover) ----------
+/**
+ * For categories with carry-over on: what's left from earlier periods is added to this period's limit
+ * (overspending takes it away). Counting starts at the period carry-over was turned on in.
+ * spentBy(key) gives { categoryId: spent } for a period. Returns { categoryId: carried } for `key`.
+ */
+function carried(categories, key, spentBy) {
+  const out = {};
+  for (const c of categories) {
+    if (c.kind !== 'spend' || !c.rollover || !c.rolloverFrom || key <= c.rolloverFrom) continue;
+    let carry = 0, k = c.rolloverFrom, guard = 0;
+    while (k < key && guard++ < 240) { carry += (c.limit || 0) - ((spentBy(k) || {})[c.id] || 0); k = nextKey(k); }
+    out[c.id] = carry;
+  }
+  return out;
+}
+
+// ---------- accounts and balances ----------
+/**
+ * The latest balance of each account, from the balance column of its imported transactions.
+ * On the last day there can be several transactions in any order: the closing one is the one no other transaction follows on from.
+ */
+function accountBalances(txs) {
+  const by = {};
+  for (const t of txs) { if (t.balance == null || !Number.isFinite(t.balance)) continue; const a = t.account || 'Account'; (by[a] = by[a] || []).push(t); }
+  const out = {};
+  for (const [a, list] of Object.entries(by)) {
+    const lastDate = list.reduce((m, t) => t.date > m ? t.date : m, '');
+    const day = list.filter(t => t.date === lastDate);
+    // t is followed by u when u's balance before it (u.balance - u.amount) equals t's balance
+    const closing = day.filter(t => !day.some(u => u !== t && u.balance - u.amount === t.balance));
+    const pick = closing.length === 1 ? closing[0] : day[day.length - 1];
+    out[a] = { balance: pick.balance, date: lastDate, sure: closing.length === 1 };
+  }
+  return out;
+}
+
+/**
+ * Day by day from the latest statement: start balance, plus regular income, minus regular bills,
+ * minus everyday spending if given (pence a day). Returns { start, from, days: [{ date, balance, items }], low, lowDate, short }.
+ */
+function forecast({ start, from, to, regular, daily = 0, buffer = 0, today = '' }) {
+  const ev = {};
+  for (const r of regular || []) for (const d of occurrences(r, addDays(from, 1), to)) (ev[d] = ev[d] || []).push({ name: r.name, amount: r.kind === 'income' ? r.amount : -r.amount });
+  const days = [];
+  // days between the statement and today still change the balance, but the low point and warning only look ahead
+  let bal = start, low = Infinity, lowDate = '', firstShort = '';
+  if (!today || today <= from) { low = start; lowDate = from; }
+  for (let d = addDays(from, 1); d <= to; d = addDays(d, 1)) {
+    const items = ev[d] || [];
+    bal += items.reduce((t, x) => t + x.amount, 0) - daily;
+    if (today && d < today) continue;
+    if (bal < low) { low = bal; lowDate = d; }
+    if (!firstShort && bal < buffer) firstShort = d;
+    days.push({ date: d, balance: Math.round(bal), items });
+  }
+  return { start, from, to, days, low: Math.round(low), lowDate, short: firstShort };
+}
+function addDays(s, n) { const d = new Date(s + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+/** Average everyday spending a day over the last `days` days: spending not matched to a regular bill, not transfers or savings. */
+function dailySpend(txs, categories, today, days = 90) {
+  const kind = Object.fromEntries(categories.map(c => [c.id, c.kind]));
+  const from = addDays(today, -days);
+  let tot = 0;
+  for (const tx of txs) {
+    if (tx.date < from || tx.date >= today || tx.billId) continue;
+    for (const t of parts(tx)) { const k = kind[t.categoryId]; if (k === 'transfer' || k === 'savings' || k === 'income' || t.amount >= 0) continue; tot -= t.amount; }
+  }
+  return Math.round(tot / days);
+}
+
+// ---------- finding regular payments ----------
+const PER_YEAR = { week: 52, '2weeks': 26, '4weeks': 13, month: 12, quarter: 4, half: 2, year: 1 };
+const EVERY_DAYS = [['week', 7, 1], ['2weeks', 14, 2], ['4weeks', 28, 2], ['month', 30.4, 4], ['quarter', 91, 7], ['half', 182, 10], ['year', 365, 10]];
+/**
+ * Payments that repeat but aren't one of your regular bills or income yet. Groups by payee, then looks for a steady gap.
+ * Needs 3 payments (2 for yearly ones, which are seen less often). Ignores transfers and savings.
+ */
+function findRegular(txs, categories, regular, today) {
+  const kind = Object.fromEntries(categories.map(c => [c.id, c.kind]));
+  const known = (regular || []).filter(r => r.match).map(r => r.match.toLowerCase());
+  const groups = {};
+  for (const t of txs) {
+    if (t.billId || kind[t.categoryId] === 'transfer' || kind[t.categoryId] === 'savings' || t.goalId) continue;
+    const key = ruleText(t.description).toLowerCase();
+    if (key.length < 3 || known.some(k => key.includes(k) || k.includes(key))) continue;
+    const g = groups[key + (t.amount > 0 ? '+' : '-')] = groups[key + (t.amount > 0 ? '+' : '-')] || { key, income: t.amount > 0, list: [] };
+    g.list.push(t);
+  }
+  const out = [];
+  for (const g of Object.values(groups)) {
+    const list = g.list.slice().sort((a, b) => a.date.localeCompare(b.date));
+    // one per day at most (two coffees on one day aren't two bills)
+    const dates = [...new Set(list.map(t => t.date))];
+    if (dates.length < 2) continue;
+    const gaps = dates.slice(1).map((d, i) => Math.round((Date.parse(d) - Date.parse(dates[i])) / 864e5));
+    const med = gaps.slice().sort((a, b) => a - b)[Math.floor(gaps.length / 2)];
+    const fit = EVERY_DAYS.find(([, n, tol]) => Math.abs(med - n) <= tol + (n === 30.4 ? 0 : 0));
+    if (!fit) continue;
+    const [every, n, tol] = fit;
+    if (dates.length < (every === 'year' || every === 'half' ? 2 : 3)) continue;
+    if (!gaps.every(x => Math.abs(x - n) <= tol + (every === 'month' ? 0 : 0))) continue;
+    // monthly ones should land on about the same day of the month
+    if (every === 'month') { const ds = dates.map(d => Number(d.slice(8, 10))); const spread = Math.max(...ds) - Math.min(...ds); if (spread > 6 && spread < 25) continue; }
+    const last = list[list.length - 1];
+    const amounts = list.map(t => Math.abs(t.amount));
+    const same = amounts.every(a => a === amounts[0]);
+    // still going? the next one shouldn't be long overdue
+    let next = last.date; const day = Number(last.date.slice(8, 10)); let guard = 0;
+    do { next = step(next, every, day); } while (next < today && guard++ < 400);
+    const overdueBy = Math.round((Date.parse(today) - Date.parse(step(last.date, every, day))) / 864e5);
+    if (overdueBy > Math.max(10, n * 0.5)) continue;
+    const cats = {}; for (const t of list) if (t.categoryId) cats[t.categoryId] = (cats[t.categoryId] || 0) + 1;
+    const categoryId = Object.entries(cats).sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+    const name = ruleText(last.description);
+    out.push({ key: g.key, name, kind: g.income ? 'income' : 'bill', every, amount: Math.abs(last.amount), same, low: Math.min(...amounts), high: Math.max(...amounts),
+      count: dates.length, first: dates[0], last: last.date, next, match: name.slice(0, 40), categoryId, yearly: Math.abs(last.amount) * PER_YEAR[every] });
+  }
+  return out.sort((a, b) => b.yearly - a.yearly);
+}
+
+// ---------- yearly and irregular costs ----------
+/**
+ * Bills that don't come every month (quarterly, six-monthly, yearly): what to put aside each month for them,
+ * and how much should be put aside by now for the next one (the share of the gap since the last one that has passed).
+ */
+function sinking(regular, today) {
+  const GAP = { quarter: 3, half: 6, year: 12 };
+  return (regular || []).filter(r => r.kind !== 'income' && GAP[r.every] && r.next && (!r.ends || r.ends >= today)).map(r => {
+    const months = GAP[r.every];
+    const prev = (() => { const d = new Date(r.next + 'T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() - months); return d.toISOString().slice(0, 10); })();
+    const span = Date.parse(r.next) - Date.parse(prev), gone = Math.min(span, Math.max(0, Date.parse(today) - Date.parse(prev)));
+    return { id: r.id, name: r.name, amount: r.amount, every: r.every, next: r.next, perMonth: Math.ceil(r.amount / months), byNow: Math.round(r.amount * gone / span) };
+  }).sort((a, b) => a.next.localeCompare(b.next));
+}
+
 const pounds = (p) => (p < 0 ? '-' : '') + '£' + (Math.abs(p) / 100).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-module.exports = { goalStatus, plan, DEFAULT_CATEGORIES, EVERY, step, occurrences, monthly, categorise, ruleText, matchesRegular, monthSummary, priceChange, pounds };
+module.exports = { PER_YEAR, parts, inPeriod, period, periodOf, periodStart, nextKey, carried, accountBalances, forecast, dailySpend, findRegular, sinking, addDays, goalStatus, plan, DEFAULT_CATEGORIES, EVERY, step, occurrences, monthly, categorise, ruleText, matchesRegular, monthSummary, priceChange, pounds };

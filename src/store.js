@@ -1608,6 +1608,9 @@ class Store {
       if (!r.renews) continue;
       const n = diff(r.renews);
       if (n <= days && n >= -30) out.push({ regularId: r.id, assetName: r.name, kind: 'Contract ends — check the price', date: r.renews, daysLeft: n });
+      // and four weeks before, while there's still time to switch before it renews
+      const early = addDaysIso(r.renews, -28), ne = diff(early);
+      if (ne <= days && ne >= -28 && n > 0) out.push({ regularId: r.id, assetName: r.name, kind: `Look for a better deal (contract ends ${new Date(r.renews + 'T00:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })})`, date: early, daysLeft: ne });
     }
     for (const p of this.data.policies || []) {
       if (!p.renewalDate) continue;
@@ -1629,13 +1632,22 @@ class Store {
     for (const c of b.categories) if (c.name === 'Savings' && c.kind === 'transfer' && !b.savingsKindSet) c.kind = 'savings';
     b.savingsKindSet = true;
     if (!b.maps || typeof b.maps !== 'object') b.maps = {};
+    if (!b.accounts || typeof b.accounts !== 'object') b.accounts = {};
+    if (!Array.isArray(b.ignored)) b.ignored = [];
+    b.settings = Object.assign({ monthStart: { day: 1, weekend: '' }, buffer: 0, everyday: true }, b.settings || {});
     return b;
   }
   _budgetCat(id) { return id && this.budget().categories.some(c => c.id === id) ? id : ''; }
   saveBudgetCategories(list) {
     const b = this.budget();
     const seen = new Set();
-    const out = (Array.isArray(list) ? list : []).map(c => ({ id: c.id && /^[a-z0-9]{1,20}$/i.test(c.id) ? c.id : 'c' + uid().slice(0, 8), name: cleanString(c.name, 60), limit: Math.max(0, Math.round(Number(c.limit) || 0)), kind: ['income', 'transfer', 'savings'].includes(c.kind) ? c.kind : 'spend' }))
+    const B = require('./budget');
+    const nowKey = B.periodOf(todayIso(), b.settings.monthStart);
+    const out = (Array.isArray(list) ? list : []).map(c => { const id = c.id && /^[a-z0-9]{1,20}$/i.test(c.id) ? c.id : 'c' + uid().slice(0, 8); const was = b.categories.find(x => x.id === id) || {};
+      const n = { id, name: cleanString(c.name, 60), limit: Math.max(0, Math.round(Number(c.limit) || 0)), kind: ['income', 'transfer', 'savings'].includes(c.kind) ? c.kind : 'spend' };
+      // carry-over counts from the period it was turned on in
+      if (c.rollover && n.kind === 'spend') { n.rollover = true; n.rolloverFrom = was.rollover && was.rolloverFrom ? was.rolloverFrom : nowKey; }
+      return n; })
       .filter(c => c.name && !seen.has(c.name.toLowerCase()) && seen.add(c.name.toLowerCase())).slice(0, 80);
     if (!out.length) throw new Error('Keep at least one category.');
     const ids = new Set(out.map(c => c.id));
@@ -1646,6 +1658,27 @@ class Store {
     this.save();
     return b.categories;
   }
+  saveBudgetSettings(input) {
+    const b = this.budget();
+    const ms = input && input.monthStart || {};
+    const day = ms.day === 'last' ? 'last' : Math.max(1, Math.min(28, Math.round(Number(ms.day) || 1)));
+    b.settings = { monthStart: { day, weekend: ['before', 'after'].includes(ms.weekend) ? ms.weekend : '' },
+      buffer: Math.max(0, Math.round(Number(input && input.buffer) || 0)), everyday: !(input && input.everyday === false) };
+    this.save();
+    return b.settings;
+  }
+  /** What kind of account each imported account is, and whether it counts in the forecast. */
+  saveBudgetAccount(name, input) {
+    const b = this.budget(), key = cleanString(name, 60);
+    if (!key) throw new Error('Account not found');
+    const kind = ['current', 'savings', 'credit'].includes(input && input.kind) ? input.kind : 'current';
+    b.accounts[key] = { kind, forecast: kind === 'current' && !(input && input.forecast === false) };
+    this.save();
+    return b.accounts[key];
+  }
+  /** Stop suggesting a payment the finder thought was regular. */
+  ignoreFound(key) { const b = this.budget(); const k = cleanString(key, 80).toLowerCase(); if (k && !b.ignored.includes(k)) b.ignored.push(k); b.ignored = b.ignored.slice(-500); this.save(); }
+
   /** Remember the columns you chose for a bank's file, so next month's goes straight through. */
   saveBankMap(bankId, headings, map) {
     const b = this.budget();
@@ -1789,7 +1822,8 @@ class Store {
       name: cleanString(input.name, 80), amount: Math.max(0, Math.round(Number(input.amount) || 0)),
       every: B.EVERY[input.every] ? input.every : 'month', next: cleanDate(input.next), ends: cleanDate(input.ends),
       categoryId: this._budgetCat(input.categoryId), match: cleanString(input.match, 60), renews: cleanDate(input.renews),
-      notes: cleanString(input.notes, 1000), lastSeen: ex ? ex.lastSeen || '' : '', history: ex ? ex.history || [] : []
+      notes: cleanString(input.notes, 1000), lastSeen: ex ? ex.lastSeen || '' : '', history: ex ? ex.history || [] : [],
+      subscription: !!input.subscription && input.kind !== 'income'
     };
     if (!r.name) throw new Error('Give it a name.');
     if (!r.amount) throw new Error('Enter the amount.');

@@ -385,3 +385,4 @@ body.viewing{overflow:hidden}
 .bmeter span.near{background:var(--warn)} .bmeter span.over{background:var(--bad)}
 table.list td.num,table.list th.num{text-align:right;font-variant-numeric:tabular-nums}
 .btx select.small{max-width:170px;padding:3px 6px}
+.warnrow td{background:color-mix(in srgb,var(--bad) 6%,transparent)}

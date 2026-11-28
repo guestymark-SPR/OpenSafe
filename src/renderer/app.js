@@ -965,7 +965,13 @@
   const toPence = (v) => { const t = String(v || '').replace(/[£,\s]/g, ''); return /^\d+(\.\d{1,2})?$/.test(t) ? Math.round(Number(t) * 100) : NaN; };
   const EVERY_L = { week: 'Every week', '2weeks': 'Every 2 weeks', '4weeks': 'Every 4 weeks', month: 'Every month', quarter: 'Every 3 months', half: 'Every 6 months', year: 'Every year' };
   const thisMonth = () => new Date().toISOString().slice(0, 7);
-  const monthName = (m) => new Date(m + '-01T00:00:00Z').toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const calMonthName = (m) => new Date(m + '-01T00:00:00Z').toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  /** A budget period's name: the month, or "27 Nov – 27 Dec" when it runs payday to payday. */
+  const monthName = (m) => { const p = bPeriod(m); if (p.calendar) return calMonthName(m); const f = (d, y) => new Date(d + 'T00:00:00Z').toLocaleDateString('en-GB', Object.assign({ day: 'numeric', month: 'short', timeZone: 'UTC' }, y ? { year: 'numeric' } : {})); return `${f(p.from)} – ${f(p.last, true)}`; };
+  const bPeriod = (m) => ((state.snap.data.budgetCalc || {}).periods || {})[m] || { key: m, from: m + '-01', to: shiftMonth(m, 1) + '-01', last: '', calendar: true };
+  const inP = (d, m) => { const p = bPeriod(m); return d >= p.from && d < p.to; };
+  const keyFor = (d) => Object.keys((state.snap.data.budgetCalc || {}).periods || {}).find(k => inP(d, k)) || d.slice(0, 7);
+  const nowKey = () => (state.snap.data.budgetCalc || {}).nowKey || thisMonth();
   const shiftMonth = (m, n) => { const d = new Date(m + '-01T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() + n); return d.toISOString().slice(0, 7); };
   function bdata() { return state.snap.data.budget || { categories: [], rules: [], transactions: [], regular: [], imports: [], maps: {} }; }
   function bcat(id) { return bdata().categories.find(c => c.id === id); }
@@ -985,14 +991,14 @@
 
   function viewBudget() {
     const b = bdata();
-    state.bm = state.bm || thisMonth();
+    state.bm = state.bm || nowKey();
     const t = state.btab || 'overview';
     const tabs = [['overview', 'This month'], ['plan', 'Plan'], ['tx', 'Transactions'], ['regular', 'Bills & income'], ['goals', 'Savings goals'], ['calendar', 'Coming up']];
     const body = t === 'tx' ? budgetTx() : t === 'regular' ? budgetRegular() : t === 'calendar' ? budgetCalendar() : t === 'plan' ? budgetPlan() : t === 'goals' ? budgetGoals() : budgetOverview();
     const monthNav = t === 'overview' || t === 'tx' || t === 'plan' ? `<span class="seg"><button data-action="bMonth" data-n="-1" title="Previous month">‹</button><button disabled style="min-width:150px;color:var(--ink)">${esc(monthName(state.bm))}</button><button data-action="bMonth" data-n="1" title="Next month">›</button></span>` : '';
     return `<div class="head"><h1>Bills &amp; budget</h1><span class="sub">${b.transactions.length ? `${b.transactions.length.toLocaleString('en-GB')} transactions` : 'Import a statement from your bank to start'}</span><div class="spacer"></div>
       ${monthNav}
-      ${dd('More', [{ label: 'Categories and monthly limits…', action: 'bCats', icon: 'tag' }, { label: 'Your category rules…', action: 'bRules', icon: 'check' }, { label: 'Imports (take one back)…', action: 'bImports', icon: 'download' }])}
+      ${dd('More', [{ label: 'Categories and monthly limits…', action: 'bCats', icon: 'tag' }, { label: 'Your category rules…', action: 'bRules', icon: 'check' }, { label: 'Imports (take one back)…', action: 'bImports', icon: 'download' }, { label: 'Budget settings: month, warning, accounts…', action: 'bSettings', icon: 'gear' }])}
       <button class="btn primary" data-action="bImport">${icon('upload')}Import bank CSV…</button></div>
       ${state.bAsk ? `<div class="note" style="margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span style="flex:1">Put every payment containing <b>"${esc(state.bAsk.text)}"</b> in <b>${esc((bcat(state.bAsk.cat) || {}).name || '')}</b>, now and in future imports?</span>
         <button class="btn small primary" data-action="bAskYes">Yes, always</button><button class="btn small" data-action="bAskNo">Just this one</button></div>` : ''}
@@ -1002,16 +1008,18 @@
     const b = bdata(), s = bSummary(state.bm);
     const regs = b.regular;
     const billsPlan = regs.filter(r => r.kind !== 'income').reduce((t, r) => t + bMonthly(r), 0), incomePlan = regs.filter(r => r.kind === 'income').reduce((t, r) => t + bMonthly(r), 0);
-    const cats = b.categories.filter(c => c.kind === 'spend' && (c.limit || s.by[c.id]));
+    const cats = b.categories.filter(c => c.kind === 'spend' && (c.limit || c.rollover || s.by[c.id]));
+    const carry = (bCalc().carried || {})[state.bm] || {};
     const rows = cats.map(c => {
-      const spent = s.by[c.id] || 0, lim = c.limit || 0, pct = lim ? Math.min(100, Math.round(spent / lim * 100)) : 0, over = lim && spent > lim;
-      return `<tr><td><a href="#" data-action="bCatTx" data-cat="${esc(c.id)}">${esc(c.name)}</a></td><td class="num">${gbp(spent)}</td><td class="num faint">${lim ? gbp(lim) : '—'}</td>
+      const cr = carry[c.id] || 0, spent = s.by[c.id] || 0, lim = Math.max(0, (c.limit || 0) + cr), pct = lim ? Math.min(100, Math.round(spent / lim * 100)) : 0, over = lim && spent > lim;
+      return `<tr><td><a href="#" data-action="bCatTx" data-cat="${esc(c.id)}">${esc(c.name)}</a></td><td class="num">${gbp(spent)}</td><td class="num faint">${lim || c.rollover ? gbp(lim) : '—'}${cr ? `<div class="small" title="Carried over from earlier months">${cr > 0 ? '+' : '−'}${gbp(Math.abs(cr))} carried</div>` : ''}</td>
         <td style="width:34%">${lim ? `<div class="bmeter" title="${pct}% of the limit"><span style="width:${pct}%" class="${over ? 'over' : spent > lim * 0.85 ? 'near' : ''}"></span></div>` : ''}</td>
         <td class="num">${lim ? (over ? `<span class="pill bad">${icon('alert')}${gbp(spent - lim)} over</span>` : `${gbp(lim - spent)} left`) : ''}</td></tr>`;
     }).join('');
     const unc = s.by[''] || 0;
     return `${!b.transactions.length ? `<div class="card" style="max-width:720px"><h2>Start with a statement</h2><p class="muted">Download your transactions as a CSV file from your bank, then use <b>Import bank CSV…</b> and choose your bank from the list. Nothing is sent anywhere: the file is read on this PC. Account numbers are never kept.</p>
         <p class="muted" style="margin-bottom:0">You can also add your regular bills and income under <b>Bills &amp; income</b> first, to see what's coming up.</p></div>` : ''}
+      ${forecastNote()}
       <div class="tiles bstats"><div class="card tile"><div class="lbl">Money in</div><div class="num">${gbp(s.income)}</div>${incomePlan ? `<div class="faint small">Regular income about ${gbp(incomePlan)} a month</div>` : ''}</div>
         <div class="card tile"><div class="lbl">Money out</div><div class="num">${gbp(s.spend)}</div>${billsPlan ? `<div class="faint small">Regular bills about ${gbp(billsPlan)} a month</div>` : ''}</div>
         <div class="card tile"><div class="lbl">Saved</div><div class="num">${gbp(s.saved)}</div><div class="faint small">Payments in the Savings category</div></div>
@@ -1021,15 +1029,23 @@
         ${rows || `<tr><td colspan="5" class="muted">No spending in ${esc(monthName(state.bm))} yet.${b.categories.some(c => c.limit) ? '' : ' Set monthly limits under More → Categories and monthly limits.'}</td></tr>`}
         ${unc ? `<tr><td><a href="#" data-action="bCatTx" data-cat="none"><i>No category</i></a></td><td class="num">${gbp(unc)}</td><td></td><td></td><td></td></tr>` : ''}</tbody></table></div>`;
   }
+  /** The run-short warning (or all-clear) from the forecast. */
+  function forecastNote() {
+    const f = bCalc().forecast, st = bdata().settings || {};
+    if (!f) return '';
+    const stale = f.stale > 7 ? ` Your latest statement ends ${ukDate(f.from)}: import a newer one for a truer picture.` : '';
+    if (f.short) return `<div class="note bad" style="margin:0 0 12px;border-left:4px solid var(--bad)">${icon('alert')} <b>You may run short.</b> Your balance could go below ${st.buffer ? gbp(st.buffer) : '£0'} on <b>${ukDate(f.short)}</b>, and lowest is about <b>${gbp(f.low, true)}</b> on ${ukDate(f.lowDate)}. <a href="#" data-action="bTab" data-t="calendar">See why</a>.${stale}</div>`;
+    return `<div class="note" style="margin:0 0 12px">${icon('check')} Your bills are covered for the next six weeks: the lowest your balance should get is about <b>${gbp(f.low, true)}</b> on ${ukDate(f.lowDate)}. <a href="#" data-action="bTab" data-t="calendar">See the days</a>.${stale}</div>`;
+  }
   function budgetPlan() {
     const b = bdata(), P = bCalc().plan, s = bSummary(state.bm), m = state.bm;
-    const billPaid = (id) => b.transactions.filter(t => t.billId === id && t.date.startsWith(m)).reduce((x, t) => x - t.amount, 0);
-    const goalPut = (id) => { const g = b.goals.find(x => x.id === id) || { money: [] }; return g.money.filter(x => !x.start && x.date.startsWith(m)).reduce((t, x) => t + x.amount, 0) + b.transactions.filter(t => t.goalId === id && t.date.startsWith(m)).reduce((x, t) => x - t.amount, 0); };
+    const billPaid = (id) => b.transactions.filter(t => t.billId === id && inP(t.date, m)).reduce((x, t) => x - t.amount, 0);
+    const goalPut = (id) => { const g = b.goals.find(x => x.id === id) || { money: [] }; return g.money.filter(x => !x.start && inP(x.date, m)).reduce((t, x) => t + x.amount, 0) + b.transactions.filter(t => t.goalId === id && inP(t.date, m)).reduce((x, t) => x - t.amount, 0); };
     const act = (l) => l.categoryId ? (s.by[l.categoryId] || 0) : billPaid(l.billId);
     const cell = (planned, actual, spendLike) => { const over = spendLike ? actual > planned : actual < planned; return `<td class="num">${gbp(planned)}</td><td class="num">${gbp(actual)}</td><td class="num">${planned || actual ? `<span style="color:${over ? (spendLike ? 'var(--bad)' : 'var(--warn)') : 'inherit'}">${spendLike ? (over ? gbp(actual - planned) + ' over' : gbp(planned - actual) + ' left') : (over ? gbp(planned - actual) + ' to go' : 'done')}</span>` : ''}</td>`; };
     const actualSpend = P.lines.reduce((t, l) => t + act(l), 0), actualGoals = P.goals.reduce((t, g) => t + goalPut(g.id), 0);
     if (!P.income && !P.lines.length && !P.goals.length) return `<div class="card" style="max-width:720px"><h2>Make a plan</h2><p class="muted">The plan is built from what you've told OpenSafe: your regular <b>income</b> and <b>bills</b> (under Bills &amp; income), the <b>monthly limits</b> on your categories (More → Categories and monthly limits), and what your <b>savings goals</b> need each month. Add some of those and it appears here, with what's left to plan.</p></div>`;
-    const months = Object.keys(bCalc().months).sort().filter(x => x <= thisMonth()).slice(-6).reverse();
+    const months = Object.keys(bCalc().months).sort().filter(x => x <= nowKey()).slice(-6).reverse();
     return `<div class="tiles bstats"><div class="card tile"><div class="lbl">Regular income</div><div class="num">${gbp(P.income)}</div><div class="faint small">A month, on average</div></div>
         <div class="card tile"><div class="lbl">Planned spending</div><div class="num">${gbp(P.spend)}</div><div class="faint small">Bills and category limits</div></div>
         <div class="card tile"><div class="lbl">For savings goals</div><div class="num">${gbp(P.toGoals)}</div><div class="faint small">What they need each month</div></div>
@@ -1039,9 +1055,10 @@
         ${P.lines.map(l => `<tr><td>${l.categoryId ? `<a href="#" data-action="bCatTx" data-cat="${esc(l.categoryId)}">${esc(l.name)}</a>` : esc(l.name)}${l.bills && l.limit && l.bills > l.limit ? ' <span class="faint small">(its bills come to more than its limit)</span>' : l.bills && !l.limit ? ' <span class="faint small">bills</span>' : ''}</td>${cell(l.amount, act(l), true)}</tr>`).join('')}
         ${P.goals.map(g => `<tr><td>${icon('pound')} ${esc(g.name)} <span class="faint small">goal</span></td>${cell(g.amount, goalPut(g.id), false)}</tr>`).join('')}
       </tbody><tfoot><tr><td><b>Planned out</b></td><td class="num"><b>${gbp(P.spend + P.toGoals)}</b></td><td class="num"><b>${gbp(actualSpend + actualGoals)}</b></td><td></td></tr></tfoot></table></div>
+      ${sinkingHtml()}
       <p class="faint small">Weekly and yearly amounts are turned into a monthly average (a weekly £100 is about £433 a month). Each category's plan is its limit, or the bills filed in it if those come to more. Actual spending in categories without a plan isn't in this table: see This month.</p>
       ${months.length ? `<div class="section-title">Month by month</div><div class="card" style="padding:0"><table class="list"><thead><tr><th>Month</th><th class="num">Money in</th><th class="num">Money out</th><th class="num">Saved</th><th class="num">Left over</th></tr></thead><tbody>
-        ${months.map(x => { const v = bCalc().months[x]; return `<tr><td><a href="#" data-action="bGoMonth" data-m="${x}">${esc(monthName(x))}</a>${x === thisMonth() ? ' <span class="faint small">so far</span>' : ''}</td><td class="num">${gbp(v.income)}</td><td class="num">${gbp(v.spend)}</td><td class="num">${gbp(v.saved || 0)}</td><td class="num" style="color:${v.left < 0 ? 'var(--bad)' : 'inherit'}">${gbp(v.left, true)}</td></tr>`; }).join('')}</tbody></table></div>
+        ${months.map(x => { const v = bCalc().months[x]; return `<tr><td><a href="#" data-action="bGoMonth" data-m="${x}">${esc(monthName(x))}</a>${x === nowKey() ? ' <span class="faint small">so far</span>' : ''}</td><td class="num">${gbp(v.income)}</td><td class="num">${gbp(v.spend)}</td><td class="num">${gbp(v.saved || 0)}</td><td class="num" style="color:${v.left < 0 ? 'var(--bad)' : 'inherit'}">${gbp(v.left, true)}</td></tr>`; }).join('')}</tbody></table></div>
       <p class="faint small">Saved is money going out to the Savings category on your statements. Money you add to a goal by hand isn't counted here, so nothing is counted twice.</p>` : ''}`;
   }
   function budgetGoals() {
@@ -1110,7 +1127,7 @@
   }
   function budgetTxList() {
     const b = bdata(), q = (state.bq || '').toLowerCase(), c = state.bc || '';
-    return b.transactions.filter(t => (state.bAll || t.date.startsWith(state.bm)) && (!q || (t.description + ' ' + (t.note || '')).toLowerCase().includes(q))
+    return b.transactions.filter(t => (state.bAll || inP(t.date, state.bm)) && (!q || (t.description + ' ' + (t.note || '')).toLowerCase().includes(q))
       && (!c || (c === 'none' ? !t.categoryId : t.categoryId === c))).slice().reverse();
   }
   function budgetTx() {
@@ -1134,7 +1151,7 @@
   function budgetRegular() {
     const b = bdata();
     const row = (r) => { const last = (r.history || []).slice(-1)[0], c = bcat(r.categoryId);
-      return `<tr data-action="bRegEdit" data-id="${esc(r.id)}" style="cursor:pointer"><td><b>${esc(r.name)}</b>${c ? `<div class="meta faint">${esc(c.name)}</div>` : ''}</td><td class="num">${gbp(r.amount)}</td><td class="meta">${esc(EVERY_L[r.every] || '')}</td>
+      return `<tr data-action="bRegEdit" data-id="${esc(r.id)}" style="cursor:pointer"><td><b>${esc(r.name)}</b>${r.subscription ? ' <span class="pill">Subscription</span>' : ''}${c ? `<div class="meta faint">${esc(c.name)}</div>` : ''}</td><td class="num">${gbp(r.amount)}</td><td class="meta">${esc(EVERY_L[r.every] || '')}</td>
         <td class="meta nowrap">${r.next ? ukDate(r.next) : ''}</td>
         <td>${last ? `<span class="pill ${last.to > last.from ? 'warn' : 'good'}" title="Changed ${esc(ukDate(last.date))}">${last.to > last.from ? '▲' : '▼'} from ${gbp(last.from)}</span>` : ''}
           ${r.renews ? `<span class="pill ${r.renews <= new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10) ? 'warn' : ''}">${icon('calendar')}Contract ends ${ukDate(r.renews)}</span>` : ''}${r.match ? '' : ` <span class="faint small">not matched to statements</span>`}</td></tr>`; };
@@ -1142,18 +1159,49 @@
       const tot = l.reduce((t, r) => t + bMonthly(r), 0);
       return `<div class="section-title" style="display:flex;align-items:center;gap:8px">${title}<span class="faint small">${l.length ? `about ${gbp(tot)} a month` : ''}</span><div class="spacer" style="flex:1"></div><button class="btn small" data-action="bRegNew" data-kind="${kind}">${icon('plus')}Add</button></div>
         <div class="card" style="padding:0;margin-bottom:16px"><table class="list"><thead><tr><th>Name</th><th class="num">Amount</th><th>How often</th><th>Next</th><th></th></tr></thead><tbody>${l.map(row).join('') || `<tr><td colspan="5" class="muted">None yet.</td></tr>`}</tbody></table></div>`; };
-    return sect('bill', 'Bills') + sect('income', 'Income') + `<p class="faint small">When a statement is imported, payments containing a bill's <b>words to look for</b> are matched to it, its next date moves on, and if the amount has changed the old price is kept so you can see it went up.</p>`;
+    return foundHtml() + subsHtml() + sect('bill', 'Bills') + sect('income', 'Income') + `<p class="faint small">When a statement is imported, payments containing a bill's <b>words to look for</b> are matched to it, its next date moves on, and if the amount has changed the old price is kept so you can see it went up.</p>`;
+  }
+  /** Regular payments found in your statements that aren't bills or income yet. */
+  function foundHtml() {
+    const f = bCalc().found || [];
+    if (!f.length) return '';
+    const EV = { week: 'weekly', '2weeks': 'every 2 weeks', '4weeks': 'every 4 weeks', month: 'monthly', quarter: 'every 3 months', half: 'every 6 months', year: 'yearly' };
+    return `<div class="card" id="bFound" style="margin-bottom:16px"><h2>${icon('search')}Found in your statements</h2><p class="muted" style="margin-top:0">These look regular but aren't in your bills or income yet. Tick the ones to add; you can change them afterwards.</p>
+      <table class="list"><tbody>${f.map((x, i) => `<tr><td style="width:30px"><input type="checkbox" data-found="${i}" checked></td><td><b>${esc(x.name)}</b> <span class="faint">${x.kind === 'income' ? 'income' : 'bill'}, ${EV[x.every]}, ${x.count} times since ${ukDate(x.first)}</span>
+        ${x.same ? '' : `<div class="meta warn">Amount varies: ${gbp(x.low)} to ${gbp(x.high)} (the latest is used)</div>`}</td><td class="num nowrap">${gbp(x.amount)}<div class="meta faint">${gbp(x.yearly)} a year</div></td><td class="meta nowrap">next ${ukDate(x.next)}</td>
+        <td style="text-align:right"><button class="btn small" data-action="bFoundIgnore" data-key="${esc(x.key)}" title="Not regular: stop suggesting it">Not regular</button></td></tr>`).join('')}</tbody></table>
+      <div class="acts" style="margin-top:8px"><button class="btn primary small" data-action="bFoundAdd">${icon('plus')}Add the ticked ones</button></div></div>`;
+  }
+  function subsHtml() {
+    const l = bdata().regular.filter(r => r.subscription && (!r.ends || r.ends >= bCalc().today));
+    if (!l.length) return '';
+    const PY = { week: 52, '2weeks': 26, '4weeks': 13, month: 12, quarter: 4, half: 2, year: 1 };
+    const tot = l.reduce((t, r) => t + r.amount * (PY[r.every] || 12), 0);
+    return `<div class="card" style="margin-bottom:16px"><h2>Subscriptions <span class="faint" style="font-weight:400">${gbp(tot)} a year</span></h2>
+      <table class="list"><tbody>${l.sort((a, b) => b.amount * (PY[b.every] || 12) - a.amount * (PY[a.every] || 12)).map(r => `<tr data-action="bRegEdit" data-id="${esc(r.id)}" style="cursor:pointer"><td>${esc(r.name)}</td><td class="num">${gbp(r.amount)} <span class="faint">${esc((EVERY_L[r.every] || '').toLowerCase())}</span></td><td class="num"><b>${gbp(r.amount * (PY[r.every] || 12))}</b> a year</td><td class="meta">${r.lastSeen ? 'last paid ' + ukDate(r.lastSeen) : ''}</td></tr>`).join('')}</tbody></table>
+      <p class="faint small" style="margin-bottom:0">Mark a bill as a subscription in its details. Anything you don't use any more is worth cancelling.</p></div>`;
   }
   function budgetCalendar() {
+    const f = bCalc().forecast, st = bdata().settings || {};
+    const dname = (d) => new Date(d + 'T00:00:00Z').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+    if (f) {
+      const rows = f.days.filter(d => d.date >= bCalc().today && (d.items.length || d.date === f.lowDate || d.date === f.short));
+      return `${forecastNote()}<p class="muted" style="margin-top:0">Starting from ${gbp(f.start)} in ${esc(f.accounts.join(' and '))} on ${ukDate(f.from)} (the end of your latest statement${f.accounts.length > 1 ? 's' : ''}), adding your regular income and taking off your regular bills${f.daily ? ` and about <b>${gbp(f.daily)} a day</b> of everyday spending (your average over the last 3 months, not counting bills, savings or transfers)` : ''}.
+        ${f.mixedDates ? ' Your accounts\' statements end on different days, so the start is approximate.' : ''} <a href="#" data-action="bSettings">Change what's counted</a></p>
+        <div class="card" style="padding:0"><table class="list"><thead><tr><th>Date</th><th>What</th><th class="num">Amount</th><th class="num">Balance after</th></tr></thead><tbody>
+        ${rows.map(d => (d.items.length ? d.items : [{ name: d.date === f.short ? 'Goes below ' + (st.buffer ? gbp(st.buffer) : '£0') : 'Lowest point', amount: null }]).map((it, i) => `<tr class="${d.balance < (st.buffer || 0) ? 'warnrow' : ''}"><td class="nowrap">${i ? '' : `<b>${dname(d.date)}</b>`}</td><td>${esc(it.name)}</td>
+          <td class="num" style="color:${it.amount > 0 ? 'var(--good)' : 'inherit'}">${it.amount == null ? '' : gbp(it.amount, true)}</td><td class="num">${i === (d.items.length || 1) - 1 ? `<span style="color:${d.balance < (st.buffer || 0) ? 'var(--bad)' : 'inherit'}">${gbp(d.balance, true)}</span>` : ''}</td></tr>`).join('')).join('')}
+        </tbody></table></div><p class="faint small">Balances are a forecast, not what your bank will show: payments can come out a day or two either side, and amounts change.</p>`;
+    }
     const b = bdata(), from = new Date().toISOString().slice(0, 10), to = new Date(Date.now() + 42 * 864e5).toISOString().slice(0, 10);
     const ev = [];
     for (const r of b.regular) for (const d of bOccur(r, from, to)) ev.push({ d, r });
     ev.sort((x, y) => x.d.localeCompare(y.d) || x.r.name.localeCompare(y.r.name));
     if (!ev.length) return `<div class="card empty">Nothing due in the next six weeks. Add your bills and income under <b>Bills &amp; income</b>.</div>`;
     let run = 0, last = '';
-    return `<p class="muted" style="margin-top:0">The next six weeks of your regular bills and income, with the running total of money in minus money out.</p><div class="card" style="padding:0"><table class="list"><thead><tr><th>Date</th><th>What</th><th class="num">Amount</th><th class="num">Running total</th></tr></thead><tbody>
+    return `<p class="muted" style="margin-top:0">The next six weeks of your regular bills and income, with the running total of money in minus money out. Import a statement that has a balance column to see your expected balance instead.</p><div class="card" style="padding:0"><table class="list"><thead><tr><th>Date</th><th>What</th><th class="num">Amount</th><th class="num">Running total</th></tr></thead><tbody>
       ${ev.map(({ d, r }) => { const a = r.kind === 'income' ? r.amount : -r.amount; run += a; const show = d !== last; last = d;
-        return `<tr><td class="nowrap">${show ? `<b>${new Date(d + 'T00:00:00Z').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })}</b>` : ''}</td><td>${esc(r.name)}</td><td class="num" style="color:${a > 0 ? 'var(--good)' : 'inherit'}">${gbp(a, true)}</td><td class="num ${run < 0 ? 'bad' : ''}" style="color:${run < 0 ? 'var(--bad)' : 'inherit'}">${gbp(run, true)}</td></tr>`; }).join('')}</tbody></table></div>`;
+        return `<tr><td class="nowrap">${show ? `<b>${dname(d)}</b>` : ''}</td><td>${esc(r.name)}</td><td class="num" style="color:${a > 0 ? 'var(--good)' : 'inherit'}">${gbp(a, true)}</td><td class="num" style="color:${run < 0 ? 'var(--bad)' : 'inherit'}">${gbp(run, true)}</td></tr>`; }).join('')}</tbody></table></div>`;
   }
   function regularForm(r, kind) {
     const b = bdata(); r = r || { kind, every: 'month', amount: 0 };
@@ -1165,7 +1213,8 @@
       <label class="f">Next due<input type="date" name="next" value="${esc(r.next || '')}"></label>
       <label class="f">Category<select name="categoryId"><option value="">None</option>${b.categories.map(c => `<option value="${esc(c.id)}" ${c.id === r.categoryId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
       <label class="f">Words to look for on statements<input name="match" maxlength="60" value="${esc(r.match || '')}" placeholder="For example: OCTOPUS"><span class="faint small">As they appear in your bank's description. Leave blank not to match.</span></label>
-      ${inc ? '' : `<label class="f">Contract or fixed price ends<input type="date" name="renews" value="${esc(r.renews || '')}"><span class="faint small">You'll get a reminder to check the price before it goes up.</span></label>`}
+      ${inc ? '' : `<label class="switch s3"><input type="checkbox" name="subscription" ${r.subscription ? 'checked' : ''}> A subscription (streaming, apps, memberships): listed with its yearly cost</label>`}
+      ${inc ? '' : `<label class="f">Contract or fixed price ends<input type="date" name="renews" value="${esc(r.renews || '')}"><span class="faint small">You'll get a reminder four weeks before, to look for a better deal, and on the day.</span></label>`}
       <label class="f">Last payment<input type="date" name="ends" value="${esc(r.ends || '')}"><span class="faint small">Only if it stops on a date.</span></label>
       <label class="f s3">Notes<textarea name="notes" rows="2" maxlength="1000">${esc(r.notes || '')}</textarea></label>
       ${(r.history || []).length ? `<div class="s3"><div class="section-title" style="margin:4px 0">Price changes</div><table class="list"><tbody>${r.history.slice().reverse().map(h => `<tr><td class="meta">${ukDate(h.date)}</td><td>${gbp(h.from)} → <b>${gbp(h.to)}</b></td><td class="meta">${h.to > h.from ? `up ${gbp(h.to - h.from)} (${Math.round((h.to - h.from) / h.from * 100)}%)` : `down ${gbp(h.from - h.to)}`}${h.typed ? ' · typed in' : ' · from a statement'}</td></tr>`).join('')}</tbody></table></div>` : ''}
@@ -1177,7 +1226,7 @@
       ev.preventDefault();
       const el = f.elements, amount = toPence(el.amount.value);
       if (!Number.isFinite(amount) || amount <= 0) { $('#regErr').textContent = 'Enter the amount, like 45.99'; return; }
-      try { await keep.budgetRegularSave({ id: r.id, kind: inc ? 'income' : 'bill', name: el.name.value, amount, every: el.every.value, next: el.next.value, categoryId: el.categoryId.value, match: el.match.value, renews: el.renews ? el.renews.value : '', ends: el.ends.value, notes: el.notes.value });
+      try { await keep.budgetRegularSave({ id: r.id, kind: inc ? 'income' : 'bill', name: el.name.value, amount, every: el.every.value, next: el.next.value, categoryId: el.categoryId.value, match: el.match.value, renews: el.renews ? el.renews.value : '', ends: el.ends.value, notes: el.notes.value, subscription: el.subscription ? el.subscription.checked : false });
         closeModal(); await refresh(); toast('✓ Saved'); } catch (ex) { $('#regErr').textContent = ex.message; }
     };
   }
@@ -1233,7 +1282,7 @@
       busy(f, true, 'Importing…');
       try {
         const r = await keep.budgetImport(cur.token, f.elements.account.value.trim());
-        closeModal(); state.btab = 'tx'; state.bm = (cur.to || thisMonth()).slice(0, 7); await refresh();
+        closeModal(); state.btab = 'tx'; await refresh(); state.bm = cur.to ? keyFor(cur.to) : nowKey(); render();
         openModal(`<div class="dialog narrow"><div class="dh"><h2>Imported</h2></div><div class="db"><p class="s3" style="margin:0">${r.added} transaction${r.added === 1 ? '' : 's'} added${r.duplicates ? `, ${r.duplicates} already here` : ''}. ${r.categorised} put in a category${r.matched ? `, ${r.matched} matched to your regular bills and income` : ''}.</p>
           ${r.priceChanges.length ? `<div class="s3"><b>Price changes:</b><br>${r.priceChanges.map(c => `${esc(c.name)}: ${gbp(c.from)} → <b>${gbp(c.to)}</b> (${ukDate(c.date)})`).join('<br>')}</div>` : ''}
           ${r.added - r.categorised > 0 ? `<p class="s3 muted">Give the rest a category in the list. When you do, OpenSafe offers to do the same for every payment like it.</p>` : ''}</div>
@@ -1241,16 +1290,57 @@
       } catch (ex) { $('#bkErr').textContent = ex.message; busy(f, false); }
     };
   }
+  /** Bills that don't come every month, and what to put aside for them. */
+  function sinkingHtml() {
+    const l = bCalc().sinking || [];
+    if (!l.length) return '';
+    const per = l.reduce((t, x) => t + x.perMonth, 0), by = l.reduce((t, x) => t + x.byNow, 0);
+    return `<div class="section-title">Yearly and occasional bills</div><div class="card" style="padding:0"><table class="list"><thead><tr><th>Bill</th><th class="num">Amount</th><th>Next</th><th class="num">Put aside a month</th><th class="num">Should be put aside by now</th></tr></thead><tbody>
+      ${l.map(x => `<tr data-action="bRegEdit" data-id="${esc(x.id)}" style="cursor:pointer"><td>${esc(x.name)}</td><td class="num">${gbp(x.amount)}</td><td class="meta nowrap">${ukDate(x.next)}</td><td class="num">${gbp(x.perMonth)}</td><td class="num">${gbp(x.byNow)}</td></tr>`).join('')}</tbody>
+      <tfoot><tr><td colspan="3"><b>Total</b></td><td class="num"><b>${gbp(per)}</b></td><td class="num"><b>${gbp(by)}</b></td></tr></tfoot></table></div>
+      <p class="faint small">These are already in the plan as monthly amounts. Putting that much aside each month (a savings goal or a savings space works) means the money is there when each one comes. "By now" is the share of the time to the next payment that has passed. Add yearly bills such as the MOT, insurance or the TV licence under Bills &amp; income with <b>Every year</b>.</p>`;
+  }
+  function budgetSettingsForm() {
+    const b = bdata(), st = b.settings || { monthStart: { day: 1, weekend: '' }, buffer: 0, everyday: true }, accts = bCalc().accounts || [];
+    const day = st.monthStart.day;
+    openModal(`<form class="dialog" id="bsForm"><div class="dh"><h2>Budget settings</h2></div><div class="db">
+      <div class="section-title s3" style="margin:0">Your budget month</div>
+      <label class="f">Starts on<select name="day"><option value="1" ${day === 1 ? 'selected' : ''}>the 1st (calendar months)</option>${Array.from({ length: 27 }, (_, i) => i + 2).map(n => `<option value="${n}" ${day === n ? 'selected' : ''}>the ${n}${n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th'}</option>`).join('')}<option value="last" ${day === 'last' ? 'selected' : ''}>the last day of the month</option></select><span class="faint small">Set it to the day your main income arrives, to budget payday to payday.</span></label>
+      <label class="f">If that's a weekend<select name="weekend"><option value="">start that day anyway</option><option value="before" ${st.monthStart.weekend === 'before' ? 'selected' : ''}>start the Friday before</option><option value="after" ${st.monthStart.weekend === 'after' ? 'selected' : ''}>start the Monday after</option></select><span class="faint small">Match how your income is paid when the day falls on a weekend. Bank holidays aren't counted.</span></label>
+      <div class="section-title s3" style="margin:6px 0 0">Run-short warning</div>
+      <label class="f">Warn me if my balance could go below (£)<input name="buffer" inputmode="decimal" value="${st.buffer ? (st.buffer / 100).toFixed(2) : '0'}"></label>
+      <label class="switch f" style="align-self:end"><input type="checkbox" name="everyday" ${st.everyday !== false ? 'checked' : ''}> Allow for everyday spending (your 3-month average)</label>
+      ${accts.length ? `<div class="s3"><div class="section-title" style="margin:6px 0">Accounts</div><table class="list"><thead><tr><th>Account</th><th class="num">Latest balance</th><th>Kind</th><th>In the forecast</th></tr></thead><tbody>
+        ${accts.map((a, i) => `<tr><td>${esc(a.name)}</td><td class="num">${gbp(a.balance, true)}<div class="meta faint">${ukDate(a.date)}${a.sure ? '' : ' · several on that day, order unclear'}</div></td>
+          <td><select data-acct="${i}" data-k="kind"><option value="current">Current account</option><option value="savings" ${a.kind === 'savings' ? 'selected' : ''}>Savings</option><option value="credit" ${a.kind === 'credit' ? 'selected' : ''}>Credit card</option></select></td>
+          <td><input type="checkbox" data-acct="${i}" data-k="forecast" ${a.forecast ? 'checked' : ''}></td></tr>`).join('')}</tbody></table>
+        <p class="faint small" style="margin:4px 0 0">Balances come from the balance column of each account's latest import. Only current accounts count in the forecast.</p></div>` : `<p class="s3 faint small">Accounts appear here once you've imported a statement with a balance column.</p>`}
+      <div class="err s3" id="bsErr"></div></div>
+      <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Save</button></div></form>`);
+    $('#bsForm').onsubmit = async (ev) => {
+      ev.preventDefault();
+      const el = ev.target.elements, buffer = toPence(el.buffer.value || '0');
+      if (!Number.isFinite(buffer)) { $('#bsErr').textContent = 'The warning amount isn\'t a number.'; return; }
+      try {
+        await keep.budgetSettings({ monthStart: { day: el.day.value === 'last' ? 'last' : Number(el.day.value), weekend: el.weekend.value }, buffer, everyday: el.everyday.checked });
+        for (const [i, a] of accts.entries()) {
+          const kind = ev.target.querySelector(`[data-acct="${i}"][data-k=kind]`).value, fc = ev.target.querySelector(`[data-acct="${i}"][data-k=forecast]`).checked;
+          if (kind !== a.kind || fc !== a.forecast) await keep.budgetAccount(a.name, { kind, forecast: fc });
+        }
+        closeModal(); state.bm = null; await refresh(); toast('✓ Saved');
+      } catch (ex) { $('#bsErr').textContent = ex.message; }
+    };
+  }
   function budgetCatsForm() {
     const b = bdata(); const rows = b.categories.concat([{ id: '', name: '', limit: 0, kind: 'spend' }, { id: '', name: '', limit: 0, kind: 'spend' }]);
-    openModal(`<form class="dialog" id="bcForm"><div class="dh"><h2>Categories and monthly limits</h2></div><div class="db"><div class="s3" style="max-height:60vh;overflow:auto"><table class="list"><thead><tr><th>Name</th><th>Monthly limit (£)</th><th>Kind</th></tr></thead><tbody>
+    openModal(`<form class="dialog" id="bcForm"><div class="dh"><h2>Categories and monthly limits</h2></div><div class="db"><div class="s3" style="max-height:60vh;overflow:auto"><table class="list"><thead><tr><th>Name</th><th>Monthly limit (£)</th><th>Kind</th><th title="What's left at the end of the month is added to next month's limit; overspending is taken off it">Carry over</th></tr></thead><tbody>
       ${rows.map((c, i) => `<tr data-i="${i}" data-id="${esc(c.id)}"><td><input data-k="name" maxlength="60" value="${esc(c.name)}" style="width:100%"></td><td><input data-k="limit" inputmode="decimal" value="${c.limit ? (c.limit / 100).toFixed(2) : ''}" style="width:110px"></td>
-        <td><select data-k="kind"><option value="spend">Spending</option><option value="income" ${c.kind === 'income' ? 'selected' : ''}>Income</option><option value="savings" ${c.kind === 'savings' ? 'selected' : ''}>Savings</option><option value="transfer" ${c.kind === 'transfer' ? 'selected' : ''}>Transfer (not counted)</option></select></td></tr>`).join('')}</tbody></table></div>
-      <p class="s3 faint small" style="margin:0">Clear a name to remove that category: its transactions go back to "No category". Leave a limit blank for no limit.</p><div class="err s3" id="bcErr"></div></div>
+        <td><select data-k="kind"><option value="spend">Spending</option><option value="income" ${c.kind === 'income' ? 'selected' : ''}>Income</option><option value="savings" ${c.kind === 'savings' ? 'selected' : ''}>Savings</option><option value="transfer" ${c.kind === 'transfer' ? 'selected' : ''}>Transfer (not counted)</option></select></td><td style="text-align:center"><input type="checkbox" data-k="rollover" ${c.rollover ? 'checked' : ''}></td></tr>`).join('')}</tbody></table></div>
+      <p class="s3 faint small" style="margin:0">Carry over: what's left in a spending category at the end of the month is added to the next month's limit, and overspending is taken off it, counting from this month.</p><p class="s3 faint small" style="margin:0">Clear a name to remove that category: its transactions go back to "No category". Leave a limit blank for no limit.</p><div class="err s3" id="bcErr"></div></div>
       <div class="df"><button type="button" class="btn" data-action="close">Cancel</button><button class="btn primary" type="submit">Save</button></div></form>`);
     $('#bcForm').onsubmit = async (ev) => {
       ev.preventDefault();
-      const list = [...$('#bcForm').querySelectorAll('tbody tr')].map(tr => ({ id: tr.dataset.id, name: tr.querySelector('[data-k=name]').value.trim(), limit: toPence(tr.querySelector('[data-k=limit]').value || '0'), kind: tr.querySelector('[data-k=kind]').value })).filter(c => c.name);
+      const list = [...$('#bcForm').querySelectorAll('tbody tr')].map(tr => ({ id: tr.dataset.id, name: tr.querySelector('[data-k=name]').value.trim(), limit: toPence(tr.querySelector('[data-k=limit]').value || '0'), kind: tr.querySelector('[data-k=kind]').value, rollover: tr.querySelector('[data-k=rollover]').checked })).filter(c => c.name);
       if (list.some(c => !Number.isFinite(c.limit))) { $('#bcErr').textContent = 'A limit isn\'t a number. Use amounts like 250 or 250.00'; return; }
       try { await keep.budgetCategories(list); closeModal(); await refresh(); toast('✓ Saved'); } catch (ex) { $('#bcErr').textContent = ex.message; }
     };
@@ -1729,6 +1819,7 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
   // ---------- one search for everything ----------
   // ---------- Help and What's new ----------
   const NEWS = [
+    ['2.22.0', 'Know what\'s coming', ['<b>Run-short warning</b>: from your latest statement\'s balance, your bills, income and everyday spending, Bills &amp; budget shows your balance for the next six weeks and warns you if it could drop too low.', '<b>Found in your statements</b>: regular payments OpenSafe spots that aren\'t bills yet, to add in one go, and a <b>Subscriptions</b> list with yearly costs.', '<b>Payday to payday</b> months, <b>carry-over</b> for categories, <b>yearly bills</b> with what to put aside, and a reminder <b>four weeks before</b> a contract ends.']],
     ['2.21.0', 'A budget plan and savings goals', ['<b>Plan</b> (Bills &amp; budget): your regular income, minus bills and category limits, minus what your savings goals need, gives what\'s not planned yet. Each line shows plan against actual for the month, and a month-by-month table shows money in, out, saved and left over.', '<b>Savings goals</b>: a target and a date. OpenSafe works out how much a month it needs and whether you\'re on track. Add money by hand, tick transactions and choose Put towards a goal…, or give it words to look for so transfers are counted when you import.', 'A new <b>Savings</b> kind of category: money going to savings is counted as saved, not spent.']],
     ['2.20.0', 'Bills & budget', ['A new <b>Bills &amp; budget</b> page: import a CSV from your bank (choose your bank from the list), give spending categories and monthly limits, and see money in, out and left each month.', 'Your regular <b>bills and income</b> are matched to statements: next dates move on by themselves and price rises are noted.', '<b>Coming up</b> shows the next six weeks of payments, and transactions can be added to a case.']],
     ['2.19.0', 'Order emails, a weekly summary, and a pack for your family', ['<b>Make items from this order…</b> (More, on an order email in Data or Documents): the things you bought become items, each with the email as its receipt.', '<b>Monday summary</b>: a notification on Mondays with what\'s due that week and letters waiting for a reply (Settings to turn it off).', '<b>If something happens to me</b> (Import & backup): one locked file for your next of kin with a letter, contacts, insurance, valuable things and chosen documents. It opens in any web browser with a passphrase.']],
@@ -1769,6 +1860,9 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
     ['budget', 1, 'Bank statement import', 'Bills &amp; budget → <b>Import bank CSV…</b>. Choose your bank, then a CSV downloaded from it. Check the dates and amounts in the preview (money out should be minus) before you import. If it says the columns don\'t match, choose them and tell me which bank, so the list can be corrected.'],
     ['bills', 2, 'Bills matched to statements', 'Add a bill under <b>Bills &amp; income</b> with words that appear in its statement line (like OCTOPUS). Import a statement: the payment should show the bill\'s name, and its next date should move on.'],
     ['goals', 2, 'Savings goals and the plan', 'Bills &amp; budget → Savings goals → <b>Add a goal</b> with a target and date. Add money to it. The Plan tab should show what it needs each month, and Not planned yet should be your income minus bills, limits and goals.'],
+    ['forecast', 1, 'Run-short warning', 'Import a statement with a balance column, add your bills and income, then look at Bills &amp; budget → Coming up. The starting balance should match your bank\'s balance on the statement\'s last day.'],
+    ['found', 2, 'Regular payments found', 'Bills &amp; income → Found in your statements. Check the ones listed really are regular, and that nothing obvious is missing (it needs 3 payments at a steady gap).'],
+    ['payday', 3, 'Payday months', 'More → Budget settings: set the day your income arrives. The month at the top should run from that day, and This month\'s totals should change to match.'],
     ['kinpack', 1, 'If something happens to me', 'Import & backup → <b>Make the pack…</b>. Tick a document, set a passphrase, save. Double-click the saved file: it should open in your browser, refuse a wrong passphrase, and show everything with the right one. Try opening a document from it, and try it on your phone too.'],
     ['twopc', 3, 'Two PCs (only if you have a second PC)', 'Choose the same OneDrive folder on both under Import & backup → Two PCs. Add an item on one; once OneDrive has copied it (usually a few minutes), it should appear on the other.']
   ];
@@ -3134,8 +3228,8 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
         case 'addValuation': valuationForm(a); break;
         case 'rmValuation': if (confirm('Delete this valuation from the history? The item\'s value now isn\'t changed.')) { await run(() => keep.removeValuation(a.id, act.dataset.vid), 'Deleted'); await refresh(); } break;
         case 'bcLookup': barcodeLookup(a); break;
-        case 'bTab': state.btab = act.dataset.t; state.bPick = new Set(); render(); break;
-        case 'bMonth': state.bm = shiftMonth(state.bm || thisMonth(), Number(act.dataset.n)); state.bPick = new Set(); render(); break;
+        case 'bTab': e.preventDefault(); state.btab = act.dataset.t; state.bPick = new Set(); render(); break;
+        case 'bMonth': state.bm = shiftMonth(state.bm || nowKey(), Number(act.dataset.n)); state.bPick = new Set(); render(); break;
         case 'bImport': await bankImportForm(); break;
         case 'bCats': budgetCatsForm(); break;
         case 'bRules': budgetRulesForm(); break;
@@ -3145,6 +3239,12 @@ They go to the bin for 30 days, so you can restore them.`)) return true; for (co
         case 'bAskNo': state.bAsk = null; render(); break;
         case 'bOpenRegular': state.btab = 'regular'; go('budget'); { const r = bdata().regular.find(x => x.id === act.dataset.id); if (r) regularForm(r); } break;
         case 'bGoalNew': goalForm(null); break;
+        case 'bSettings': e.preventDefault(); budgetSettingsForm(); break;
+        case 'bFoundIgnore': await run(() => keep.budgetIgnoreFound(act.dataset.key)); await refresh(); break;
+        case 'bFoundAdd': { const f = bCalc().found || []; const pick = [...document.querySelectorAll('[data-found]')].filter(x => x.checked).map(x => f[Number(x.dataset.found)]).filter(Boolean);
+          if (!pick.length) break;
+          const n = await run(() => keep.budgetAddFound(pick.map(x => ({ kind: x.kind, name: x.name, amount: x.amount, every: x.every, next: x.next, match: x.match, categoryId: x.categoryId }))));
+          await refresh(); toast(`✓ Added ${n}`); break; }
         case 'bGoalEdit': goalForm(bdata().goals.find(g => g.id === act.dataset.id)); break;
         case 'bGoalMoney': goalMoneyForm(bdata().goals.find(g => g.id === act.dataset.id)); break;
         case 'bGoalMoneyDel': { const gid = act.dataset.id; await run(() => keep.budgetGoalMoneyRemove(gid, act.dataset.mid)); await refresh(); goalForm(bdata().goals.find(g => g.id === gid)); break; }
